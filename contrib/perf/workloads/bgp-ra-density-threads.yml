@@ -6,18 +6,21 @@
 # in the matrix entry that sets OVN_RA_THREADINESS=4, so a diff of the two
 # lanes' results isolates the effect of the worker count and nothing else.
 #
-# What it is for. The ladder measured queue wait at 0.1355s per generated
-# object against a work duration flat at 0.1698s per node, which says the wait
-# is items queueing behind one worker rather than expensive work. That reading
-# is an inference from the shape of two numbers; this lane tests it. If four
-# workers divide the wait by roughly four, the inference holds and narrowing
-# ReconcileAll() is worth its cost. If they do not, the model behind the whole
-# ladder is wrong and needs rebuilding before anything is optimised.
+# What it is for. Across the ladder, queue wait grows with nodes x RAs while
+# work grows with nodes alone, which says the wait is items queueing behind
+# one worker rather than expensive work. That reading is an inference from the
+# shape of two numbers; this lane tests it. If four workers divide the wait by
+# roughly four, the inference holds and narrowing ReconcileAll() is worth its
+# cost. If they do not, the model behind the whole ladder is wrong and needs
+# rebuilding before anything is optimised.
 #
-# A local four-node run measured 16.21s against 4.05s, a 4.01x reduction, with
-# work duration rising 1.6 to 1.8x from contention that has not been
-# identified. This lane repeats that at CI scale, where the node count is three
-# times larger and the apiserver is under more load.
+# Compare the two lanes on the mean wait and work, not the p99s. The p99s are
+# interpolated in buckets that double in width, so they only locate a value to
+# within a factor of two: the first runs' p99s put the four-worker wait one
+# bucket below the single-worker one and its work one bucket above, which is
+# consistent with anything from about 2x to 8x on wait. Work per item does
+# rise with four workers, from contention that has not been identified; the
+# means are what will size it.
 #
 # Keep in sync with bgp-ra-density-deep.yml; the only intended differences are
 # the job names and this header.

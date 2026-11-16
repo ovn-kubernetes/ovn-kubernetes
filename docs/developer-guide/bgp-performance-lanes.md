@@ -107,9 +107,14 @@ against the registered metric before reading an empty file as zero.
 `contrib/perf/analyze-bgp-lanes.py` turns the artifacts of one run into a
 markdown report: convergence per lane, shape and outcome, workqueue figures,
 reconcile work by operation, the scaling fit across the single-worker lanes,
-and one row per adjacent pair isolating a variable. A quantile sitting on the
-last finite histogram bucket is reported as saturated rather than as a value,
-and snapshots that had not converged are excluded from the derived figures.
+and one row per adjacent pair isolating a variable. Lanes are compared on mean
+wait, work and reconcile durations, taken from the histograms' `_sum` and
+`_count`. Their 99th percentiles are shown only as the bucket they fall in: the
+buckets double in width, so a quantile interpolated inside one locates the
+value to within a factor of two, and two lanes a factor of two apart always
+read as exactly 2x. A quantile sitting on the last finite histogram bucket is
+reported as saturated, and snapshots that had not converged are excluded from
+the derived figures.
 
 On pull requests the `performance-report` workflow runs it once the
 performance lanes finish, and posts the result in the performance results
