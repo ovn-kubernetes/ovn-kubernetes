@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net"
 	"strings"
 	"sync"
@@ -19,11 +20,11 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	discovery "k8s.io/api/discovery/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/apimachinery/pkg/selection"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	clientset "k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
@@ -34,6 +35,7 @@ import (
 	honode "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/hybrid-overlay/pkg/controller"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni"
 	config "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
 	adminpolicybasedrouteclientset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1/apis/clientset/versioned"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/informer"
@@ -121,8 +123,13 @@ type DefaultNodeNetworkController struct {
 	routeManager  *routemanager.Controller
 	linkManager   *linkmanager.Controller
 
-	// retry framework for endpoint slices, used for the removal of stale conntrack entries for services
-	retryEndpointSlices *retry.RetryFramework
+	// controller for endpoint slices, used for the removal of stale conntrack entries for services
+	conntrackEndpointSliceController controller.Controller
+	// conntrackEndpoints holds, per endpoint slice key, the UDP endpoints seen
+	// in the endpoint slice and not flushed yet. Flushing the conntrack entries
+	// of endpoints that are gone requires knowing which endpoints were there
+	// before, and that can't be read back from anywhere else.
+	conntrackEndpoints *conntrackEndpointTracker
 
 	// retry framework for nodes, used for updating routes/nftables rules for node PMTUD guarding
 	retryNodes *retry.RetryFramework
@@ -152,7 +159,8 @@ func newDefaultNodeNetworkController(cnnci *CommonNodeNetworkControllerInfo, sto
 			wg:                              wg,
 			ovsClient:                       ovsClient,
 		},
-		routeManager: routeManager,
+		routeManager:       routeManager,
+		conntrackEndpoints: newConntrackEndpointTracker(),
 	}
 	if util.IsNetworkSegmentationSupportEnabled() && (config.IsModeDPUHost() || config.IsModeFull()) {
 		c.udnHostIsolationManager = NewUDNHostIsolationManager(config.IPv4Mode, config.IPv6Mode,
@@ -173,6 +181,13 @@ func newDefaultNodeNetworkController(cnnci *CommonNodeNetworkControllerInfo, sto
 			}
 		}
 		return nil
+	})
+	c.conntrackEndpointSliceController = controller.NewController("node-conntrack-endpointslice", &controller.ControllerConfig[discovery.EndpointSlice]{
+		Informer:       c.watchFactory.EndpointSliceInformer(),
+		ObjNeedsUpdate: c.observeConntrackEndpointSlice,
+		Reconcile:      c.reconcileEndpointSliceConntrack,
+		MaxAttempts:    controller.InfiniteAttempts,
+		Threadiness:    1,
 	})
 	return c
 }
@@ -236,7 +251,6 @@ func NewDefaultNodeNetworkController(cnnci *CommonNodeNetworkControllerInfo, net
 }
 
 func (nc *DefaultNodeNetworkController) initRetryFrameworkForNode() {
-	nc.retryEndpointSlices = nc.newRetryFrameworkNode(factory.EndpointSliceForStaleConntrackRemovalType)
 	nc.retryNodes = nc.newRetryFrameworkNode(factory.NodeType)
 }
 
@@ -1154,6 +1168,7 @@ func (nc *DefaultNodeNetworkController) Stop() {
 	}
 	close(nc.stopChan)
 	nc.stopChan = nil
+	controller.Stop(nc.conntrackEndpointSliceController)
 	nc.wg.Wait()
 }
 
@@ -1253,19 +1268,196 @@ func (nc *DefaultNodeNetworkController) reconcileConntrackUponEndpointSliceEvent
 	return utilerrors.Join(errors...)
 
 }
-func (nc *DefaultNodeNetworkController) WatchEndpointSlices() error {
-	if util.IsNetworkSegmentationSupportEnabled() {
-		// Filter out objects without the default serviceName label to exclude mirrored EndpointSlices
-		// Only default EndpointSlices contain the discovery.LabelServiceName label
-		req, err := labels.NewRequirement(discovery.LabelServiceName, selection.Exists, nil)
-		if err != nil {
-			return err
-		}
-		_, err = nc.retryEndpointSlices.WatchResourceFiltered("", labels.NewSelector().Add(*req))
-		return err
+
+// hasConntrackEndpoints tells if an endpoint slice has endpoints whose UDP
+// conntrack entries have to be flushed once they are gone.
+func hasConntrackEndpoints(endpointSlice *discovery.EndpointSlice) bool {
+	if util.IsNetworkSegmentationSupportEnabled() && endpointSlice.Labels[discovery.LabelServiceName] == "" {
+		return false
 	}
-	_, err := nc.retryEndpointSlices.WatchResource()
-	return err
+	if len(endpointSlice.Endpoints) == 0 {
+		return false
+	}
+	for _, port := range endpointSlice.Ports {
+		if *port.Protocol == corev1.ProtocolUDP {
+			return true
+		}
+	}
+	return false
+}
+
+// conntrackEndpointPort is a UDP port of an endpoint slice.
+type conntrackEndpointPort struct {
+	name string
+	port int32
+}
+
+// conntrackEndpoint is a UDP endpoint of an endpoint slice.
+type conntrackEndpoint struct {
+	conntrackEndpointPort
+	address string
+}
+
+// conntrackEndpointSliceState is what is remembered of an endpoint slice.
+type conntrackEndpointSliceState struct {
+	service string
+	// endpoints maps each endpoint to the observation that last saw it
+	endpoints map[conntrackEndpoint]uint64
+}
+
+// conntrackEndpointTracker remembers the UDP endpoints seen in each endpoint
+// slice until their conntrack entries are flushed.
+type conntrackEndpointTracker struct {
+	sync.Mutex
+	observations uint64
+	slices       map[string]*conntrackEndpointSliceState
+}
+
+func newConntrackEndpointTracker() *conntrackEndpointTracker {
+	return &conntrackEndpointTracker{slices: map[string]*conntrackEndpointSliceState{}}
+}
+
+// observe remembers the UDP endpoints of an endpoint slice.
+func (t *conntrackEndpointTracker) observe(endpointSlice *discovery.EndpointSlice) {
+	if !hasConntrackEndpoints(endpointSlice) {
+		return
+	}
+	key := cache.MetaObjectToName(endpointSlice).String()
+	t.Lock()
+	defer t.Unlock()
+	state := t.slices[key]
+	if state == nil {
+		state = &conntrackEndpointSliceState{endpoints: map[conntrackEndpoint]uint64{}}
+		t.slices[key] = state
+	}
+	state.service = endpointSlice.Labels[discovery.LabelServiceName]
+	t.observations++
+	for _, port := range endpointSlice.Ports {
+		// the port number is optional in the API: without it there is no
+		// conntrack entry to match
+		if *port.Protocol != corev1.ProtocolUDP || port.Port == nil {
+			continue
+		}
+		endpointPort := conntrackEndpointPort{port: *port.Port}
+		if port.Name != nil {
+			endpointPort.name = *port.Name
+		}
+		for _, endpoint := range endpointSlice.Endpoints {
+			for _, address := range endpoint.Addresses {
+				state.endpoints[conntrackEndpoint{endpointPort, address}] = t.observations
+			}
+		}
+	}
+}
+
+// get returns the service of an endpoint slice and the endpoints remembered
+// for it, with the observation that last saw each of them.
+func (t *conntrackEndpointTracker) get(key string) (string, map[conntrackEndpoint]uint64) {
+	t.Lock()
+	defer t.Unlock()
+	state := t.slices[key]
+	if state == nil {
+		return "", nil
+	}
+	return state.service, maps.Clone(state.endpoints)
+}
+
+// flushed drops the endpoints that were not observed again since they were
+// returned by get.
+func (t *conntrackEndpointTracker) flushed(key string, endpoints map[conntrackEndpoint]uint64) {
+	t.Lock()
+	defer t.Unlock()
+	state := t.slices[key]
+	if state == nil {
+		return
+	}
+	for endpoint, observation := range endpoints {
+		if state.endpoints[endpoint] == observation {
+			delete(state.endpoints, endpoint)
+		}
+	}
+	if len(state.endpoints) == 0 {
+		delete(t.slices, key)
+	}
+}
+
+// conntrackEndpointSliceNeedsUpdate skips the endpoint slices that have no
+// UDP endpoints to track and had none before.
+func conntrackEndpointSliceNeedsUpdate(oldEndpointSlice, newEndpointSlice *discovery.EndpointSlice) bool {
+	return hasConntrackEndpoints(newEndpointSlice) ||
+		(oldEndpointSlice != nil && hasConntrackEndpoints(oldEndpointSlice))
+}
+
+// observeConntrackEndpointSlice runs for every add and update event, before
+// the endpoint slice is queued. Events of an endpoint slice are merged in the
+// queue, so an endpoint added and removed again before the endpoint slice is
+// reconciled is only ever seen here.
+func (nc *DefaultNodeNetworkController) observeConntrackEndpointSlice(oldEndpointSlice, newEndpointSlice *discovery.EndpointSlice) bool {
+	nc.conntrackEndpoints.observe(newEndpointSlice)
+	return conntrackEndpointSliceNeedsUpdate(oldEndpointSlice, newEndpointSlice)
+}
+
+// reconcileEndpointSliceConntrack flushes the UDP conntrack entries of the
+// endpoints that were seen in the endpoint slice and are gone.
+func (nc *DefaultNodeNetworkController) reconcileEndpointSliceConntrack(_ context.Context, key string) error {
+	namespace, name, err := cache.SplitMetaNamespaceKey(key)
+	if err != nil {
+		return fmt.Errorf("failed to split key %s: %w", key, err)
+	}
+	service, endpoints := nc.conntrackEndpoints.get(key)
+
+	endpointSlice, err := nc.watchFactory.GetEndpointSlice(namespace, name)
+	if err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("failed to get EndpointSlice %s: %w", key, err)
+	}
+	// an endpoint slice that is deleted or no longer has UDP endpoints to track
+	// is handled as gone: all the endpoints it had are flushed
+	if err != nil || !hasConntrackEndpoints(endpointSlice) {
+		endpointSlice = nil
+	}
+
+	endpointsPerPort := map[conntrackEndpointPort]map[conntrackEndpoint]uint64{}
+	for endpoint, observation := range endpoints {
+		if endpointsPerPort[endpoint.conntrackEndpointPort] == nil {
+			endpointsPerPort[endpoint.conntrackEndpointPort] = map[conntrackEndpoint]uint64{}
+		}
+		endpointsPerPort[endpoint.conntrackEndpointPort][endpoint] = observation
+	}
+	var errs []error
+	for port, portEndpoints := range endpointsPerPort {
+		protocol := corev1.ProtocolUDP
+		oldEndpointSlice := &discovery.EndpointSlice{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: namespace,
+				Name:      name,
+				Labels:    map[string]string{discovery.LabelServiceName: service},
+			},
+			Ports: []discovery.EndpointPort{{Name: &port.name, Port: &port.port, Protocol: &protocol}},
+		}
+		for endpoint := range portEndpoints {
+			oldEndpointSlice.Endpoints = append(oldEndpointSlice.Endpoints, discovery.Endpoint{Addresses: []string{endpoint.address}})
+		}
+		if err := nc.reconcileConntrackUponEndpointSliceEvents(oldEndpointSlice, endpointSlice); err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		nc.conntrackEndpoints.flushed(key, portEndpoints)
+	}
+
+	// the endpoints still there were dropped with those flushed
+	if endpointSlice != nil {
+		nc.conntrackEndpoints.observe(endpointSlice)
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("failed to reconcile conntrack for EndpointSlice %s: %w", key, utilerrors.Join(errs...))
+	}
+	return nil
+}
+
+// WatchEndpointSlices starts the controller removing the stale UDP conntrack
+// entries of service endpoints.
+func (nc *DefaultNodeNetworkController) WatchEndpointSlices() error {
+	return controller.Start(nc.conntrackEndpointSliceController)
 }
 
 func (nc *DefaultNodeNetworkController) WatchNodes() error {

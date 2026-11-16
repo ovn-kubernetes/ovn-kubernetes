@@ -2268,13 +2268,310 @@ add element inet ovn-kubernetes remote-node-ips-v6 { 2002:db8:1::4 }
 				}
 			}()),
 		)
-	})
 
-	Describe("advertised UDN isolation nftables", func() {
-		const nodeName = "my-node"
-
-		BeforeEach(func() {
+		It("conntrackEndpointSliceNeedsUpdate only reconciles EndpointSlices with UDP endpoints to track", func() {
 			Expect(config.PrepareTestConfig()).To(Succeed())
+			config.OVNKubernetesFeature.EnableMultiNetwork = true
+			config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+			defer func() {
+				_ = config.PrepareTestConfig()
+			}()
+
+			udpEPS := makeEndpointSlice([]endpointPortConfig{
+				{name: strPtr("dns"), port: testEndpointPort1, protocol: udpProtocol},
+			}, []string{"10.0.0.1"})
+			tcpEPS := makeEndpointSlice([]endpointPortConfig{
+				{name: strPtr("http"), port: testEndpointPort1, protocol: tcpProtocol},
+			}, []string{"10.0.0.1"})
+			unlabeledEPS := udpEPS.DeepCopy()
+			unlabeledEPS.Labels = map[string]string{}
+			emptyEPS := udpEPS.DeepCopy()
+			emptyEPS.Endpoints = nil
+
+			By("reconciling an EndpointSlice that has UDP endpoints")
+			Expect(conntrackEndpointSliceNeedsUpdate(nil, udpEPS)).To(BeTrue())
+			Expect(conntrackEndpointSliceNeedsUpdate(udpEPS, udpEPS)).To(BeTrue())
+
+			By("reconciling an EndpointSlice that had UDP endpoints")
+			Expect(conntrackEndpointSliceNeedsUpdate(udpEPS, tcpEPS)).To(BeTrue())
+			Expect(conntrackEndpointSliceNeedsUpdate(udpEPS, emptyEPS)).To(BeTrue())
+			Expect(conntrackEndpointSliceNeedsUpdate(udpEPS, unlabeledEPS)).To(BeTrue())
+
+			By("skipping an EndpointSlice that has and had no UDP endpoints to track")
+			Expect(conntrackEndpointSliceNeedsUpdate(nil, tcpEPS)).To(BeFalse())
+			Expect(conntrackEndpointSliceNeedsUpdate(tcpEPS, tcpEPS)).To(BeFalse())
+			Expect(conntrackEndpointSliceNeedsUpdate(nil, emptyEPS)).To(BeFalse())
+			Expect(conntrackEndpointSliceNeedsUpdate(unlabeledEPS, unlabeledEPS)).To(BeFalse())
+		})
+
+		It("reconcileEndpointSliceConntrack flushes conntrack using remembered state on deletion", func() {
+			mockNetLinkOps := new(utilMocks.NetLinkOps)
+			util.SetNetLinkOpMockInst(mockNetLinkOps)
+			defer util.ResetNetLinkOpMockInst()
+
+			mockNetLinkOps.On("ConntrackDeleteFilters",
+				mock.AnythingOfType("netlink.ConntrackTableType"),
+				mock.AnythingOfType("netlink.InetFamily"),
+				mock.AnythingOfType("*netlink.ConntrackFilter")).
+				Return(uint(1), nil).Once()
+
+			svc := makeService([]servicePortConfig{{name: "http", port: testServicePort1, targetPort: testEndpointPort1, protocol: udpProtocol}})
+			fakeClient := fake.NewSimpleClientset(svc)
+
+			wf, err := factory.NewNodeWatchFactory(&util.OVNNodeClientset{
+				KubeClient:            fakeClient,
+				NetworkAttchDefClient: nadfake.NewSimpleClientset(),
+			}, "test-node")
+			Expect(err).NotTo(HaveOccurred())
+			defer wf.Shutdown()
+			Expect(wf.Start()).To(Succeed())
+
+			nc := &DefaultNodeNetworkController{
+				BaseNodeNetworkController: BaseNodeNetworkController{
+					CommonNodeNetworkControllerInfo: CommonNodeNetworkControllerInfo{
+						watchFactory: wf,
+					},
+				},
+				conntrackEndpoints: newConntrackEndpointTracker(),
+			}
+
+			key := "test-ns/test-endpointslice"
+			oldEPS := makeEndpointSlice([]endpointPortConfig{
+				{name: strPtr("http"), port: testEndpointPort1, protocol: udpProtocol},
+			}, []string{"10.0.0.1"})
+			nc.conntrackEndpoints.observe(oldEPS)
+
+			// EndpointSlice does not exist in fakeClient (deleted)
+			Expect(nc.reconcileEndpointSliceConntrack(context.Background(), key)).To(Succeed())
+			mockNetLinkOps.AssertExpectations(GinkgoT())
+
+			_, remembered := nc.conntrackEndpoints.get(key)
+			Expect(remembered).To(BeEmpty())
+		})
+
+		It("reconcileEndpointSliceConntrack remembers only the UDP endpoints and flushes those that are gone", func() {
+			mockNetLinkOps := new(utilMocks.NetLinkOps)
+			util.SetNetLinkOpMockInst(mockNetLinkOps)
+			defer util.ResetNetLinkOpMockInst()
+
+			svc := makeService([]servicePortConfig{
+				{name: "dns", port: testServicePort1, targetPort: testEndpointPort1, protocol: udpProtocol},
+				{name: "http", port: testServicePort2, targetPort: testEndpointPort2, protocol: tcpProtocol},
+			})
+			curEPS := makeEndpointSlice([]endpointPortConfig{
+				{name: strPtr("dns"), port: testEndpointPort1, protocol: udpProtocol},
+				{name: strPtr("http"), port: testEndpointPort2, protocol: tcpProtocol},
+			}, []string{"10.0.0.1", "10.0.0.2"})
+			nodeName := "some-node"
+			curEPS.Endpoints[0].NodeName = &nodeName
+
+			ovnClient := util.GetOVNClientset(svc, curEPS)
+			wf, err := factory.NewNodeWatchFactory(ovnClient.GetNodeClientset(), "test-node")
+			Expect(err).NotTo(HaveOccurred())
+			defer wf.Shutdown()
+			Expect(wf.Start()).To(Succeed())
+
+			nc := &DefaultNodeNetworkController{
+				BaseNodeNetworkController: BaseNodeNetworkController{
+					CommonNodeNetworkControllerInfo: CommonNodeNetworkControllerInfo{
+						watchFactory: wf,
+					},
+				},
+				conntrackEndpoints: newConntrackEndpointTracker(),
+			}
+			key := "test-ns/test-endpointslice"
+
+			By("remembering the UDP endpoints the first time, without flushing anything")
+			Expect(nc.reconcileEndpointSliceConntrack(context.Background(), key)).To(Succeed())
+			mockNetLinkOps.AssertNotCalled(GinkgoT(), "ConntrackDeleteFilters", mock.Anything, mock.Anything, mock.Anything)
+			dns := conntrackEndpointPort{name: "dns", port: testEndpointPort1}
+			service, remembered := nc.conntrackEndpoints.get(key)
+			Expect(service).To(Equal(testServiceName))
+			Expect(remembered).To(HaveLen(2))
+			Expect(remembered).To(HaveKey(conntrackEndpoint{dns, "10.0.0.1"}))
+			Expect(remembered).To(HaveKey(conntrackEndpoint{dns, "10.0.0.2"}))
+
+			By("flushing the endpoint that is gone on the next reconcile")
+			mockNetLinkOps.On("ConntrackDeleteFilters",
+				mock.AnythingOfType("netlink.ConntrackTableType"),
+				mock.AnythingOfType("netlink.InetFamily"),
+				mock.AnythingOfType("*netlink.ConntrackFilter")).
+				Return(uint(1), nil).Once()
+			updatedEPS := curEPS.DeepCopy()
+			updatedEPS.Endpoints[0].Addresses = []string{"10.0.0.2"}
+			_, err = ovnClient.KubeClient.DiscoveryV1().EndpointSlices(testNamespace).Update(context.Background(), updatedEPS, metav1.UpdateOptions{})
+			Expect(err).NotTo(HaveOccurred())
+			Eventually(func() ([]string, error) {
+				eps, err := wf.GetEndpointSlice(testNamespace, testEndpointSlice)
+				if err != nil {
+					return nil, err
+				}
+				return eps.Endpoints[0].Addresses, nil
+			}).Should(Equal([]string{"10.0.0.2"}))
+
+			Expect(nc.reconcileEndpointSliceConntrack(context.Background(), key)).To(Succeed())
+			mockNetLinkOps.AssertExpectations(GinkgoT())
+			_, remembered = nc.conntrackEndpoints.get(key)
+			Expect(remembered).To(HaveLen(1))
+			Expect(remembered).To(HaveKey(conntrackEndpoint{dns, "10.0.0.2"}))
+		})
+
+		It("flushes an endpoint that was added and removed again before the EndpointSlice is reconciled", func() {
+			mockNetLinkOps := new(utilMocks.NetLinkOps)
+			util.SetNetLinkOpMockInst(mockNetLinkOps)
+			defer util.ResetNetLinkOpMockInst()
+
+			svc := makeService([]servicePortConfig{{name: "dns", port: testServicePort1, targetPort: testEndpointPort1, protocol: udpProtocol}})
+			eps := makeEndpointSlice([]endpointPortConfig{
+				{name: strPtr("dns"), port: testEndpointPort1, protocol: udpProtocol},
+			}, []string{"10.0.0.1"})
+
+			ovnClient := util.GetOVNClientset(svc, eps)
+			wf, err := factory.NewNodeWatchFactory(ovnClient.GetNodeClientset(), "test-node")
+			Expect(err).NotTo(HaveOccurred())
+			defer wf.Shutdown()
+			Expect(wf.Start()).To(Succeed())
+
+			nc := &DefaultNodeNetworkController{
+				BaseNodeNetworkController: BaseNodeNetworkController{
+					CommonNodeNetworkControllerInfo: CommonNodeNetworkControllerInfo{
+						watchFactory: wf,
+					},
+				},
+				conntrackEndpoints: newConntrackEndpointTracker(),
+			}
+			key := "test-ns/test-endpointslice"
+			Expect(nc.reconcileEndpointSliceConntrack(context.Background(), key)).To(Succeed())
+
+			By("delivering both updates before the EndpointSlice is reconciled")
+			flapping := eps.DeepCopy()
+			flapping.Endpoints[0].Addresses = []string{"10.0.0.1", "10.0.0.2"}
+			Expect(nc.observeConntrackEndpointSlice(eps, flapping)).To(BeTrue())
+			Expect(nc.observeConntrackEndpointSlice(flapping, eps)).To(BeTrue())
+
+			mockNetLinkOps.On("ConntrackDeleteFilters",
+				mock.AnythingOfType("netlink.ConntrackTableType"),
+				mock.AnythingOfType("netlink.InetFamily"),
+				buildExpectedFilter(expectedConntrackFilter{ip: "10.0.0.2", port: uint16(testServicePort1), protocol: syscall.IPPROTO_UDP})).
+				Return(uint(1), nil).Once()
+			Expect(nc.reconcileEndpointSliceConntrack(context.Background(), key)).To(Succeed())
+			mockNetLinkOps.AssertExpectations(GinkgoT())
+
+			dns := conntrackEndpointPort{name: "dns", port: testEndpointPort1}
+			_, remembered := nc.conntrackEndpoints.get(key)
+			Expect(remembered).To(HaveLen(1))
+			Expect(remembered).To(HaveKey(conntrackEndpoint{dns, "10.0.0.1"}))
+		})
+
+		It("ignores the UDP ports of an EndpointSlice that have no port number", func() {
+			mockNetLinkOps := new(utilMocks.NetLinkOps)
+			util.SetNetLinkOpMockInst(mockNetLinkOps)
+			defer util.ResetNetLinkOpMockInst()
+
+			svc := makeService([]servicePortConfig{{name: "dns", port: testServicePort1, targetPort: testEndpointPort1, protocol: udpProtocol}})
+			eps := makeEndpointSlice([]endpointPortConfig{
+				{name: strPtr("dns"), port: testEndpointPort1, protocol: udpProtocol},
+			}, []string{"10.0.0.1"})
+			udp := udpProtocol
+			eps.Ports = append([]discovery.EndpointPort{{Name: strPtr("any"), Protocol: &udp}}, eps.Ports...)
+
+			ovnClient := util.GetOVNClientset(svc, eps)
+			wf, err := factory.NewNodeWatchFactory(ovnClient.GetNodeClientset(), "test-node")
+			Expect(err).NotTo(HaveOccurred())
+			defer wf.Shutdown()
+			Expect(wf.Start()).To(Succeed())
+
+			nc := &DefaultNodeNetworkController{
+				BaseNodeNetworkController: BaseNodeNetworkController{
+					CommonNodeNetworkControllerInfo: CommonNodeNetworkControllerInfo{
+						watchFactory: wf,
+					},
+				},
+				conntrackEndpoints: newConntrackEndpointTracker(),
+			}
+			key := "test-ns/test-endpointslice"
+			Expect(nc.observeConntrackEndpointSlice(nil, eps)).To(BeTrue())
+			// reconciled twice: the second time with the endpoint remembered
+			Expect(nc.reconcileEndpointSliceConntrack(context.Background(), key)).To(Succeed())
+			Expect(nc.reconcileEndpointSliceConntrack(context.Background(), key)).To(Succeed())
+			mockNetLinkOps.AssertNotCalled(GinkgoT(), "ConntrackDeleteFilters", mock.Anything, mock.Anything, mock.Anything)
+
+			dns := conntrackEndpointPort{name: "dns", port: testEndpointPort1}
+			_, remembered := nc.conntrackEndpoints.get(key)
+			Expect(remembered).To(HaveLen(1))
+			Expect(remembered).To(HaveKey(conntrackEndpoint{dns, "10.0.0.1"}))
+		})
+
+		It("keeps an endpoint that was seen again while it was being flushed", func() {
+			eps := makeEndpointSlice([]endpointPortConfig{
+				{name: strPtr("dns"), port: testEndpointPort1, protocol: udpProtocol},
+			}, []string{"10.0.0.1"})
+			key := "test-ns/test-endpointslice"
+			tracker := newConntrackEndpointTracker()
+			tracker.observe(eps)
+			_, flushing := tracker.get(key)
+
+			tracker.observe(eps)
+			tracker.flushed(key, flushing)
+			_, remembered := tracker.get(key)
+			Expect(remembered).To(HaveLen(1))
+
+			tracker.flushed(key, remembered)
+			_, remembered = tracker.get(key)
+			Expect(remembered).To(BeEmpty())
+		})
+
+		It("reconcileEndpointSliceConntrack flushes conntrack and forgets the EndpointSlice when service label is removed under segmentation", func() {
+			Expect(config.PrepareTestConfig()).To(Succeed())
+			config.OVNKubernetesFeature.EnableMultiNetwork = true
+			config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+			defer func() {
+				_ = config.PrepareTestConfig()
+			}()
+
+			mockNetLinkOps := new(utilMocks.NetLinkOps)
+			util.SetNetLinkOpMockInst(mockNetLinkOps)
+			defer util.ResetNetLinkOpMockInst()
+
+			mockNetLinkOps.On("ConntrackDeleteFilters",
+				mock.AnythingOfType("netlink.ConntrackTableType"),
+				mock.AnythingOfType("netlink.InetFamily"),
+				mock.AnythingOfType("*netlink.ConntrackFilter")).
+				Return(uint(1), nil).Once()
+
+			svc := makeService([]servicePortConfig{{name: "http", port: testServicePort1, targetPort: testEndpointPort1, protocol: udpProtocol}})
+			// curEPS exists in API, but has no service label
+			curEPS := makeEndpointSlice([]endpointPortConfig{
+				{name: strPtr("http"), port: testEndpointPort1, protocol: udpProtocol},
+			}, []string{"10.0.0.1"})
+			curEPS.Labels = map[string]string{}
+
+			ovnClient := util.GetOVNClientset(svc, curEPS)
+			wf, err := factory.NewNodeWatchFactory(ovnClient.GetNodeClientset(), "test-node")
+			Expect(err).NotTo(HaveOccurred())
+			defer wf.Shutdown()
+			Expect(wf.Start()).To(Succeed())
+
+			nc := &DefaultNodeNetworkController{
+				BaseNodeNetworkController: BaseNodeNetworkController{
+					CommonNodeNetworkControllerInfo: CommonNodeNetworkControllerInfo{
+						watchFactory: wf,
+					},
+				},
+				conntrackEndpoints: newConntrackEndpointTracker(),
+			}
+
+			key := "test-ns/test-endpointslice"
+			oldEPS := makeEndpointSlice([]endpointPortConfig{
+				{name: strPtr("http"), port: testEndpointPort1, protocol: udpProtocol},
+			}, []string{"10.0.0.1"})
+			nc.conntrackEndpoints.observe(oldEPS)
+
+			Expect(nc.reconcileEndpointSliceConntrack(context.Background(), key)).To(Succeed())
+			mockNetLinkOps.AssertExpectations(GinkgoT())
+
+			_, remembered := nc.conntrackEndpoints.get(key)
+			Expect(remembered).To(BeEmpty())
 		})
 
 		It("sets up isolation sets for DPU host mode without NodePort", func() {
