@@ -39,11 +39,12 @@ const (
 	defaultNetworkReconcilerThreadiness = 5
 )
 
-func newNetworkController(name, node string, cm ControllerManager, wf watchFactory) *networkController {
+func newNetworkController(name, node string, cm ControllerManager, wf watchFactory, asyncNetworkStart bool) *networkController {
 	nc := &networkController{
 		name:                   fmt.Sprintf("[%s network controller]", name),
 		node:                   node,
 		cm:                     cm,
+		asyncNetworkStart:      asyncNetworkStart,
 		networks:               map[string]util.MutableNetInfo{},
 		networksByID:           map[int]string{},
 		networkControllers:     map[string]*networkControllerState{},
@@ -75,7 +76,7 @@ func newNetworkController(name, node string, cm ControllerManager, wf watchFacto
 			RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
 			Informer:       wf.RouteAdvertisementsInformer().Informer(),
 			Lister:         nc.raLister.List,
-			Reconcile:      func(string) error { return nc.syncRunningNetworks() },
+			Reconcile:      func(_ context.Context, _ string) error { return nc.syncRunningNetworks() },
 			ObjNeedsUpdate: raNeedsUpdate,
 			Threadiness:    1,
 		}
@@ -89,7 +90,7 @@ func newNetworkController(name, node string, cm ControllerManager, wf watchFacto
 			RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
 			Informer:       wf.NodeCoreInformer().Informer(),
 			Lister:         nc.nodeLister.List,
-			Reconcile:      func(string) error { return nc.syncRunningNetworks() },
+			Reconcile:      func(_ context.Context, _ string) error { return nc.syncRunningNetworks() },
 			ObjNeedsUpdate: nodeNeedsUpdate,
 			Threadiness:    1,
 		}
@@ -116,6 +117,11 @@ type networkController struct {
 
 	name string
 	node string
+	// asyncNetworkStart, when true, skips inline network start during initial
+	// sync so reconciler workers start networks with bounded concurrency.
+	// Used by ovnkube-controller; ovnkube-node starts networks inline so they
+	// are ready before node setup continues.
+	asyncNetworkStart bool
 
 	nadLister  nadlisters.NetworkAttachmentDefinitionLister
 	raLister   ralisters.RouteAdvertisementsLister
@@ -345,7 +351,7 @@ func (c *networkController) shouldHandleNetworkRefChange(networkName, node strin
 	return true
 }
 
-func (c *networkController) reconcilePendingNetworkRefChanges(networkName string) {
+func (c *networkController) reconcilePendingNetworkRefChanges(ctx context.Context, networkName string) {
 	ctrl, ok := c.getControllerForNotify(networkName)
 	if !ok || c.nodeHasNetwork == nil {
 		return
@@ -359,7 +365,7 @@ func (c *networkController) reconcilePendingNetworkRefChanges(networkName string
 		if !c.shouldHandleNetworkRefChange(networkName, node, active) {
 			continue
 		}
-		ctrl.HandleNetworkRefChange(node, active)
+		ctrl.HandleNetworkRefChange(ctx, node, active)
 	}
 }
 
@@ -374,11 +380,20 @@ func (c *networkController) getAllNetworkStates() []*networkControllerState {
 }
 
 func (c *networkController) syncAll() error {
+	ctx := context.Background()
+
 	// as we sync upon start, consider networks that have not been ensured as
 	// stale and clean them up
 	validNetworks := c.getAllNetworks()
 	if err := c.cm.CleanupStaleNetworks(validNetworks...); err != nil {
 		return err
+	}
+
+	// For async start, skip inline sync and let reconciler workers handle networks
+	// asynchronously.
+	if c.asyncNetworkStart {
+		klog.Infof("%s: skipping inline sync for async start", c.name)
+		return nil
 	}
 
 	// sync all known networks. There is no informer for networks. Keys are added by NAD controller.
@@ -389,7 +404,7 @@ func (c *networkController) syncAll() error {
 	start := time.Now()
 	klog.Infof("%s: syncing all networks", c.name)
 	for _, network := range validNetworks {
-		err := c.syncNetwork(network.GetNetworkName())
+		err := c.syncNetwork(ctx, network.GetNetworkName())
 		if err != nil {
 			return fmt.Errorf("failed to sync network %s: %w", network.GetNetworkName(), err)
 		}
@@ -408,7 +423,7 @@ func (c *networkController) syncRunningNetworks() error {
 }
 
 // syncNetwork must be called with nm mutex locked
-func (c *networkController) syncNetwork(network string) error {
+func (c *networkController) syncNetwork(ctx context.Context, network string) error {
 	startTime := time.Now()
 	klog.V(5).Infof("%s: sync network %s", c.name, network)
 	defer func() {
@@ -425,7 +440,7 @@ func (c *networkController) syncNetwork(network string) error {
 	// controller may attempt to program the same network.
 	dispose := startFailed || stoppedAndDeleting || !compatible
 	if dispose {
-		err := c.deleteNetwork(network)
+		err := c.deleteNetwork(ctx, network)
 		if err != nil {
 			return err
 		}
@@ -448,18 +463,18 @@ func (c *networkController) syncNetwork(network string) error {
 		}
 
 		// ensure the network controller
-		err = c.ensureNetwork(want)
+		err = c.ensureNetwork(ctx, want)
 		if err != nil {
 			return fmt.Errorf("%s: failed to ensure network %s: %w", c.name, network, err)
 		}
 	}
 
-	c.reconcilePendingNetworkRefChanges(network)
+	c.reconcilePendingNetworkRefChanges(ctx, network)
 
 	return nil
 }
 
-func (c *networkController) ensureNetwork(network util.MutableNetInfo) error {
+func (c *networkController) ensureNetwork(ctx context.Context, network util.MutableNetInfo) error {
 	if network == nil {
 		return nil
 	}
@@ -469,7 +484,7 @@ func (c *networkController) ensureNetwork(network util.MutableNetInfo) error {
 
 	// this might just be an update of reconcilable network configuration
 	if reconcilable != nil && !startFailed {
-		err := reconcilable.Reconcile(network)
+		err := reconcilable.Reconcile(ctx, network)
 		if err != nil {
 			return fmt.Errorf("failed to reconcile controller for network %s: %w", networkName, err)
 		}
@@ -486,7 +501,8 @@ func (c *networkController) ensureNetwork(network util.MutableNetInfo) error {
 		}
 		return fmt.Errorf("failed to create network %s: %w", networkName, err)
 	}
-	err = nc.Start(context.Background())
+
+	err = nc.Start(ctx)
 	if err != nil {
 		nc.Stop()
 		c.setNetworkState(networkName, &networkControllerState{
@@ -500,7 +516,7 @@ func (c *networkController) ensureNetwork(network util.MutableNetInfo) error {
 	return nil
 }
 
-func (c *networkController) deleteNetwork(network string) error {
+func (c *networkController) deleteNetwork(ctx context.Context, network string) error {
 	c.Lock()
 	have := c.networkControllers[network]
 	if have == nil || have.controller == nil {
@@ -519,8 +535,7 @@ func (c *networkController) deleteNetwork(network string) error {
 		ctrl.Stop()
 	}
 
-	err := ctrl.Cleanup()
-	if err != nil {
+	if err := ctrl.Cleanup(ctx); err != nil {
 		return fmt.Errorf("%s: failed to cleanup network %s: %w", c.name, network, err)
 	}
 

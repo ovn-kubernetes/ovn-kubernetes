@@ -841,7 +841,7 @@ func ExecCommandInContainerWithFullOutput(f *framework.Framework, namespace, pod
 
 func assertACLLogs(targetNodeName string, policyNameRegex string, expectedACLVerdict string, expectedACLSeverity string) (bool, error) {
 	framework.Logf("collecting the ovn-controller logs for node: %s", targetNodeName)
-	targetNodeLog, err := infraprovider.Get().ExecK8NodeCommand(targetNodeName, []string{"grep", "acl_log", ovnControllerLogPath})
+	targetNodeLog, err := infraprovider.Get().ExecK8NodeCommand(targetNodeName, []string{"grep", "acl_log", deploymentconfig.Get().OVNControllerLogPath()})
 	if err != nil {
 		return false, fmt.Errorf("error accessing logs in node %s: %v", targetNodeName, err)
 	}
@@ -1137,7 +1137,7 @@ func countACLLogs(targetNodeName string, policyNameRegex string, expectedACLVerd
 	count := 0
 
 	framework.Logf("collecting the ovn-controller logs for node: %s", targetNodeName)
-	targetNodeLog, err := infraprovider.Get().ExecK8NodeCommand(targetNodeName, []string{"cat", ovnControllerLogPath})
+	targetNodeLog, err := infraprovider.Get().ExecK8NodeCommand(targetNodeName, []string{"cat", deploymentconfig.Get().OVNControllerLogPath()})
 	if err != nil {
 		return 0, fmt.Errorf("error accessing logs in node %s: %v", targetNodeName, err)
 	}
@@ -1319,6 +1319,15 @@ func isICMPNetworkPolicyBypassEnabled() bool {
 	ovnKubeNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
 	val := getTemplateContainerEnv(ovnKubeNamespace, "daemonset/ovnkube-node", getNodeContainerName(), "OVN_ALLOW_ICMP_NETPOL")
 	return val == "true"
+}
+
+// isUnprivilegedMode reports whether ovnkube-node runs without privileged: true.
+// Kubelet probes to primary UDN pods are not supported in that mode, see
+// UDNKubeletProbesNotSupported.
+func isUnprivilegedMode() bool {
+	ovnKubeNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
+	val := getTemplateContainerEnv(ovnKubeNamespace, "daemonset/ovnkube-node", getNodeContainerName(), "OVN_UNPRIVILEGED_MODE")
+	return val == "yes"
 }
 
 func isLocalGWModeEnabled() bool {
@@ -1613,8 +1622,8 @@ func waitForPodNotFoundInNamespace(ctx context.Context, c kubernetes.Interface, 
 	return nil
 }
 
-func isDefaultNetworkAdvertised() bool {
-	podNetworkValue, err := e2ekubectl.RunKubectl("default", "get", "ra", "default", "--template={{index .spec.advertisements 0}}")
+func isDefaultNetworkAdvertised(routeAdvertisementName string) bool {
+	podNetworkValue, err := e2ekubectl.RunKubectl("default", "get", "ra", routeAdvertisementName, "--template={{index .spec.advertisements 0}}")
 	if err != nil {
 		return false
 	}

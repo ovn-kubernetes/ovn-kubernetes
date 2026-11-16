@@ -6,14 +6,14 @@ This governance explains how the project is run.
 
 - [Values](#values)
 - [Maintainers](#maintainers)
-  - [Becoming a Maintainer](#becoming-a-maintainer)
-  - [Removing a Maintainer](#removing-a-maintainer)
+    - [Becoming a Maintainer](#becoming-a-maintainer)
+    - [Removing a Maintainer](#removing-a-maintainer)
 - [Members](#members)
-  - [Becoming a Member](#becoming-a-member)
-  - [Removing a Member](#removing-a-member)
+    - [Becoming a Member](#becoming-a-member)
+    - [Removing a Member](#removing-a-member)
 - [Area Maintainers](#area-maintainers)
-  - [Becoming an Area Maintainer](#becoming-an-area-maintainer)
-  - [Removing an Area Maintainer](#removing-an-area-maintainer)
+    - [Becoming an Area Maintainer](#becoming-an-area-maintainer)
+    - [Removing an Area Maintainer](#removing-an-area-maintainer)
 - [GitHub Teams and Repository Access](#github-teams-and-repository-access)
 - [Meetings](#meetings)
 - [Code of Conduct](#code-of-conduct)
@@ -76,12 +76,12 @@ To become a Maintainer you need to demonstrate the following:
 
 - be a current [Member](#members),
 - commitment to the project:
-  - participate in discussions, contributions, code and documentation reviews
-    for 10 months or more,
-  - perform reviews for 10 non-trivial pull requests as part of the
-    `ovn-kubernetes/ovn-kubernetes-reviewers` auto-assignment reviewer pool (see
-    [Joining the auto-assignment reviewer pool](./REVIEWING.md#joining-the-auto-assignment-reviewer-pool)),
-  -  contribute 15 non-trivial pull requests and have them merged,
+    - participate in discussions, contributions, code and documentation reviews
+      for 10 months or more,
+    - perform reviews for 10 non-trivial pull requests as part of the
+      `ovn-kubernetes/ovn-kubernetes-reviewers` auto-assignment reviewer pool (see
+      [Joining the auto-assignment reviewer pool](./REVIEWING.md#joining-the-auto-assignment-reviewer-pool)),
+    - contribute 15 non-trivial pull requests and have them merged,
 - ability to write quality code and/or documentation,
 - ability to collaborate with the team,
 - understanding of how the team works (policies, processes for testing and code review, etc),
@@ -126,11 +126,12 @@ collaborate with the team.
 ### Becoming a Member
 
 To become a Member, you need to demonstrate the following:
+
 - commitment to the project:
-  - participate in discussions, contributions, code and documentation reviews
-    for 3 months or more,
-  - perform reviews for 5 non-trivial pull requests,
-  - contribute 10 non-trivial pull requests and have them merged,
+    - participate in discussions, contributions, code and documentation reviews
+      for 3 months or more,
+    - perform reviews for 5 non-trivial pull requests,
+    - contribute 10 non-trivial pull requests and have them merged,
 - ability to write quality code and/or documentation,
 - ability to collaborate with the team (e.g., participate in project meetings,
   join discussion in the CNCF slack channel, etc.),
@@ -202,10 +203,10 @@ responsibilities listed above — the role formalizes what they are already doin
 To become an Area Maintainer you need to demonstrate the following:
 
 - commitment to the specific area:
-  - participate in discussions, contributions, code and documentation reviews
-    related to the area for 3 months or more,
-  - perform reviews for 5 non-trivial pull requests in the area,
-  - contribute 10 non-trivial pull requests to the area and have them merged,
+    - participate in discussions, contributions, code and documentation reviews
+      related to the area for 3 months or more,
+    - perform reviews for 5 non-trivial pull requests in the area,
+    - contribute 10 non-trivial pull requests to the area and have them merged,
 - demonstrated ownership of area health: maintaining code quality, addressing
   CI failures, keeping documentation current, and driving improvements without
   compromising stability,

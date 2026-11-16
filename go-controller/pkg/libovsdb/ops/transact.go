@@ -39,23 +39,43 @@ func TransactWithRetry(ctx context.Context, c client.Client, ops []ovsdb.Operati
 }
 
 func TransactAndCheck(c client.Client, ops []ovsdb.Operation) ([]ovsdb.OperationResult, error) {
+	return TransactAndCheckWithContext(context.Background(), c, ops)
+}
+
+// TransactAndCheckWithContext transacts ops and checks their results, honoring
+// caller cancellation and limiting the transaction to OVSDBTxnTimeout.
+// Cancellation does not roll back a transaction that has already committed.
+func TransactAndCheckWithContext(ctx context.Context, c client.Client, ops []ovsdb.Operation) ([]ovsdb.OperationResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if len(ops) <= 0 {
 		return []ovsdb.OperationResult{{}}, nil
 	}
 
 	klog.V(5).Infof("Configuring OVN: %+v", ops)
 
-	ctx, cancel := context.WithTimeout(context.TODO(), config.Default.OVSDBTxnTimeout)
+	db := c.Schema().Name
+	metricTxnOps.WithLabelValues(db).Observe(float64(len(ops)))
+	start := time.Now()
+	result := txnResultSuccess
+	defer func() {
+		metricTxnDuration.WithLabelValues(db, result).Observe(time.Since(start).Seconds())
+	}()
+
+	ctx, cancel := context.WithTimeout(ctx, config.Default.OVSDBTxnTimeout)
 	defer cancel()
 
 	results, err := TransactWithRetry(ctx, c, ops)
 	if err != nil {
-		return nil, fmt.Errorf("error in transact with ops %+v: %v", ops, err)
+		result = txnResultError
+		return nil, fmt.Errorf("error in transact with ops %+v: %w", ops, err)
 	}
 
 	opErrors, err := ovsdb.CheckOperationResults(results, ops)
 	if err != nil {
-		return nil, fmt.Errorf("error in transact with ops %+v results %+v and errors %+v: %v", ops, results, opErrors, err)
+		result = txnResultError
+		return nil, fmt.Errorf("error in transact with ops %+v results %+v and errors %+v: %w", ops, results, opErrors, err)
 	}
 
 	return results, nil

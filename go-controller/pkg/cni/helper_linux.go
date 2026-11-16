@@ -27,7 +27,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog/v2"
-	"sigs.k8s.io/knftables"
 
 	"github.com/ovn-kubernetes/libovsdb/client"
 
@@ -352,13 +351,6 @@ func setupInterface(netns ns.NetNS, containerID, ifName string, ifInfo *PodInter
 		// to generate the unique host interface name, postfix it with the podInterface index for non-default network
 		if ifInfo.NetName != types.DefaultNetworkName {
 			ifnameSuffix = fmt.Sprintf("_%d", containerVeth.Index)
-		}
-
-		// If we have the ipv6 gateway LLA then this is a primary layer2 UDN
-		if len(ifInfo.GatewayIPv6LLA) > 0 {
-			if err = setupIngressFilter(ifName, ifInfo.GatewayIPv6LLA.String()); err != nil {
-				return err
-			}
 		}
 
 		return nil
@@ -1145,8 +1137,8 @@ func (pr *PodRequest) deletePodConntrack(podLister corev1listers.PodLister, pod 
 	// north/south NodePort/SNAT ingress connection routed to the VM) that must
 	// survive the migration. Compute, once per DEL, the set of IPs still owned
 	// by another living pod of the VM and skip only those; genuinely released
-	// IPs (e.g. the source pod's default-network IP) are still flushed as
-	// before.
+	// IPs (e.g. the source pod's infrastructure IP for a primary UDN) are
+	// still flushed as before.
 	preservedIPs := pr.migrationPreservedIPs(podLister, pod)
 
 	for _, ip := range result.IPs {
@@ -1175,10 +1167,9 @@ func (pr *PodRequest) deletePodConntrack(podLister corev1listers.PodLister, pod 
 // another living pod of the same KubeVirt VM as the pod being torn down,
 // because of a live migration: the migration target pod when the source is
 // deleted, or the source pod when a failed migration target is deleted.
-// Only the IPs actually preserved across the migration are returned:
-// the cluster default network is skipped, since it allocates per-node subnets
-// and its IPs move with the pod, not with the VM; genuinely released IPs keep
-// being flushed.
+// All networks are considered: VMs on the cluster default network can preserve
+// their IPs across nodes too. deletePodConntrack still flushes addresses that
+// are not owned by the surviving pod, such as released infrastructure IPs.
 //
 // An empty set is returned (flush everything, the previous behavior) when:
 //   - podLister or pod is nil (the unprivileged CNI shim has no apiserver
@@ -1188,10 +1179,8 @@ func (pr *PodRequest) deletePodConntrack(podLister corev1listers.PodLister, pod 
 //
 // Note: podLister requires cluster-wide pod visibility, since the surviving
 // pod of a live migration always runs on a different node. The cniserver's
-// podLister is backed by factory.LocalPodInformer(), which today watches pods
-// on all nodes; if that informer is ever scoped down to node-local pods, this
-// function will return an empty set (see the TODO on the pod informer
-// registration in pkg/factory/factory.go NewNodeWatchFactory).
+// podLister is backed by factory.PodInformer(), which watches pods
+// on all nodes.
 func (pr *PodRequest) migrationPreservedIPs(podLister corev1listers.PodLister, pod *corev1.Pod) sets.Set[string] {
 	preservedIPs := sets.New[string]()
 	if podLister == nil || pod == nil {
@@ -1217,14 +1206,7 @@ func (pr *PodRequest) migrationPreservedIPs(podLister corev1listers.PodLister, p
 				vmPod.Namespace, vmPod.Name, err)
 			continue
 		}
-		for nadName, podNetwork := range podNetworks {
-			// The cluster default network allocates per-node subnets, so its
-			// IPs are never preserved across a live migration: the surviving
-			// pod owns a different IP from its own node's subnet, and the
-			// deleted pod's default-network IP is genuinely released.
-			if nadName == types.DefaultNetworkName {
-				continue
-			}
+		for _, podNetwork := range podNetworks {
 			for _, ipStr := range podNetwork.IPs {
 				ip, _, err := net.ParseCIDR(ipStr)
 				if err != nil {
@@ -1280,69 +1262,4 @@ func (pr *PodRequest) deletePorts(ifaces []string, podNamespace, podName string)
 	for _, iface := range ifaces {
 		pr.deletePort(iface, podNamespace, podName)
 	}
-}
-
-// setupIngressFilter sets up an ingress filter using nftables to block
-// unwanted ICMPv6 Router Advertisement (RA) packets on a specific device.
-// It creates a new nftables table, chain, and rule to drop RA packets
-// that do not match the specified gateway link-local address (gwLLA) and
-// have a Router Advertisement (RA) lifetime not equal to 0.
-//
-// The nftables rule created by this function looks like:
-// `icmpv6 type nd-router-advert ip6 saddr != <gwLLA> @th,48,16 != 0 drop`
-//
-// Parameters:
-//   - ifaceName: The name of the network interface where the ingress filter
-//     should be applied.
-//   - gwLLA: The gateway link-local address to match against in the RA packets.
-//
-// Returns:
-// - error: An error if the nftables setup fails, otherwise nil.
-func setupIngressFilter(ifaceName, gwLLA string) error {
-	const (
-		tableName   = "ingress_filter" // Name of the nftables table to be created
-		rasLifetime = "@th,48,16"      // Offset for RA lifetime field in ICMPv6 packets
-	)
-
-	// Initialize a new nftables table for the ingress filter
-	nft, err := knftables.New(knftables.NetDevFamily, tableName)
-	if err != nil {
-		return fmt.Errorf("failed to initialize table: %w", err)
-	}
-
-	// Delegate the setup of the filter with the specified table and lifetime matcher
-	return setupIngressFilterWithTableAndLifetimeMatcher(nft, ifaceName, gwLLA, rasLifetime)
-}
-
-func setupIngressFilterWithTableAndLifetimeMatcher(nft knftables.Interface, ifaceName, gwLLA, rasLifetime string) error {
-	const (
-		chainName = "input"
-	)
-
-	tx := nft.NewTransaction()
-
-	tx.Add(&knftables.Table{})
-
-	tx.Add(&knftables.Chain{
-		Name:     chainName,
-		Type:     knftables.PtrTo(knftables.FilterType),
-		Hook:     knftables.PtrTo(knftables.IngressHook),
-		Priority: knftables.PtrTo(knftables.FilterPriority),
-		Device:   knftables.PtrTo(ifaceName),
-	})
-
-	tx.Add(&knftables.Rule{
-		Chain: chainName,
-		Rule: knftables.Concat(
-			"icmpv6", "type", "nd-router-advert", "ip6", "saddr", "!=", gwLLA, rasLifetime, "!=", "0", "drop",
-		),
-	})
-
-	// Execute the transaction
-	if err := nft.Run(context.Background(), tx); err != nil {
-		return fmt.Errorf("could not update netdev nftables: %v", err)
-	}
-
-	return nil
-
 }

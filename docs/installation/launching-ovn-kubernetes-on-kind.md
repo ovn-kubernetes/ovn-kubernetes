@@ -1,12 +1,12 @@
-# OVN-Kubernetes KIND Setup
+# OVN-Kubernetes KinD Setup
 
-KIND (Kubernetes in Docker) deployment of OVN kubernetes is a fast and easy means to quickly install and test kubernetes with OVN kubernetes CNI. The value proposition is really for developers who want to reproduce an issue or test a fix in an environment that can be brought up locally and within a few minutes.
+KinD (Kubernetes in Docker) deployment of OVN kubernetes is a fast and easy means to quickly install and test kubernetes with OVN kubernetes CNI. The value proposition is really for developers who want to reproduce an issue or test a fix in an environment that can be brought up locally and within a few minutes.
 
-### Prerequisites 
+### Prerequisites
 
 - 20 GB of free space in root file system
-- Docker run time or podman
-- [KIND](https://kubernetes.io/docs/setup/learning-environment/kind/)
+- Docker runtime or Podman
+- [KinD](https://kubernetes.io/docs/setup/learning-environment/kind/)
    - Installation instructions can be found at https://github.com/kubernetes-sigs/kind#installation-and-usage. 
    - NOTE: The [ovn-kubernetes/contrib/kind.sh](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/contrib/kind.sh) and [ovn-kubernetes/contrib/kind.yaml.j2](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/contrib/kind.yaml.j2) files provision port 11337. If firewalld is enabled, this port will need to be unblocked:
 
@@ -22,12 +22,12 @@ KIND (Kubernetes in Docker) deployment of OVN kubernetes is a fast and easy mean
 - Go 1.23.0 or above
 - For podman users: skopeo
 
-For OVN kubernetes KIND deployment, use the `kind.sh` script (a symlink to `kind-helm.sh`, which deploys OVN-Kubernetes via Helm).
+For OVN kubernetes KinD deployment, use the `kind.sh` script (a symlink to `kind-helm.sh`, which deploys OVN-Kubernetes via Helm).
 
-First Download and build the OVN-Kubernetes repo: 
+First download and build the OVN-Kubernetes repo:
 
 ```shell
-git clone https://github.com/ovn-kubernetes/ovn-kubernetes.git 
+git clone https://github.com/ovn-kubernetes/ovn-kubernetes.git
 cd ovn-kubernetes
 ```
 The `kind.sh` script builds OVN-Kubernetes into a container image. To verify
@@ -119,7 +119,7 @@ ovn-kubernetes       ovs-node-s9gxp                              1/1     Running
 The `kind.sh` script defaults the cluster to HA disabled. There are numerous
 configuration options when deploying. Use `./kind.sh -h` to see the latest options.
 
-```
+```text
 [root@ovnkubernetes contrib]# ./kind.sh --help
 usage: kind-helm.sh [--delete]
        [ -cf  | --config-file <file> ]
@@ -162,6 +162,10 @@ usage: kind-helm.sh [--delete]
 -me  | --multicast-enabled                    Enable multicast. DEFAULT: Disabled
 -ho  | --hybrid-enabled                       Enable hybrid overlay. DEFAULT: Disabled
 -obs | --observability                        Enable observability. DEFAULT: Disabled
+-upm | --unprivileged-mode                    Run ovnkube-node without privileged: true.
+                                              Installs the OVS client tools (ovs-vsctl, ovs-ofctl) on the
+                                              kind nodes, which the CNI plugin needs in this mode.
+                                              DEFAULT: Disabled
 -el  | --ovn-empty-lb-events                  Enable empty-lb-events generation for LB without backends. DEFAULT: Disabled
 -ii  | --install-ingress                      Flag to install Ingress Components.
                                               DEFAULT: Don't install ingress components.
@@ -251,19 +255,53 @@ sudo setenforce 1
 sudo PATH=$PATH:/usr/local/go/bin ./kind.sh -ep podman
 ```
 
+### Unprivileged ovnkube-node
+
+`./kind.sh -upm` deploys ovnkube-node without `privileged: true`, with only
+`NET_ADMIN` added to its capabilities. In this mode ovnkube-node only hands
+the CNI plugin, `ovn-k8s-cni-overlay` in `/opt/cni/bin`, the pod's addresses,
+and the plugin running on the node creates the veth, plugs it into `br-int`
+and waits for the OVN binding itself. For that the plugin runs `ovs-vsctl`
+and `ovs-ofctl` from the node's `PATH`, talking to the `ovs-node` pod through
+the sockets it exposes in `/var/run/openvswitch`.
+
+The container's own `/proc/sys` is read-only without `privileged: true`, so
+the chart mounts the host's `/proc/sys/net` at `/host/proc/sys/net` and
+ovnkube-node writes its per-interface sysctls (forwarding, `rp_filter`,
+`keep_addr_on_down`) there. The pod runs in the host network namespace, so
+these are the same entries, and `NET_ADMIN` is all the kernel requires.
+
+Kubelet probes to primary user defined network pods are not supported in
+this mode: the nftables rule that lets kubelet through the host isolation
+can only be loaded from the host cgroup namespace. The node reports
+`UDNKubeletProbesNotSupported`, and the e2e tests skip their kubelet probe
+assertions. See the
+[UDN documentation](../features/user-defined-networks/user-defined-networks.md#when-kubelet-probes-are-not-supported)
+for the workarounds.
+
+The kind node image does not ship these tools, so the script installs the
+`openvswitch-switch` package on every node before deploying OVN-Kubernetes.
+Only `-upm` strictly needs it, but the tools are installed for every
+deployment because they make debugging OVS from the node easier. The
+package's systemd units are masked first, so the node never starts OVS
+daemons of its own; only the client binaries are used. Nodes that already
+have both binaries are left untouched.
+
+On a non-kind cluster OVS usually runs on the host.
+
 ### Usage Notes 
 
 - You can create your own KIND J2 configuration file if the default one is not sufficient
 
 - You can also specify these values as environment variables. Command line parameters will override the environment variables.
 
-- To tear down the KIND cluster when finished simply run 
+- To tear down the KinD cluster when finished, simply run:
 
-   ```
+   ```shell
    $ ./kind.sh --delete
    ```
 
-## Running OVN-Kubernetes with IPv6 or Dual-stack In KIND
+## Running OVN-Kubernetes with IPv6 or Dual-stack in KinD
 
 This section describes the configuration needed for IPv6 and dual-stack environments.
 
@@ -443,7 +481,7 @@ Kustomize Version: v5.0.4-0.20230601165947-6ce0bf390ce3
 For dual-stack, IPv6 needs to be enable in Docker on the host same as
 for IPv6 only. See above: [Docker Changes For IPv6](#docker-changes-for-ipv6)
 
-### KIND With IP Dual-stack
+### KinD With IP Dual-stack
 
 IP dual-stack is not currently supported in KIND. There is a PR
 ([692](https://github.com/kubernetes-sigs/kind/pull/692))
@@ -500,11 +538,11 @@ Once testing is complete, to tear down the KIND deployment:
 $ kind delete cluster --name ovn
 ```
 
-### Using specific Kind container image and tag
+### Using specific KinD container image and tag
 
-:warning: Use with caution, as kind expects this image to have all it needs.
+:warning: Use with caution, as KinD expects this image to have all it needs.
 
-In order to use an image/tag other than the default hardcoded in kind.sh, specify
+In order to use an image/tag other than the default hardcoded in `kind.sh`, specify
 one (or both of) the following variables:
 
 ```
@@ -512,7 +550,7 @@ $ cd ../../contrib/
 $ KIND_IMAGE=example.com/kindest/node K8S_VERSION=v1.36.4 ./kind.sh
 ```
 
-### Using kind local registry to deploy non ovn-k containers
+### Using KinD local registry to deploy non ovn-k containers
 
 A local registry can be made available to the cluster if started with:
 ```
@@ -522,14 +560,14 @@ This is useful if you want to make your own local images available to the
 cluster. These images can be pushed, fetched or used 
 in manifests using the prefix `localhost:5000`.
 
-### Loading ovn-kubernetes changes without restarting kind
+### Loading ovn-kubernetes changes without restarting KinD
 
 Sometimes it is useful to update ovn-kubernetes without redeploying the whole 
 cluster all over again. For example, when testing the update itself. 
 This can be achieve with the "--deploy" flag:
 
 ```bash
-# Default options will use kind mechanism to push images directly to the
+# Default options will use KinD mechanism to push images directly to the
 ./kind.sh --deploy
 
 # Using a local registry is an alternative to deploy ovn-kubernetes updates 
@@ -574,7 +612,7 @@ ovn-kubernetes     ovs-node-s9gxp                            1/1   Running  0   
 ### Known issues
 
 Some environments (Fedora32,31 on desktop), have problems when the cluster
-is deleted directly with kind `kind delete cluster --name ovn`, it restarts the host.
+is deleted directly with KinD `kind delete cluster --name ovn`, it restarts the host.
 The root cause is unknown, this also can not be reproduced in Ubuntu 20.04 or
 with Fedora32 Cloud, but it does not happen if we clean first the ovn-kubernetes resources.
 

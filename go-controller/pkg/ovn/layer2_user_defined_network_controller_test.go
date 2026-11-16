@@ -412,7 +412,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 
 				fullUDNController, ok := fakeOvn.fullL2UDNControllers[userDefinedNetworkName]
 				Expect(ok).To(BeTrue())
-				err = fullUDNController.init()
+				err = fullUDNController.init(context.Background())
 				Expect(err).NotTo(HaveOccurred())
 
 				udnNetController.bnc.ovnClusterLRPToJoinIfAddrs = dummyJoinIPs()
@@ -429,7 +429,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 				Expect(fakeOvn.fakeClient.KubeClient.CoreV1().Pods(pod.Namespace).Delete(context.Background(), pod.Name, metav1.DeleteOptions{})).To(Succeed())
 				Expect(fakeOvn.fakeClient.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(nad.Namespace).Delete(context.Background(), nad.Name, metav1.DeleteOptions{})).To(Succeed())
 
-				err = fullUDNController.Cleanup()
+				err = fullUDNController.Cleanup(context.Background())
 				Expect(err).NotTo(HaveOccurred())
 				Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(generateUDNPostInitDB([]libovsdbtest.TestData{nbZone})))
 
@@ -492,7 +492,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 			// Run init() to create cluster-level entities, then watchers so node sync creates per-node entities.
 			l2Controller, ok := fakeOvn.fullL2UDNControllers[userDefinedNetworkName]
 			Expect(ok).To(BeTrue())
-			Expect(l2Controller.init()).To(Succeed())
+			Expect(l2Controller.init(context.Background())).To(Succeed())
 			udnNetController, ok := fakeOvn.userDefinedNetworkControllers[userDefinedNetworkName]
 			Expect(ok).To(BeTrue())
 			udnNetController.bnc.ovnClusterLRPToJoinIfAddrs = dummyJoinIPs()
@@ -536,8 +536,60 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 				nil,
 			)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(dummyController.Cleanup()).To(Succeed())
+			Expect(dummyController.Cleanup(context.Background())).To(Succeed())
 			Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(generateUDNPostInitDB([]libovsdbtest.TestData{nbZone})))
+			return nil
+		}
+		Expect(app.Run([]string{app.Name})).To(Succeed())
+	})
+
+	It("retries a repaired transit router tunnel key after a database failure", func() {
+		config.OVNKubernetesFeature.EnableMultiNetwork = true
+		config.Layer2UsesTransitRouter = true
+		setupConfig(dummyLayer2PrimaryUserDefinedNetwork("192.168.0.0/16"), testConfiguration{}, config.GatewayModeShared)
+		app.Action = func(_ *cli.Context) error {
+			netInfo := dummyLayer2PrimaryUserDefinedNetwork("192.168.0.0/16")
+			nad, err := newNetworkAttachmentDefinition(ns, nadName, *netInfo.netconf())
+			Expect(err).NotTo(HaveOccurred())
+			node, err := newNodeWithUserDefinedNetworks(nodeName, "192.168.126.202/24", netInfo)
+			Expect(err).NotTo(HaveOccurred())
+			initialDB.NBData = append(initialDB.NBData, &nbdb.NBGlobal{Name: nodeName, UUID: nodeName})
+			fakeOvn.startWithDBSetup(initialDB,
+				&corev1.NamespaceList{Items: []corev1.Namespace{*newUDNNamespace(ns)}},
+				&corev1.NodeList{Items: []corev1.Node{*node}},
+				&nadapi.NetworkAttachmentDefinitionList{Items: []nadapi.NetworkAttachmentDefinition{*nad}},
+			)
+			Expect(fakeOvn.networkManager.Start()).To(Succeed())
+			defer fakeOvn.networkManager.Stop()
+			oc := fakeOvn.fullL2UDNControllers[userDefinedNetworkName]
+			Expect(oc).NotTo(BeNil())
+			Expect(oc.init(context.Background())).To(Succeed())
+			oldKeys := append([]int(nil), oc.GetTunnelKeys()...)
+			Expect(oldKeys).To(HaveLen(2))
+			readKey := func() (string, error) {
+				router, err := libovsdbops.GetLogicalRouter(fakeOvn.nbClient, &nbdb.LogicalRouter{Name: oc.GetNetworkScopedClusterRouterName()})
+				if err != nil {
+					return "", err
+				}
+				return router.Options["requested-tnl-key"], nil
+			}
+			Eventually(readKey).Should(Equal(fmt.Sprint(oldKeys[1])))
+			updated := util.NewMutableNetInfo(oc.GetNetInfo())
+			updated.SetTunnelKeys([]int{oldKeys[0], oldKeys[1] + 1})
+			// A failed OVN write must leave the old keys cached so reconciliation retries it.
+			fakeOvn.nbClient.Close()
+			Eventually(fakeOvn.nbClient.Connected).Should(BeFalse())
+			Expect(oc.Reconcile(context.Background(), updated)).To(HaveOccurred())
+			Expect(oc.GetTunnelKeys()).To(Equal(oldKeys))
+
+			connCtx, cancel := context.WithTimeout(context.Background(), config.Default.OVSDBTxnTimeout)
+			defer cancel()
+			resetNBClient(connCtx, fakeOvn.nbClient)
+			Eventually(readKey).Should(Equal(fmt.Sprint(oldKeys[1])))
+			Expect(oc.Reconcile(context.Background(), updated)).To(Succeed())
+			Expect(oc.GetTunnelKeys()[1]).To(Equal(oldKeys[1] + 1))
+			Eventually(readKey).Should(Equal(fmt.Sprint(oldKeys[1] + 1)))
+			Expect(oc.Reconcile(context.Background(), updated)).To(Succeed())
 			return nil
 		}
 		Expect(app.Run([]string{app.Name})).To(Succeed())
@@ -601,7 +653,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 
 			l2Controller, ok := fakeOvn.fullL2UDNControllers[userDefinedNetworkName]
 			Expect(ok).To(BeTrue())
-			Expect(l2Controller.init()).To(Succeed())
+			Expect(l2Controller.init(context.Background())).To(Succeed())
 			udnNetController, ok := fakeOvn.userDefinedNetworkControllers[userDefinedNetworkName]
 			Expect(ok).To(BeTrue())
 			udnNetController.bnc.ovnClusterLRPToJoinIfAddrs = dummyJoinIPs()
@@ -621,7 +673,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(acls).NotTo(BeEmpty(), "ACL referencing the address set should exist")
 			}).WithTimeout(5 * time.Second).Should(Succeed())
-			Expect(l2Controller.Cleanup()).To(Succeed())
+			Expect(l2Controller.Cleanup(context.Background())).To(Succeed())
 
 			// Verify address set was cleaned from the NB DB
 			addrSets, err := libovsdbops.FindAddressSetsWithPredicate(fakeOvn.nbClient, func(as *nbdb.AddressSet) bool {
@@ -647,7 +699,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 				fakeOvn.controller.ServiceController(),
 			)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(l2ControllerNew.init()).To(Succeed())
+			Expect(l2ControllerNew.init(context.Background())).To(Succeed())
 			Expect(l2ControllerNew.WatchNamespaces()).To(Succeed())
 			Expect(l2ControllerNew.WatchPods()).To(Succeed())
 			Expect(l2ControllerNew.WatchNetworkPolicy()).To(Succeed())
@@ -775,7 +827,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 			// network controller starts up without any tracked VM pods.  Before the
 			// fix, this deleted the UDN-owned DHCP options because the VM was absent
 			// from the default controller's vms map (treated as an orphan).
-			Expect(fakeOvn.controller.syncPods(nil)).To(Succeed())
+			Expect(fakeOvn.controller.syncPods(context.Background(), nil)).To(Succeed())
 
 			// The UDN-owned DHCP options must survive the default controller's sync.
 			Expect(fakeOvn.nbClient).To(libovsdbtest.HaveDataSubset(
@@ -859,7 +911,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 			mutableNetInfo.SetNetworkID(2)
 			err = util.ReconcileNetInfo(l2Controller.ReconcilableNetInfo, mutableNetInfo)
 			Expect(err).NotTo(HaveOccurred())
-			err = l2Controller.init()
+			err = l2Controller.init(context.Background())
 			Expect(err).NotTo(HaveOccurred())
 			Expect(fakeOvn.registerUDNNodeHandler(netInfo.netName)).To(Succeed())
 
@@ -879,7 +931,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 				return fakeOvn.networkManager.Interface().NodeHasNetwork(remoteNode.Name, netInfo.netName)
 			}).WithTimeout(3 * time.Second).Should(BeTrue())
 			By("Triggering networkRefChange callback after updating remote node as active on NAD")
-			l2Controller.HandleNetworkRefChange(remoteNode.Name, true)
+			l2Controller.HandleNetworkRefChange(context.Background(), remoteNode.Name, true)
 
 			By("Remote node should have a transit-router port created")
 			Eventually(func() bool {
@@ -900,7 +952,7 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 				return fakeOvn.networkManager.Interface().NodeHasNetwork(remoteNode.Name, netInfo.netName)
 			}).WithTimeout(3 * time.Second).Should(BeFalse())
 			By("Triggering networkRefChange callback after updating remote node as inactive on NAD")
-			l2Controller.HandleNetworkRefChange(remoteNode.Name, false)
+			l2Controller.HandleNetworkRefChange(context.Background(), remoteNode.Name, false)
 			By("Remote node should not have a port on transit subnet")
 			Eventually(func() bool {
 				p := func(item *nbdb.LogicalRouterPort) bool {
@@ -1336,7 +1388,7 @@ func setupFakeOvnForLayer2Topology(fakeOvn *FakeOVN, initialDB libovsdbtest.Test
 	if fullL2UDNController == nil {
 		return fmt.Errorf("expected L2 network controller to exist")
 	}
-	err = fullL2UDNController.init()
+	err = fullL2UDNController.init(context.Background())
 	if err != nil {
 		return fmt.Errorf("failed to initialize %s controller: %w", userDefinedNetworkName, err)
 	}

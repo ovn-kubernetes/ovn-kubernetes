@@ -22,6 +22,11 @@ values.
 ## Change log
 This list is to help notify if there are additions, changes or removals to metrics. Latest changes are at the top of this list.
 
+- Change the `workqueue_queue_duration_seconds` and `workqueue_work_duration_seconds` histogram buckets of both `ovnkube_clustermanager_workqueue_*` and `ovnkube_controller_workqueue_*` from six base-10 buckets spanning 10ms to 1000s to twenty base-2 buckets spanning 1ms to ~524s. Queries that read the `_bucket` series by `le` must use the new boundaries
+- Add the `ovnkube_clustermanager_route_advertisement_*` reconcile, FRRConfiguration, prefix, and NAD metrics, registered with route advertisements and `--metrics-enable-scale`
+- Add `ovnkube_controller_route_import_*` metrics, registered with `--enable-route-advertisements` and `--metrics-enable-scale`, and `ovnkube_node_evpn_*` metrics, registered with `--enable-evpn` and `--metrics-enable-scale`
+- Add `ovnkube_ovsdb_txn_duration_seconds` and `ovnkube_ovsdb_txn_ops`, observed on every OVSDB transaction by ovnkube-controller and ovnkube-node, registered with `--metrics-enable-scale`
+- Deprecate `ovnkube_controller_resource_add_latency_seconds`, `ovnkube_controller_resource_update_latency_seconds`, and `ovnkube_controller_resource_delete_latency_seconds`. These metrics will be removed in the next release.
 - Remove the Raft-only `ovn_db_cluster_*` metrics because supported OVN NB and SB databases run as standalone instances.
 - Add `ovnkube_clustermanager_route_advertisement_condition`, `ovnkube_clustermanager_cluster_user_defined_network_condition`, and `ovnkube_clustermanager_vtep_condition` condition metrics
 - Add `transport` label to `ovnkube_clustermanager_cluster_user_defined_networks` to distinguish CUDNs by transport type (Default, EVPN, NoOverlay)
@@ -29,7 +34,7 @@ This list is to help notify if there are additions, changes or removals to metri
 - Remove ovnkube_controller_ovn_cli_latency_seconds metrics since we have moved most of the OVN DB operations to libovsdb.
 - Effect of OVN IC architecture:
   - Move all the metrics from the legacy master subsystem to subsystem "ovnkube-controller". Metrics scraping continues through the controller and cluster-manager pods. See https://github.com/ovn-kubernetes/ovn-kubernetes/pull/3723 for details
-  - Move the following metrics from subsystem "master" to subsystem "clustermanager". Therefore, the follow metrics are renamed.
+  - Move the following metrics from subsystem "master" to subsystem "clustermanager". Therefore, the following metrics are renamed.
     - `ovnkube_master_num_v4_host_subnets` -> `ovnkube_clustermanager_num_v4_host_subnets`
     - `ovnkube_master_num_v6_host_subnets` -> `ovnkube_clustermanager_num_v6_host_subnets`
     - `ovnkube_master_allocated_v4_host_subnets` -> `ovnkube_clustermanager_allocated_v4_host_subnets`

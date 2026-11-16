@@ -30,6 +30,7 @@ import (
 	"k8s.io/client-go/rest"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/cmd/ovnkube-identity/webhook"
+	uplinkv1alpha1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1"
 	ovntesting "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -72,6 +73,52 @@ var _ = Describe("Run", func() {
 
 	It("should always register the \"/node\" webhook endpoint", func() {
 		assertWebhookRequestSuccess(config.Host, config.Port, "node", createNodeAdmissionReviewJSON())
+	})
+
+	It("registers the UplinkState validator and rejects unauthorized writes", func() {
+		payload := createAdmissionReviewJSON(&uplinkv1alpha1.UplinkState{
+			ObjectMeta: metav1.ObjectMeta{Name: "blue.node-a"},
+			Spec:       uplinkv1alpha1.UplinkStateSpec{UplinkName: "blue", NodeName: "node-a"},
+		})
+		client := createWebhookClient()
+		Eventually(func(g Gomega) {
+			response, err := client.Post(fmt.Sprintf("https://%s/uplinkstate", net.JoinHostPort(config.Host, strconv.Itoa(config.Port))), "application/json", bytes.NewReader(payload))
+			g.Expect(err).NotTo(HaveOccurred())
+			defer response.Body.Close()
+			review := &admissionv1.AdmissionReview{}
+			g.Expect(json.NewDecoder(response.Body).Decode(review)).To(Succeed())
+			g.Expect(review.Response).NotTo(BeNil())
+			g.Expect(review.Response.Allowed).To(BeFalse())
+			g.Expect(review.Response.Result.Message).To(ContainSubstring("only the owning OVN node identity"))
+		}).Within(5 * time.Second).Should(Succeed())
+	})
+
+	It("admits an owning node's UplinkState without Uplink or Node lookups", func() {
+		// The Kubernetes fake is empty and no Uplink API is available. All
+		// endpoints must still serve requests using their required inputs.
+		assertWebhookRequestSuccess(config.Host, config.Port, "node", createNodeAdmissionReviewJSON())
+		assertWebhookRequestSuccess(config.Host, config.Port, "pod",
+			createAdmissionReviewJSON(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "test-pod", Namespace: "default"}}))
+		payload := createAdmissionReviewJSON(&uplinkv1alpha1.UplinkState{
+			ObjectMeta: metav1.ObjectMeta{Name: "blue.test-node"},
+			Spec:       uplinkv1alpha1.UplinkStateSpec{UplinkName: "blue", NodeName: "test-node"},
+		})
+		request := &admissionv1.AdmissionReview{}
+		Expect(json.Unmarshal(payload, request)).To(Succeed())
+		request.Request.UserInfo.Username = "system:ovn-node:test-node"
+		payload, err := json.Marshal(request)
+		Expect(err).NotTo(HaveOccurred())
+		client := createWebhookClient()
+		Eventually(func(g Gomega) {
+			response, err := client.Post(fmt.Sprintf("https://%s/uplinkstate", net.JoinHostPort(config.Host, strconv.Itoa(config.Port))), "application/json", bytes.NewReader(payload))
+			g.Expect(err).NotTo(HaveOccurred())
+			defer response.Body.Close()
+			g.Expect(response.StatusCode).To(Equal(http.StatusOK))
+			review := &admissionv1.AdmissionReview{}
+			g.Expect(json.NewDecoder(response.Body).Decode(review)).To(Succeed())
+			g.Expect(review.Response).NotTo(BeNil())
+			g.Expect(review.Response.Allowed).To(BeTrue())
+		}).Within(5 * time.Second).Should(Succeed())
 	})
 
 	It("should support SO_REUSEPORT by allowing multiple servers on the same port", func() {
@@ -146,6 +193,7 @@ var _ = Describe("Run", func() {
 				tlsConfig.CipherSuites = []uint16{
 					tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
 				}
+				tlsConfig.CurvePreferences = []tls.CurveID{tls.CurveP384}
 			}
 		})
 
@@ -169,6 +217,7 @@ var _ = Describe("Run", func() {
 				g.Expect(int(state.Version)).To(Equal(tls.VersionTLS12))
 				g.Expect(state.CipherSuite).To(Equal(tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256))
 				g.Expect(state.NegotiatedProtocol).To(Equal("h2"))
+				g.Expect(state.CurveID).To(Equal(tls.CurveP384))
 			}).Within(5 * time.Second).ProbeEvery(100 * time.Millisecond).Should(Succeed())
 		})
 

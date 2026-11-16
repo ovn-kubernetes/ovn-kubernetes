@@ -174,7 +174,9 @@ func NewEFController(
 		Informer:    efInformer.Informer(),
 		Lister:      efInformer.Lister().List,
 		MaxAttempts: controller.InfiniteAttempts,
-		Reconcile:   c.sync,
+		Reconcile: func(_ context.Context, key string) error {
+			return c.sync(key)
+		},
 		ObjNeedsUpdate: func(old, new *egressfirewallapi.EgressFirewall) bool {
 			return old == nil || new == nil || !reflect.DeepEqual(old.Spec, new.Spec)
 		},
@@ -191,8 +193,10 @@ func NewEFController(
 		Lister:         nodeInformer.Lister().List,
 		MaxAttempts:    controller.InfiniteAttempts,
 		ObjNeedsUpdate: efNodeNeedsUpdate,
-		Reconcile:      c.updateEgressFirewallForNode,
-		Threadiness:    1,
+		Reconcile: func(_ context.Context, nodeName string) error {
+			return c.updateEgressFirewallForNode(nodeName)
+		},
+		Threadiness: 1,
 	}
 
 	c.nodeController = controller.NewController(
@@ -204,7 +208,9 @@ func NewEFController(
 	// to the queue by NAD Controller
 	nadReconcilerConfig := &controller.ReconcilerConfig{
 		RateLimiter: workqueue.DefaultTypedControllerRateLimiter[string](),
-		Reconcile:   c.syncNAD,
+		Reconcile: func(_ context.Context, key string) error {
+			return c.syncNAD(key)
+		},
 		Threadiness: 1,
 		MaxAttempts: controller.InfiniteAttempts,
 	}
@@ -408,12 +414,15 @@ func (oc *EFController) sync(key string) (updateErr error) {
 
 		activeNetwork, netErr := oc.networkManager.GetActiveNetworkForNamespace(namespace)
 		switch {
-		case netErr != nil:
+		case netErr != nil && !util.IsInvalidPrimaryNetworkError(netErr):
 			// Failed to resolve active network; surface this in EF status.
 			updateErr = netErr
 		case activeNetwork == nil:
-			// No active network for this namespace in this controller context (e.g. filtered by D-UDN):
-			// cleanup stale EF config but don't report an EF status error.
+			// No active network means no EF state to program. This includes a
+			// primary UDN temporarily unavailable while its NAD is added or
+			// removed, and a namespace filtered by Dynamic UDN allocation. Clean
+			// up stale state without retrying or setting an error status; a primary
+			// NAD becoming active requeues the EF through the NAD reconciler.
 			skipStatusUpdate = true
 		default:
 			aclLoggingLevels, logErr := oc.getNamespaceACLLogging(namespace)

@@ -35,7 +35,7 @@ Each new release of OVN-Kubernetes is defined with a "version" that represents t
   (So when 1.2.0 is released we will stop maintaining and backporting fixes into 1.0.0)
 * For a supported major release we will continue to do backports for backfixes and offer
   support. A minor patch release will be done at a cadence of 4 weeks for every major release.
-  Ex. Once 1.0.0 is release, we will do 1.0.1, 1.0.2, 1.0.3 etc. This also depends on a case-by-case
+  Ex. Once 1.0.0 is released, we will do 1.0.1, 1.0.2, 1.0.3 etc. This also depends on a case-by-case
   basis based on demands from end-users and backport statuses.
 
 ## Release Process
@@ -45,13 +45,16 @@ Each new release of OVN-Kubernetes is defined with a "version" that represents t
 * See [sample release PR](https://github.com/ovn-kubernetes/ovn-kubernetes/pull/4333) which
   will become the head commit for a given release.
 * Branch will be cut on the day of release once the release PR merges.
-* CI-CD for the release branch will be added to the [GitHub Workflow](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/.github/workflows/test.yml#L6).
+* Create the `backport:release-X.Y` label for the new branch, and delete the
+  label of the release that goes out of support.
+* Mark the release that goes out of support as not maintained anymore in
+  [Information on Past Releases](#information-on-past-releases).
 
 ### Release Notes
 
 * Every PR must include a `release-note` fenced code block in its description (enforced by CodeRabbit).
-  The block must contain either a short user-facing description of the change or the single word `NONE`
-  if the PR has no user-facing impact (e.g. tests, refactors, CI-only changes):
+  These notes are collected during release cuts to highlight user-facing changes in the changelog.
+  The block must contain either a short user-facing description of the change or the single word `NONE`.
   ````
   ```release-note
   Added support for X feature in Y component.
@@ -63,14 +66,65 @@ Each new release of OVN-Kubernetes is defined with a "version" that represents t
   NONE
   ```
   ````
+* **Write a release note** when the PR does any of the following:
+  - Adds a new user-facing feature or capability
+  - Introduces or changes a CLI flag, config knob, or Helm value that operators set
+  - Adds, changes, or removes a CRD, API field, or user-facing annotation contract
+  - Changes Helm chart templates, default values, or upgrade behavior that affects rendered output
+  - Deprecates or removes existing functionality
+  - Introduces a breaking change or migration step that affects operators or end users
+  - Changes default behavior users or operators rely on
+  - Fixes a bug whose resolution changes user-visible behavior or compatibility
+    (exception: if the bug was never reported by users and the fix lands before
+    any release ships with the broken behavior, `NONE` is acceptable)
+* **Use `NONE`** for everything else: routine bug fixes, refactors, test changes, CI improvements,
+  docs, internal-only changes, performance/scale work, and internal architecture migrations.
 * Release notes are generated from the `release-note` blocks of all PRs merged into a release. Any PR with
   a meaningful (non-`NONE`) `release-note` block will be included in the release notes.
 
-## BackPort Request
+## Backport Request
 
-* If a PR needs to be backported to an older release that should be requested
-  by adding the `needs-backport` label.
-* Reach out to the maintainers on slack or by tagging them directly on the PR or come to the community meetings to discuss this.
+* If a PR needs to be backported to an older release, request it by adding a
+  `backport:release-X.Y` label to the PR for each target release. Only
+  maintained releases have a label.
+* If you cannot add labels, ask in a PR comment, on slack or at the community
+  meeting and someone with triage or write access will add them.
+
+### Automated backport
+
+The `backport` GitHub workflow acts on the `backport:release-X.Y` labels. They
+can be added before or after the merge. Once the PR is merged, the workflow
+cherry-picks its commits onto each labeled release branch and opens a PR titled
+`[release-X.Y] <original title>` that links to the original PR and copies its
+description and assignees.
+
+If a cherry-pick does not apply cleanly, or the PR branch contains merge
+commits, no PR is opened for that release and the workflow posts a comment on
+the original PR with the commands to cherry-pick locally. Follow the manual
+steps below in that case.
+
+### Preparing a backport manually
+
+1. Create a branch from the target `release-X.Y` branch.
+2. Cherry-pick the original commits with `git cherry-pick -x <commit>` so each
+   backport commit records its source.
+3. Resolve any conflicts, keeping the fix appropriate for the release branch.
+   When conflicts occur, we recommend keeping a `Conflicts:` section in the
+   final commit message. List the affected files and briefly explain why each
+   conflict occurred and how it was resolved. For example:
+
+    ```text
+    Conflicts:
+        go-controller/pkg/ovn/example.go
+            The release branch lacks the helper introduced by a later
+            refactor. Applied the fix to the existing inline logic.
+    ```
+
+4. Run the relevant tests on the release branch, including coverage of any
+   conflict resolutions.
+5. Open a PR targeting `release-X.Y`, link the original PR, and describe any
+   adaptations and the testing performed. Prepare a separate PR for each target
+   release.
 
 ## Information on Past Releases
 

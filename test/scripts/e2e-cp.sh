@@ -107,6 +107,10 @@ if [ "$ENABLE_MULTI_NET" != "true" ]; then
   skip "Multi Homing"
 fi
 
+if [ "$OVN_ENABLE_PERSISTENT_IPS" != "true" ]; then
+  skip_label "Feature:PersistentIPs"
+fi
+
 if [ "$OVN_NETWORK_QOS_ENABLE" != "true" ]; then
   skip "e2e NetworkQoS validation"
 fi
@@ -213,6 +217,12 @@ fi
 # allocation (okep-5552).
 if [ "$DYNAMIC_UDN_ALLOCATION" == true ]; then
   skip "BGP: For BGP configured networks"
+fi
+
+# Managed routing provides an internal full mesh, without the external FRR
+# router and bgpnet server required by this default-network advertisement suite.
+if [ "$ENABLE_NO_OVERLAY_MANAGED_ROUTING" == true ]; then
+  skip "BGP: When default podNetwork is advertised"
 fi
 
 if [ "$ENABLE_ROUTE_ADVERTISEMENTS" != true ]; then

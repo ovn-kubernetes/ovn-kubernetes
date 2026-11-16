@@ -38,6 +38,9 @@ const (
 	// dpuOvnkubeControllerContainer is the container of the DPU-side ovnkube-node
 	// pod that runs ovnkube on behalf of the host node.
 	dpuOvnkubeControllerContainer = "ovnkube-controller"
+	// dpuHostOvnkubeNodeContainer is the container of the DPU-host ovnkube-node
+	// pod that runs on the host node itself.
+	dpuHostOvnkubeNodeContainer = "ovnkube-node"
 	// dpuOwnNodeDeletedLogMarker is logged by ovnkube-node when it exits because
 	// the Node object it runs on behalf of was deleted.
 	dpuOwnNodeDeletedLogMarker = "runs on behalf of was deleted"
@@ -105,6 +108,21 @@ var _ = ginkgo.Describe("DPU host node deletion", feature.DPU, ginkgo.Serial, fu
 		framework.ExpectNoError(err)
 		gomega.Expect(oldContainerID).NotTo(gomega.BeEmpty(), "no running %s container on DPU %s", dpuOvnkubeControllerContainer, dpuNodeName)
 
+		ginkgo.By(fmt.Sprintf("creating an Uplink that selects host node %s", hostNode.Name))
+		// UplinkStates are owned by their Uplink, not their Node, and node
+		// controllers delete their own states only while their Node exists,
+		// so cluster-manager must remove the deleted node's states itself.
+		uplinkName := "updelnode" + framework.RandomSuffix()
+		createUplink(ctx, f, infraprovider.Get().NewTestContext(), uplinkName, []corev1.Node{*hostNode},
+			collectDPUHostUplinkInterfaces([]corev1.Node{*hostNode}), "")
+		gomega.Eventually(ctx, func() error {
+			if _, err := getUplinkState(ctx, f, uplinkName, hostNode.Name); err != nil {
+				return fmt.Errorf("failed to get the UplinkState of Uplink %s on node %s: %w", uplinkName, hostNode.Name, err)
+			}
+			return nil
+		}).WithTimeout(2*time.Minute).WithPolling(dpuHostNodeDeletionPoll).Should(gomega.Succeed(),
+			"no UplinkState for Uplink %s on host node %s", uplinkName, hostNode.Name)
+
 		ginkgo.By(fmt.Sprintf("deleting host node %s", hostNode.Name))
 		framework.ExpectNoError(f.ClientSet.CoreV1().Nodes().Delete(ctx, hostNode.Name, metav1.DeleteOptions{}))
 
@@ -117,6 +135,12 @@ var _ = ginkgo.Describe("DPU host node deletion", feature.DPU, ginkgo.Serial, fu
 		framework.ExpectNoError(err, "failed to read the logs of container %s on DPU %s", oldContainerID, dpuNodeName)
 		gomega.Expect(logs).To(gomega.ContainSubstring(dpuOwnNodeDeletedLogMarker),
 			"the %s container on DPU %s did not exit because of the node deletion", dpuOvnkubeControllerContainer, dpuNodeName)
+
+		ginkgo.By(fmt.Sprintf("waiting for the UplinkStates of deleted host node %s to be removed", hostNode.Name))
+		gomega.Eventually(func() (int, error) {
+			return countUplinkStatesForNode(ctx, f, hostNode.Name)
+		}).WithTimeout(2*time.Minute).WithPolling(dpuHostNodeDeletionPoll).Should(gomega.BeZero(),
+			"UplinkStates of deleted host node %s were not removed", hostNode.Name)
 
 		ginkgo.By(fmt.Sprintf("waiting for the pods of host node %s to be garbage collected", hostNode.Name))
 		// A reprovisioned host comes back without its pods. Let the pod garbage
@@ -133,6 +157,10 @@ var _ = ginkgo.Describe("DPU host node deletion", feature.DPU, ginkgo.Serial, fu
 			return len(pods.Items), nil
 		}).WithTimeout(2*time.Minute).WithPolling(dpuHostNodeDeletionPoll).Should(gomega.BeZero(),
 			"pods bound to the deleted node %s were not garbage collected", hostNode.Name)
+		// The DPU-host ovnkube-node ran on the deleted node until now and could
+		// have recreated its UplinkState after cluster-manager removed it.
+		gomega.Expect(countUplinkStatesForNode(ctx, f, hostNode.Name)).To(gomega.BeZero(),
+			"UplinkStates of deleted host node %s came back", hostNode.Name)
 
 		ginkgo.By(fmt.Sprintf("registering host node %s again", hostNode.Name))
 		restoreDPUHostNode(ctx, f.ClientSet, hostNode, savedLabels)
@@ -191,6 +219,18 @@ var _ = ginkgo.Describe("DPU host node deletion", feature.DPU, ginkgo.Serial, fu
 	})
 })
 
+// countUplinkStatesForNode returns how many UplinkStates, across all Uplinks,
+// name the node.
+func countUplinkStatesForNode(ctx context.Context, f *framework.Framework, nodeName string) (int, error) {
+	states, err := f.DynamicClient.Resource(uplinkStateGVR).List(ctx, metav1.ListOptions{
+		FieldSelector: fields.OneTermEqualSelector("spec.nodeName", nodeName).String(),
+	})
+	if err != nil {
+		return 0, fmt.Errorf("failed to list the UplinkStates of node %s: %w", nodeName, err)
+	}
+	return len(states.Items), nil
+}
+
 // addDPUVFRequest gives the pod's container one DPU VF of the resource the DPU
 // device plugin advertises (dpusim.io/vf on dpu-simulator, overridable with
 // OVN_TEST_DPU_UPLINK_RESOURCE_NAME), unconditionally: this spec only runs on
@@ -222,11 +262,11 @@ func isSchedulableDPUHostNode(node *corev1.Node) bool {
 }
 
 // dpuRunningContainerID returns the ID of the running container named name on
-// the DPU Kind node, or an empty string if there is none.
+// the Kind node, or an empty string if there is none.
 func dpuRunningContainerID(dpuNodeName, name string) (string, error) {
 	out, err := ForContainer(dpuNodeName).Exec("crictl", "ps", "-q", "--name", "^"+name+"$")
 	if err != nil {
-		return "", fmt.Errorf("failed to list the %s containers on DPU %s: %w, output: %s", name, dpuNodeName, err, out)
+		return "", fmt.Errorf("failed to list the %s containers on node %s: %w, output: %s", name, dpuNodeName, err, out)
 	}
 	ids := strings.Fields(out)
 	switch len(ids) {
@@ -235,7 +275,7 @@ func dpuRunningContainerID(dpuNodeName, name string) (string, error) {
 	case 1:
 		return ids[0], nil
 	default:
-		return "", fmt.Errorf("%d %s containers running on DPU %s, expected one", len(ids), name, dpuNodeName)
+		return "", fmt.Errorf("%d %s containers running on node %s, expected one", len(ids), name, dpuNodeName)
 	}
 }
 
@@ -339,6 +379,15 @@ func restoreDPUHostNode(ctx context.Context, cs kubernetes.Interface, hostNode *
 			return len(pods.Items), nil
 		}).WithTimeout(2*time.Minute).WithPolling(dpuHostNodeDeletionPoll).Should(gomega.BeZero(),
 			"pods bound to the deleted node %s were not garbage collected", nodeName)
+		// The pod garbage collector removes the pod object before the kubelet
+		// has killed the container, and the kubelet restart below cancels an
+		// in-flight container stop. A still running DPU-host ovnkube-node
+		// recreates the management port from the VF as soon as it is renamed
+		// back, so wait for the process to be gone before releasing the VF.
+		gomega.Eventually(func() (string, error) {
+			return dpuRunningContainerID(nodeName, dpuHostOvnkubeNodeContainer)
+		}).WithTimeout(2*time.Minute).WithPolling(dpuHostNodeDeletionPoll).Should(gomega.BeEmpty(),
+			"the %s container kept running on node %s after its pod was deleted", dpuHostOvnkubeNodeContainer, nodeName)
 		releaseDPUSimManagementVF(hostNode)
 		// Register with the DPU host label already set: a re-registered node
 		// without it matches the full-mode ovnkube-node DaemonSet until the label

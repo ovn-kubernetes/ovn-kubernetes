@@ -4,6 +4,7 @@
 package ovn
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -46,6 +47,10 @@ type GatewayConfig struct {
 	hostAddrs                  []string
 	externalIPs                []net.IP
 	ovnClusterLRPToJoinIfAddrs []*net.IPNet
+	// isPodNetworkAdvertised is a snapshot of whether the pod network is
+	// advertised at the node, taken once per node sync so that every piece of
+	// configuration done in that sync is consistent.
+	isPodNetworkAdvertised bool
 }
 
 // SetupMaster creates the central router and load-balancers for the network
@@ -97,7 +102,7 @@ func (oc *DefaultNetworkController) syncNodeManagementPortDefault(node *corev1.N
 	return err
 }
 
-func (oc *DefaultNetworkController) nodeGatewayConfig(node *corev1.Node) (*GatewayConfig, error) {
+func (oc *DefaultNetworkController) nodeGatewayConfig(node *corev1.Node, isPodNetworkAdvertised bool) (*GatewayConfig, error) {
 	l3GatewayConfig, err := util.ParseNodeL3GatewayAnnotation(node)
 	if err != nil {
 		return nil, err
@@ -141,6 +146,7 @@ func (oc *DefaultNetworkController) nodeGatewayConfig(node *corev1.Node) (*Gatew
 		hostAddrs:                  hostAddrs,
 		externalIPs:                externalIPs,
 		ovnClusterLRPToJoinIfAddrs: oc.ovnClusterLRPToJoinIfAddrs,
+		isPodNetworkAdvertised:     isPodNetworkAdvertised,
 	}, nil
 }
 
@@ -302,7 +308,7 @@ func (oc *DefaultNetworkController) syncNodesPeriodic() {
 // watchNodes() will be called for all existing nodes at startup anyway.
 // Note that this list will include the 'join' cluster switch, which we
 // do not want to delete.
-func (oc *DefaultNetworkController) syncNodes(kNodes []interface{}) error {
+func (oc *DefaultNetworkController) syncNodes(_ context.Context, kNodes []interface{}) error {
 	foundNodes := sets.New[string]()
 	var localNode *corev1.Node
 	remoteZoneNodes := make([]*corev1.Node, 0, len(kNodes))
@@ -523,7 +529,7 @@ func nodeNeedsSync(syncs *nodeSyncs) bool {
 		syncs.syncReroute
 }
 
-func (oc *DefaultNetworkController) addUpdateLocalNodeEvent(node *corev1.Node, nSyncs *nodeSyncs) error {
+func (oc *DefaultNetworkController) addUpdateLocalNodeEvent(_ context.Context, node *corev1.Node, nSyncs *nodeSyncs) error {
 	var hostSubnets []*net.IPNet
 	var errs []error
 	var err error

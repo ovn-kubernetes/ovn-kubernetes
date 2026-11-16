@@ -9,9 +9,11 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"os"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -88,31 +90,33 @@ func getCreationFakeCommands(fexec *ovntest.FakeExec, mgtPort, mgtPortMAC, netNa
 			" external-ids:iface-id=" + types.K8sPrefix + netName + "_" + nodeName +
 			fmt.Sprintf(" external-ids:%s=%s", types.NetworkExternalID, netName),
 	})
-
-	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-		Cmd:    "sysctl -w net.ipv4.conf." + mgtPort + ".forwarding = 1",
-		Output: "net.ipv4.conf." + mgtPort + ".forwarding = 1",
-	})
 }
 
-func getRPFilterLooseModeFakeCommand(fexec *ovntest.FakeExec, ifName string) {
-	setVal := fmt.Sprintf("net.ipv4.conf.%s.rp_filter = 2", strings.ReplaceAll(ifName, ".", "/"))
-	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-		Cmd:    fmt.Sprintf("sysctl -w %s", setVal),
-		Output: setVal,
-	})
+// expectSysctl asserts the sysctl at path (relative to net/) holds value. g is
+// Default inside a spec, or NewWithT(t) in a plain Go test.
+func expectSysctl(g Gomega, path, value string) {
+	GinkgoHelper()
+	g.Expect(os.ReadFile(util.SysctlNetPath(path))).To(BeEquivalentTo(value))
 }
 
-func getIPv6KeepAddrOnDownFakeCommand(fexec *ovntest.FakeExec, ifName string) {
-	setVal := fmt.Sprintf("net.ipv6.conf.%s.keep_addr_on_down = 1", strings.ReplaceAll(ifName, ".", "/"))
-	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-		Cmd:    fmt.Sprintf("sysctl -w %s", setVal),
-		Output: setVal,
-	})
+// expectForwardingSysctls asserts the per-interface forwarding sysctls that
+// util.SetForwardingModeForInterface sets for ifName.
+func expectForwardingSysctls(g Gomega, ifName string) {
+	GinkgoHelper()
+	if config.IPv4Mode {
+		expectSysctl(g, "ipv4/conf/"+ifName+"/forwarding", "1")
+	}
+	if config.IPv6Mode && util.SupportsIPv6InterfaceForwarding() {
+		expectSysctl(g, "ipv6/conf/"+ifName+"/force_forwarding", "1")
+	}
 }
 
-func getRPFilterLooseModeFakeCommands(fexec *ovntest.FakeExec) {
-	getRPFilterLooseModeFakeCommand(fexec, "ovn-k8s-mp3")
+// expectMgmtPortSysctls asserts the sysctls set when the management port
+// mgtPort is created: forwarding on, reverse path filtering loose.
+func expectMgmtPortSysctls(g Gomega, mgtPort string) {
+	GinkgoHelper()
+	expectForwardingSysctls(g, mgtPort)
+	expectSysctl(g, "ipv4/conf/"+mgtPort+"/rp_filter", "2")
 }
 
 func TestConfigureUplinkGatewayRPFilter(t *testing.T) {
@@ -166,18 +170,19 @@ func TestConfigureUplinkGatewayRPFilter(t *testing.T) {
 			config.OvnKubeNode.Mode = test.mode
 
 			fexec := ovntest.NewFakeExec()
-			if test.wantSysctl != "" {
-				getRPFilterLooseModeFakeCommand(fexec, test.wantSysctl)
-			}
 			if err := util.SetExec(fexec); err != nil {
 				t.Fatalf("failed to set fake exec: %v", err)
 			}
+			sysctlDir := t.TempDir()
+			t.Cleanup(util.SetProcSysNetForTesting(sysctlDir))
 
 			if err := configureUplinkGatewayRPFilter(test.resolved, test.networkIPv4Mode); err != nil {
 				t.Fatalf("failed to configure Uplink rp_filter: %v", err)
 			}
-			if !fexec.CalledMatchesExpected() {
-				t.Fatalf("%s", fexec.ErrorDesc())
+			if test.wantSysctl != "" {
+				expectSysctl(NewWithT(t), "ipv4/conf/"+test.wantSysctl+"/rp_filter", "2")
+			} else if entries, _ := os.ReadDir(sysctlDir); len(entries) != 0 {
+				t.Fatalf("expected no sysctl to be written, found %v", entries)
 			}
 		})
 	}
@@ -465,7 +470,12 @@ func newUplinkGatewayReconcileHarness(
 		&netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "breth0", Index: 1}}, nil,
 	).Once()
 
-	uplinkClient := uplinkfake.NewSimpleClientset(state)
+	uplinkClient := uplinkfake.NewSimpleClientset()
+	if state != nil {
+		if _, err := uplinkClient.K8sV1alpha1().UplinkStates().Create(context.Background(), state, metav1.CreateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	informerFactory := uplinkinformerfactory.NewSharedInformerFactory(uplinkClient, 0)
 	uplinkStateInformer := informerFactory.K8s().V1alpha1().UplinkStates()
 	_ = uplinkStateInformer.Informer()
@@ -518,6 +528,16 @@ func expectMissingGatewayVRF(
 	netlinkOps.On("IsLinkNotFoundError", notFoundErr).Return(true).Once()
 }
 
+type countingGatewayStateLister struct {
+	uplinklisters.UplinkStateLister
+	reads atomic.Int32
+}
+
+func (l *countingGatewayStateLister) Get(name string) (*uplinkv1alpha1.UplinkState, error) {
+	l.reads.Add(1)
+	return l.UplinkStateLister.Get(name)
+}
+
 func TestUserDefinedNetworkGatewayReconcilesUplinkConfiguration(t *testing.T) {
 	if err := config.PrepareTestConfig(); err != nil {
 		t.Fatalf("failed to prepare test config: %v", err)
@@ -530,6 +550,57 @@ func TestUserDefinedNetworkGatewayReconcilesUplinkConfiguration(t *testing.T) {
 	config.OVNKubernetesFeature.EnableMultiNetwork = true
 	config.OVNKubernetesFeature.EnableNetworkSegmentation = true
 	config.OVNKubernetesFeature.EnableUplink = true
+
+	t.Run("startup waits for creation and discovery events without retries", func(t *testing.T) {
+		g := NewWithT(t)
+		udng, _, _ := newUplinkGatewayReconcileHarness(t, nil)
+		lister := &countingGatewayStateLister{UplinkStateLister: udng.uplinkStateLister}
+		udng.uplinkStateLister = lister
+		g.Expect(udng.Start()).To(Succeed())
+		g.Consistently(func() int32 { return lister.reads.Load() }, 150*time.Millisecond, 10*time.Millisecond).Should(Equal(int32(1)))
+		// Advertisement events must also wait for initial gateway programming.
+		g.Expect(udng.reconcileGateway(udng.GetNetworkName())).To(Succeed())
+		state := resolvedGatewayUplinkState("uplink1", "node-a")
+		state.UID = "pending-state"
+		state.Status.Conditions[0].Status = metav1.ConditionFalse
+		client := udng.uplinkStateGatewayStatusController.uplinkClient.K8sV1alpha1().UplinkStates()
+		created, err := client.Create(context.Background(), state, metav1.CreateOptions{})
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Eventually(func() int32 { return lister.reads.Load() }, time.Second, 10*time.Millisecond).Should(Equal(int32(2)))
+		status := udng.uplinkStateGatewayStatusController
+		g.Eventually(func() bool {
+			status.mutex.Lock()
+			defer status.mutex.Unlock()
+			observed := status.uplinks["uplink1"]
+			return observed != nil && observed.networks[udng.GetNetworkName()] != nil &&
+				observed.networks[udng.GetNetworkName()].phase == uplinkGatewayNetworkFailed
+		}, time.Second, 10*time.Millisecond).Should(BeTrue())
+		g.Consistently(func() int32 { return lister.reads.Load() }, 150*time.Millisecond, 10*time.Millisecond).Should(Equal(int32(2)))
+		created.Status.Conditions[0].Message = "discovery changed"
+		_, err = client.Update(context.Background(), created, metav1.UpdateOptions{})
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Eventually(func() int32 { return lister.reads.Load() }, time.Second, 10*time.Millisecond).Should(Equal(int32(3)))
+		g.Consistently(func() int32 { return lister.reads.Load() }, 150*time.Millisecond, 10*time.Millisecond).Should(Equal(int32(3)))
+		g.Expect(client.Delete(context.Background(), created.Name, metav1.DeleteOptions{})).To(Succeed())
+		g.Eventually(func() int32 { return lister.reads.Load() }, time.Second, 10*time.Millisecond).Should(Equal(int32(4)))
+		g.Consistently(func() int32 { return lister.reads.Load() }, 150*time.Millisecond, 10*time.Millisecond).Should(Equal(int32(4)))
+		_, err = client.Create(context.Background(), state, metav1.CreateOptions{})
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Eventually(func() int32 { return lister.reads.Load() }, time.Second, 10*time.Millisecond).Should(Equal(int32(5)))
+		g.Consistently(func() int32 { return lister.reads.Load() }, 150*time.Millisecond, 10*time.Millisecond).Should(Equal(int32(5)))
+	})
+
+	t.Run("missing state cleanup failure remains retryable", func(t *testing.T) {
+		udng, netlinkOps, _ := newUplinkGatewayReconcileHarness(t, nil)
+		udng.uplinkGatewayCleanupRequired = true
+		cleanupErr := errors.New("cleanup failed")
+		netlinkOps.On("LinkByName", util.GetNetworkVRFName(udng.NetInfo)).Return(nil, cleanupErr).Once()
+		netlinkOps.On("IsLinkNotFoundError", cleanupErr).Return(false).Once()
+		err := udng.reconcileUplinkState(uplinkutil.StateName("uplink1", "node-a"))
+		if err == nil || !strings.Contains(err.Error(), cleanupErr.Error()) {
+			t.Fatalf("expected retryable cleanup error, got %v", err)
+		}
+	})
 
 	t.Run("unresolved state unconfigures existing programming", func(t *testing.T) {
 		state := resolvedGatewayUplinkState("uplink1", "node-a")
@@ -780,6 +851,9 @@ func TestUserDefinedNetworkGatewayReconcilesUplinkConfiguration(t *testing.T) {
 			t.Fatalf("failed replacement retained UID: %s",
 				udnGateway.uplinkStateUID)
 		}
+		if err := udnGateway.reconcileGateway(udnGateway.GetNetworkName()); err != nil {
+			t.Fatalf("advertisement reconciliation did not wait for replacement to succeed: %v", err)
+		}
 	})
 
 	t.Run("resolved state starts initial programming", func(t *testing.T) {
@@ -802,6 +876,9 @@ func TestUserDefinedNetworkGatewayReconcilesUplinkConfiguration(t *testing.T) {
 		}
 		if observedFingerprint != uplinkGatewayFingerprintFromState(state) {
 			t.Fatal("failed programming did not produce a status fingerprint")
+		}
+		if err := udnGateway.reconcileGateway(udnGateway.GetNetworkName()); err != nil {
+			t.Fatalf("advertisement reconciliation did not wait for initial programming to succeed: %v", err)
 		}
 	})
 }
@@ -902,10 +979,6 @@ func setManagementPortFakeCommands(fexec *ovntest.FakeExec, nodeName string) {
 		"ovs-vsctl --timeout=15 -- --if-exists del-port br-int " + mpPortLegacyName + " -- --may-exist add-port br-int " + mpPortName + " -- set interface " + mpPortName + " mac=\"0a:58:64:80:00:02\" type=internal mtu_request=1400 external-ids:iface-id=" + mpPortLegacyName,
 	})
 	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-		Cmd:    "sysctl -w net.ipv4.conf.ovn-k8s-mp0.forwarding = 1",
-		Output: "net.ipv4.conf.ovn-k8s-mp0.forwarding = 1",
-	})
-	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
 		Cmd:    "ip route replace table 7 172.16.1.0/24 via 100.128.0.1 dev ovn-k8s-mp0",
 		Output: "0",
 	})
@@ -931,10 +1004,6 @@ func setManagementPortFakeCommands(fexec *ovntest.FakeExec, nodeName string) {
 		Cmd:    "ip -6 rule add fwmark 0x1745ec lookup 7 prio 30",
 		Output: "0",
 	})
-	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-		Cmd:    "sysctl -w net.ipv4.conf.ovn-k8s-mp0.rp_filter = 2",
-		Output: "net.ipv4.conf.ovn-k8s-mp0.rp_filter = 2",
-	})
 }
 
 func setUpGatewayFakeOVSCommands(fexec *ovntest.FakeExec) {
@@ -951,12 +1020,6 @@ func setUpGatewayFakeOVSCommands(fexec *ovntest.FakeExec) {
 		Cmd:    "ovs-vsctl --timeout=15 --if-exists get interface breth0 mac_in_use",
 		Output: "00:00:00:55:66:99",
 	})
-	if config.IPv4Mode {
-		fexec.AddFakeCmd(&ovntest.ExpectedCmd{
-			Cmd:    "sysctl -w net.ipv4.conf.breth0.forwarding = 1",
-			Output: "net.ipv4.conf.breth0.forwarding = 1",
-		})
-	}
 	// ovn-bridge-mappings get/set are now handled via libovsdb in
 	// bridgeconfig.bridgedGatewayNodeSetup; no fexec entries needed.
 	fexec.AddFakeCmd(&ovntest.ExpectedCmd{
@@ -1176,6 +1239,8 @@ func noOverlayLayer3NetInfo(t *testing.T) util.NetInfo {
 	return netInfo
 }
 
+// TestShouldAddUDNServiceMarkRules checks eligibility for the primary network's
+// default-VRF service path across transports and advertisement targets.
 func TestShouldAddUDNServiceMarkRules(t *testing.T) {
 	if err := config.PrepareTestConfig(); err != nil {
 		t.Fatalf("failed to prepare test config: %v", err)
@@ -1215,8 +1280,8 @@ func TestShouldAddUDNServiceMarkRules(t *testing.T) {
 	}
 
 	noOverlayNetInfo := noOverlayLayer3NetInfo(t)
-	if !shouldAddUDNServiceMarkRules(noOverlayNetInfo, nodeName) {
-		t.Fatalf("expected service mark rules for no-overlay network without explicit advertised VRF")
+	if shouldAddUDNServiceMarkRules(noOverlayNetInfo, nodeName) {
+		t.Fatalf("expected no service mark rules for no-overlay network without explicit default VRF")
 	}
 
 	noOverlayDefaultVRFNetInfo := util.NewMutableNetInfo(noOverlayNetInfo)
@@ -1380,7 +1445,6 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		Expect(err).NotTo(HaveOccurred())
 		mgtPortMAC = util.IPAddrToHWAddr(util.GetNodeManagementIfAddr(ipNet).IP).String()
 		getCreationFakeCommands(fexec, mgtPort, mgtPortMAC, netName, nodeName, netInfo.MTU())
-		getRPFilterLooseModeFakeCommands(fexec)
 		nodeLister.On("Get", mock.AnythingOfType("string")).Return(node, nil)
 		factoryMock.On("GetNodeForWindows", "worker1").Return(node, nil)
 
@@ -1409,6 +1473,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			return nil
 		})
 		Expect(err).NotTo(HaveOccurred())
+		expectMgmtPortSysctls(Default, mgtPort)
 		Expect(fexec.CalledMatchesExpected()).To(BeTrue(), fexec.ErrorDesc)
 	})
 	ovntest.OnSupportedPlatformsIt("should delete management port for a L3 user defined network", func() {
@@ -1470,7 +1535,6 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		Expect(err).NotTo(HaveOccurred())
 		mgtPortMAC = util.IPAddrToHWAddr(util.GetNodeManagementIfAddr(ipNet).IP).String()
 		getCreationFakeCommands(fexec, mgtPort, mgtPortMAC, netName, nodeName, netInfo.MTU())
-		getRPFilterLooseModeFakeCommands(fexec)
 		nodeLister.On("Get", mock.AnythingOfType("string")).Return(node, nil)
 		factoryMock.On("GetNodeForWindows", "worker1").Return(node, nil)
 		err = testNS.Do(func(ns.NetNS) error {
@@ -1498,6 +1562,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			return nil
 		})
 		Expect(err).NotTo(HaveOccurred())
+		expectMgmtPortSysctls(Default, mgtPort)
 		Expect(fexec.CalledMatchesExpected()).To(BeTrue(), fexec.ErrorDesc)
 	})
 	ovntest.OnSupportedPlatformsIt("should delete management port for a L2 user defined network", func() {
@@ -1573,7 +1638,6 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		Expect(err).NotTo(HaveOccurred())
 		mgtPortMAC = util.IPAddrToHWAddr(util.GetNodeManagementIfAddr(ipNet).IP).String()
 		getCreationFakeCommands(fexec, mgtPort, mgtPortMAC, netName, nodeName, netInfo.MTU())
-		getRPFilterLooseModeFakeCommands(fexec)
 		setUpUDNOpenflowManagerFakeOVSCommands(fexec)
 		getDeletionFakeOVSCommands(fexec, mgtPort)
 		nodeLister.On("Get", mock.AnythingOfType("string")).Return(node, nil)
@@ -1617,10 +1681,10 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			}}).Return(nil)
 		nodeAnnotatorMock.On("Set", mock.Anything, mock.Anything).Return(nil)
 		nodeAnnotatorMock.On("Run").Return(nil)
-		kubeMock.On("SetAnnotationsOnNode", node.Name, map[string]interface{}{
+		kubeMock.On("SetAnnotationsOnNode", mock.Anything, node.Name, map[string]interface{}{
 			"k8s.ovn.org/node-masquerade-subnet": "{\"ipv4\":\"169.254.0.0/17\",\"ipv6\":\"fd69::/112\"}",
 		}).Return(nil)
-		kubeMock.On("SetAnnotationsOnNode", node.Name, map[string]interface{}{
+		kubeMock.On("SetAnnotationsOnNode", mock.Anything, node.Name, map[string]interface{}{
 			"k8s.ovn.org/host-cidrs":          "[\"192.168.1.10/24\",\"fc00:f853:ccd:e793::3/64\"]",
 			"k8s.ovn.org/l3-gateway-config":   "{\"default\":{\"mode\":\"\"}}",
 			"k8s.ovn.org/node-primary-ifaddr": "{\"ipv4\":\"192.168.1.10/24\",\"ipv6\":\"fc00:f853:ccd:e793::3/64\"}",
@@ -1773,6 +1837,9 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			return nil
 		})
 		Expect(err).NotTo(HaveOccurred())
+		expectMgmtPortSysctls(Default, types.K8sMgmtIntfName)
+		expectForwardingSysctls(Default, "breth0")
+		expectMgmtPortSysctls(Default, mgtPort)
 		Expect(fexec.CalledMatchesExpected()).To(BeTrue(), fexec.ErrorDesc)
 	})
 	ovntest.OnSupportedPlatformsIt("should handle gateway delete idempotently for a L3 user defined network", func() {
@@ -1850,10 +1917,10 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			}}).Return(nil)
 		nodeAnnotatorMock.On("Set", mock.Anything, mock.Anything).Return(nil)
 		nodeAnnotatorMock.On("Run").Return(nil)
-		kubeMock.On("SetAnnotationsOnNode", node.Name, map[string]interface{}{
+		kubeMock.On("SetAnnotationsOnNode", mock.Anything, node.Name, map[string]interface{}{
 			"k8s.ovn.org/node-masquerade-subnet": "{\"ipv4\":\"169.254.0.0/17\",\"ipv6\":\"fd69::/112\"}",
 		}).Return(nil)
-		kubeMock.On("SetAnnotationsOnNode", node.Name, map[string]interface{}{
+		kubeMock.On("SetAnnotationsOnNode", mock.Anything, node.Name, map[string]interface{}{
 			"k8s.ovn.org/host-cidrs":          "[\"192.168.1.10/24\",\"fc00:f853:ccd:e793::3/64\"]",
 			"k8s.ovn.org/l3-gateway-config":   "{\"default\":{\"mode\":\"\"}}",
 			"k8s.ovn.org/node-primary-ifaddr": "{\"ipv4\":\"192.168.1.10/24\",\"ipv6\":\"fc00:f853:ccd:e793::3/64\"}",
@@ -1970,6 +2037,8 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			return nil
 		})
 		Expect(err).NotTo(HaveOccurred())
+		expectMgmtPortSysctls(Default, types.K8sMgmtIntfName)
+		expectForwardingSysctls(Default, "breth0")
 		Expect(fexec.CalledMatchesExpected()).To(BeTrue(), fexec.ErrorDesc)
 	})
 	ovntest.OnSupportedPlatformsIt("should create and delete correct openflows on breth0 for a L2 user defined network", func() {
@@ -2005,7 +2074,6 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		setUpGatewayFakeOVSCommands(fexec)
 		deleteStaleManagementPortFakeCommands(fexec, mgtPort)
 		getCreationFakeCommands(fexec, mgtPort, mgtPortMAC, netName, nodeName, netInfo.MTU())
-		getRPFilterLooseModeFakeCommands(fexec)
 		setUpUDNOpenflowManagerFakeOVSCommands(fexec)
 		getDeletionFakeOVSCommands(fexec, mgtPort)
 		nodeLister.On("Get", mock.AnythingOfType("string")).Return(node, nil)
@@ -2051,7 +2119,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			}}).Return(nil)
 		nodeAnnotatorMock.On("Set", mock.Anything, mock.Anything).Return(nil)
 		nodeAnnotatorMock.On("Run").Return(nil)
-		kubeMock.On("SetAnnotationsOnNode", node.Name, map[string]interface{}{
+		kubeMock.On("SetAnnotationsOnNode", mock.Anything, node.Name, map[string]interface{}{
 			"k8s.ovn.org/node-masquerade-subnet": "{\"ipv4\":\"169.254.0.0/17\",\"ipv6\":\"fd69::/112\"}",
 		}).Return(nil)
 
@@ -2200,6 +2268,9 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			return nil
 		})
 		Expect(err).NotTo(HaveOccurred())
+		expectMgmtPortSysctls(Default, types.K8sMgmtIntfName)
+		expectForwardingSysctls(Default, "breth0")
+		expectMgmtPortSysctls(Default, mgtPort)
 		Expect(fexec.CalledMatchesExpected()).To(BeTrue(), fexec.ErrorDesc)
 	})
 	// TODO: There is opportunity to fold some of these tests into describetables to cut down code duplication and test plumbing
@@ -2241,7 +2312,6 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		Expect(err).NotTo(HaveOccurred())
 		mgtPortMAC = util.IPAddrToHWAddr(util.GetNodeManagementIfAddr(ipNet).IP).String()
 		getCreationFakeCommands(fexec, mgtPort, mgtPortMAC, netName, nodeName, mutableNetInfo.MTU())
-		getRPFilterLooseModeFakeCommands(fexec)
 		setUpUDNOpenflowManagerFakeOVSCommands(fexec)
 		getDeletionFakeOVSCommands(fexec, mgtPort)
 		nodeLister.On("Get", mock.AnythingOfType("string")).Return(node, nil)
@@ -2286,10 +2356,10 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			}}).Return(nil)
 		nodeAnnotatorMock.On("Set", mock.Anything, mock.Anything).Return(nil)
 		nodeAnnotatorMock.On("Run").Return(nil)
-		kubeMock.On("SetAnnotationsOnNode", node.Name, map[string]interface{}{
+		kubeMock.On("SetAnnotationsOnNode", mock.Anything, node.Name, map[string]interface{}{
 			"k8s.ovn.org/node-masquerade-subnet": "{\"ipv4\":\"169.254.0.0/17\",\"ipv6\":\"fd69::/112\"}",
 		}).Return(nil)
-		kubeMock.On("SetAnnotationsOnNode", node.Name, map[string]interface{}{
+		kubeMock.On("SetAnnotationsOnNode", mock.Anything, node.Name, map[string]interface{}{
 			"k8s.ovn.org/host-cidrs":          "[\"192.168.1.10/24\",\"fc00:f853:ccd:e793::3/64\"]",
 			"k8s.ovn.org/l3-gateway-config":   "{\"default\":{\"mode\":\"\"}}",
 			"k8s.ovn.org/node-primary-ifaddr": "{\"ipv4\":\"192.168.1.10/24\",\"ipv6\":\"fc00:f853:ccd:e793::3/64\"}",
@@ -2446,6 +2516,9 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			return nil
 		})
 		Expect(err).NotTo(HaveOccurred())
+		expectMgmtPortSysctls(Default, types.K8sMgmtIntfName)
+		expectForwardingSysctls(Default, "breth0")
+		expectMgmtPortSysctls(Default, mgtPort)
 		Expect(fexec.CalledMatchesExpected()).To(BeTrue(), fexec.ErrorDesc)
 	})
 	ovntest.OnSupportedPlatformsIt("should compute correct masquerade reply traffic routes for a user defined network", func() {
@@ -2906,7 +2979,6 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		config.Gateway.Mode = config.GatewayModeShared
 		config.IPv4Mode = true
 		config.IPv6Mode = true
-		getIPv6KeepAddrOnDownFakeCommand(fexec, "ovsbr1")
 		node := &corev1.Node{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: nodeName,
@@ -2972,6 +3044,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			return nil
 		})
 		Expect(err).NotTo(HaveOccurred())
+		expectSysctl(Default, "ipv6/conf/ovsbr1/keep_addr_on_down", "1")
 		Expect(fexec.CalledMatchesExpected()).To(BeTrue(), fexec.ErrorDesc)
 	})
 
@@ -3018,7 +3091,6 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 	})
 
 	ovntest.OnSupportedPlatformsIt("should set rp filter to loose mode for management port interface", func() {
-		getRPFilterLooseModeFakeCommands(fexec)
 		err := testNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
 			err := util.SetRPFilterLooseModeForInterface(mgtPort)
@@ -3026,6 +3098,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			return nil
 		})
 		Expect(err).NotTo(HaveOccurred())
+		expectSysctl(Default, "ipv4/conf/"+mgtPort+"/rp_filter", "2")
 		Expect(fexec.CalledMatchesExpected()).To(BeTrue(), fexec.ErrorDesc)
 	})
 
@@ -4097,7 +4170,6 @@ func TestDelUDNMasqIPNeighbors(t *testing.T) {
 			name: "deletes both entries",
 			setup: func(m *utilmocks.NetLinkOps) {
 				m.On("LinkByName", bridgeName).Return(link, nil)
-				m.On("LinkSetUp", link).Return(nil)
 				m.On("NeighDel", mock.MatchedBy(func(n *netlink.Neigh) bool {
 					return n.IP.Equal(v4IP) && n.LinkIndex == linkIndex
 				})).Return(nil).Once()
@@ -4109,15 +4181,24 @@ func TestDelUDNMasqIPNeighbors(t *testing.T) {
 		{
 			name: "returns error on link lookup failure",
 			setup: func(m *utilmocks.NetLinkOps) {
-				m.On("LinkByName", bridgeName).Return(nil, fmt.Errorf("no such device"))
+				lookupErr := fmt.Errorf("netlink receive failed")
+				m.On("LinkByName", bridgeName).Return(nil, lookupErr)
+				m.On("IsLinkNotFoundError", lookupErr).Return(false)
 			},
 			wantErr: "unable to get link for breth0",
+		},
+		{
+			name: "succeeds when the link is gone",
+			setup: func(m *utilmocks.NetLinkOps) {
+				notFoundErr := netlink.LinkNotFoundError{}
+				m.On("LinkByName", bridgeName).Return(nil, notFoundErr)
+				m.On("IsLinkNotFoundError", notFoundErr).Return(true)
+			},
 		},
 		{
 			name: "ignores ENOENT (already deleted)",
 			setup: func(m *utilmocks.NetLinkOps) {
 				m.On("LinkByName", bridgeName).Return(link, nil)
-				m.On("LinkSetUp", link).Return(nil)
 				m.On("NeighDel", mock.MatchedBy(func(n *netlink.Neigh) bool {
 					return n.IP.Equal(v4IP)
 				})).Return(fmt.Errorf("failed: %w", syscall.ENOENT)).Once()
@@ -4130,7 +4211,6 @@ func TestDelUDNMasqIPNeighbors(t *testing.T) {
 			name: "returns error on non-ENOENT NeighDel failure",
 			setup: func(m *utilmocks.NetLinkOps) {
 				m.On("LinkByName", bridgeName).Return(link, nil)
-				m.On("LinkSetUp", link).Return(nil)
 				m.On("NeighDel", mock.MatchedBy(func(n *netlink.Neigh) bool {
 					return n.IP.Equal(v4IP)
 				})).Return(fmt.Errorf("permission denied")).Once()

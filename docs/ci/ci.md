@@ -8,12 +8,18 @@ are used to run a subset of the Kubernetes E2E tests on each pull request. The
 local workflow that controls the test run is located in
 [ovn-kubernetes/.github/workflows/test.yml](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/.github/workflows/test.yml).
 
+For pull requests that only change documentation (`docs/**`, Markdown files,
+`mkdocs.yml`, or `.github/ISSUE_TEMPLATE/**`), a lightweight file check runs and
+skips the build, lint, and test jobs. This lets the required `Build-PR` check report
+as skipped instead of remaining pending because the entire workflow was skipped.
+Scheduled, manual, and merge-group runs still run the full suite.
+
 The following tasks are performed:
 
 - Build OVN-Kubernetes
-- Check out the Kubernetes source tree and compiles some dependencies
-- Install KIND
-- Run a matrix of End-To-End Tests using KIND
+- Check out the Kubernetes source tree and compile some dependencies
+- Install KinD
+- Run a matrix of End-To-End Tests using KinD
 - Ensure that documentation builds successfully
 
 The full matrix of e2e tests found [here](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/.github/workflows/test.yml)
@@ -42,7 +48,7 @@ It may also be useful sometimes to search through the closed issues to see if th
 previously and (not really) fixed, then reopening it with the new job failure.
 
 Only after following these steps ^, you can comment `/retest-failed` on your PR to trigger a retest of the failed tests.
-A rocket emoji reaction on your comment should apper when the retest is triggered.
+A rocket emoji reaction on your comment should appear when the retest is triggered.
 
 Before running this command, please reference existing or newly opened issues to justify the retest request.
 
@@ -114,7 +120,7 @@ Tests from
 [`test/crd-integration/`](https://github.com/ovn-kubernetes/ovn-kubernetes/tree/master/test/crd-integration)
 verify **CRD admission behaviour** against a real kube-apiserver via
 [envtest](https://pkg.go.dev/sigs.k8s.io/controller-runtime/pkg/envtest), with
-no Kind cluster required.  Because they are lightweight, they run as a step in
+no KinD cluster required.  Because they are lightweight, they run as a step in
 the `Test-PR` unit-test job rather than in a dedicated lane.  See the
 [Local Testing Guide](../developer-guide/local_testing_guide.md#crd-integration-tests)
 for prerequisites, how to run them, and how to add new tests.
@@ -131,16 +137,17 @@ be verified without live pod networking:
   specified
 
 Do **not** add these to `test/e2e/` or `test/e2e/testscenario/`.  The E2E
-suite requires a full Kind cluster; CRD admission tests do not.  Adding them
+suite requires a full KinD cluster; CRD admission tests do not.  Adding them
 to the E2E suite makes them slower, harder to run locally, and harder to
-iterate on.  Schema-only tests currently in
+iterate on.  `test/crd-integration/testscenario/` is the new home for
+schema-only scenarios. The remaining un-migrated scenarios still in
 [`test/e2e/testscenario/`](https://github.com/ovn-kubernetes/ovn-kubernetes/tree/master/test/e2e/testscenario)
-should be migrated here over time (tracked in
+should be migrated over time (tracked in
 [ovn-kubernetes#6932](https://github.com/ovn-kubernetes/ovn-kubernetes/issues/6932)).
 
 # Conformance Tests
 
-We have a conformance test suit that can be invoked using the `make conformance` command.
+We have a conformance test suite that can be invoked using the `make conformance` command.
 Currently we run the `TestNetworkPolicyV2Conformance` tests there. The actual tests are
 defined in https://github.com/kubernetes-sigs/network-policy-api/tree/master/conformance
 and then invoked from this repo. Any changes to the tests first have to be submitted

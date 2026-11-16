@@ -4,7 +4,10 @@
 package id
 
 import (
+	"fmt"
+	"math"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -209,5 +212,107 @@ func TestTunnelKeysAllocator(t *testing.T) {
 	_, err = allocator.AllocateKeys("net6", 10000, totalKeys-7)
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestReserveIDOutOfRange(t *testing.T) {
+	for _, invalid := range []int{math.MinInt, -2, -1, 10, math.MaxInt} {
+		t.Run(fmt.Sprint(invalid), func(t *testing.T) {
+			allocator := NewIDAllocator("test", 10)
+			if err := allocator.ReserveID("node", invalid); err == nil {
+				t.Fatal("expected an out-of-range error")
+			}
+			if got := allocator.GetID("node"); got != invalidID {
+				t.Fatalf("invalid reservation stored: %d", got)
+			}
+			for valid := 0; valid < 10; valid++ {
+				if err := allocator.ReserveID(fmt.Sprint(valid), valid); err != nil {
+					t.Fatalf("valid reservation failed: %v", err)
+				}
+			}
+			if _, err := allocator.AllocateID("extra"); err == nil {
+				t.Fatal("expected full allocator")
+			}
+		})
+	}
+}
+
+func TestReserveIDsOutOfRange(t *testing.T) {
+	for _, invalid := range []int{-2, 2, 9, math.MaxInt} {
+		t.Run(fmt.Sprint(invalid), func(t *testing.T) {
+			allocator := newIDsAllocator("test", 6, 3)
+			if err := allocator.ReserveIDs("existing", []int{3}); err != nil {
+				t.Fatal(err)
+			}
+			err := allocator.ReserveIDs("invalid", []int{4, invalid})
+			if err == nil || !strings.Contains(err.Error(), "outside allocation range") {
+				t.Fatalf("expected bounds error, got %v", err)
+			}
+			if _, found := allocator.nameIdsMap.Load("invalid"); found {
+				t.Fatal("failed reservation stored")
+			}
+			if err := allocator.ReserveIDs("other", []int{3}); err == nil {
+				t.Fatal("existing allocation was released")
+			}
+			// Every remaining ID must be available, including the partial reservation.
+			if err := allocator.ReserveIDs("replacement", []int{4, 5, 6, 7, 8}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := allocator.AllocateIDs("overflow", 1); err == nil {
+				t.Fatal("expected exhaustion")
+			}
+		})
+	}
+}
+
+func TestAllocateIDsWithRollback(t *testing.T) {
+	for previousCount := 0; previousCount <= 2; previousCount++ {
+		t.Run(fmt.Sprintf("existing=%d", previousCount), func(t *testing.T) {
+			allocator := newIDsAllocator("test", 4, 10)
+			existing, err := allocator.AllocateIDs("network", previousCount)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ids, rollback, err := allocator.AllocateIDsWithRollback("network", 2)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rollback()
+			retained, err := allocator.AllocateIDs("network", previousCount)
+			if err != nil || !slices.Equal(retained, existing) {
+				t.Fatalf("rollback changed existing allocation: ids=%v, err=%v", retained, err)
+			}
+			if previousCount > 0 {
+				if err := allocator.ReserveIDs("conflict", existing); err == nil {
+					t.Fatal("rollback released existing IDs")
+				}
+			}
+			if err := allocator.ReserveIDs("other", ids[previousCount:]); err != nil {
+				t.Fatalf("rollback retained newly allocated IDs: %v", err)
+			}
+		})
+	}
+}
+
+func TestTunnelKeysAllocatorRollbackPreservesExistingKeys(t *testing.T) {
+	allocator := NewTunnelKeyAllocator("test")
+	existing := []int{16715790}
+	if err := allocator.ReserveKeys("network", existing); err != nil {
+		t.Fatal(err)
+	}
+	keys, rollback, err := allocator.AllocateKeysWithRollback("network", 5000, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rollback()
+	if err := allocator.ReserveKeys("other", existing); err == nil {
+		t.Fatal("rollback released an existing key")
+	}
+	if err := allocator.ReserveKeys("other", keys[1:]); err != nil {
+		t.Fatalf("rollback retained a newly allocated key: %v", err)
+	}
+	keys, err = allocator.AllocateKeys("network", 5000, 1)
+	if err != nil || !slices.Equal(keys, existing) {
+		t.Fatalf("existing reservation changed: keys=%v, err=%v", keys, err)
 	}
 }

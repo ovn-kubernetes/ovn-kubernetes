@@ -4,7 +4,10 @@
 package config
 
 import (
+	"bytes"
+	"crypto/tls"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +17,7 @@ import (
 	"github.com/onsi/gomega"
 	"github.com/urfave/cli/v2"
 
+	"k8s.io/klog/v2"
 	kexec "k8s.io/utils/exec"
 
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
@@ -21,6 +25,26 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 )
+
+// TestIsGatewayStaticMACBindingIP verifies completeGatewayConfig populates the
+// allow-list with the dummy next-hop and host masquerade IPs (and only those).
+func TestIsGatewayStaticMACBindingIP(t *testing.T) {
+	g := gomega.NewWithT(t)
+	g.Expect(PrepareTestConfig()).To(gomega.Succeed())
+
+	for _, ip := range []net.IP{
+		Gateway.MasqueradeIPs.V4DummyNextHopMasqueradeIP,
+		Gateway.MasqueradeIPs.V6DummyNextHopMasqueradeIP,
+		Gateway.MasqueradeIPs.V4HostMasqueradeIP,
+		Gateway.MasqueradeIPs.V6HostMasqueradeIP,
+	} {
+		g.Expect(IsGatewayStaticMACBindingIP(ip.String())).To(gomega.BeTrue(), "expected %s to be allow-listed", ip)
+	}
+
+	// the OVN masquerade IP and unrelated IPs are not programmed as static bindings.
+	g.Expect(IsGatewayStaticMACBindingIP(Gateway.MasqueradeIPs.V4OVNMasqueradeIP.String())).To(gomega.BeFalse())
+	g.Expect(IsGatewayStaticMACBindingIP("10.0.0.10")).To(gomega.BeFalse())
+}
 
 func TestConfig(t *testing.T) {
 	gomega.RegisterFailHandler(Fail)
@@ -172,6 +196,7 @@ enable-scale-metrics=true
 [tls]
 tls-min-version=VersionTLS12
 tls-cipher-suites=TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+tls-curve-preferences=23,24
 
 [logging]
 loglevel=5
@@ -222,6 +247,7 @@ router-subnet=10.50.0.0/16
 single-node=false
 disable-forwarding=true
 allow-no-uplink=false
+disable-udn-arp-ndp-flood=false
 
 [hybridoverlay]
 enabled=true
@@ -266,6 +292,38 @@ v6-transit-subnet=fd98::/64
 	return os.WriteFile(path, []byte(newData), 0o644)
 }
 
+var _ = Describe("Config redaction for logging", func() {
+	It("clears the bearer token and CA material and keeps every other field", func() {
+		cfg := config{
+			Default: DefaultConfig{MTU: 1234},
+			Kubernetes: KubernetesConfig{
+				APIServer:  "https://1.2.3.4:6443",
+				Token:      "secret-bearer-token",
+				TokenFile:  "/var/run/secrets/token",
+				CACert:     "/etc/ca.crt",
+				CACertData: "-----BEGIN CERTIFICATE-----",
+				CAData:     []byte("ca-bytes"),
+			},
+		}
+
+		redacted := redactConfig(cfg)
+		gomega.Expect(redacted.Kubernetes.Token).To(gomega.BeEmpty())
+		gomega.Expect(redacted.Kubernetes.CACertData).To(gomega.BeEmpty())
+		gomega.Expect(redacted.Kubernetes.CAData).To(gomega.BeEmpty())
+		gomega.Expect(fmt.Sprintf("%+v", redacted)).NotTo(gomega.ContainSubstring("secret-bearer-token"))
+
+		// putting the three redacted fields back must yield the original struct
+		redacted.Kubernetes.Token = cfg.Kubernetes.Token
+		redacted.Kubernetes.CACertData = cfg.Kubernetes.CACertData
+		redacted.Kubernetes.CAData = cfg.Kubernetes.CAData
+		gomega.Expect(redacted).To(gomega.Equal(cfg))
+
+		// the input is left untouched, including the shared CAData backing array
+		gomega.Expect(cfg.Kubernetes.Token).To(gomega.Equal("secret-bearer-token"))
+		gomega.Expect(cfg.Kubernetes.CAData).To(gomega.Equal([]byte("ca-bytes")))
+	})
+})
+
 var _ = Describe("Config Operations", func() {
 	var app *cli.App
 	var cfgFile *os.File
@@ -292,6 +350,36 @@ var _ = Describe("Config Operations", func() {
 
 	AfterEach(func() {
 		os.Remove(cfgFile.Name())
+	})
+
+	It("does not log the bearer token read from the config file", func() {
+		const token = "secret-bearer-token"
+		var logs bytes.Buffer
+		state := klog.CaptureState()
+		defer state.Restore()
+		klog.LogToStderr(false)
+		klog.SetOutput(&logs)
+
+		err := runInit(app, 2, cfgFile, "-k8s-token="+token)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(Kubernetes.Token).To(gomega.Equal(token))
+
+		klog.Flush()
+		// runInit sets loglevel 5, so both redacted log lines are emitted
+		gomega.Expect(logs.String()).To(gomega.ContainSubstring("Parsed config:"))
+		gomega.Expect(logs.String()).To(gomega.ContainSubstring("Kubernetes config:"))
+		gomega.Expect(logs.String()).NotTo(gomega.ContainSubstring(token))
+	})
+
+	It("rejects a CNI log file outside the allowed directory", func() {
+		err := runInit(app, 1, cfgFile, "-cnilogfile=/tmp/cni.log")
+		gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("must be inside " + CNILogDir)))
+	})
+
+	It("accepts a CNI log file inside the allowed directory", func() {
+		err := runInit(app, 1, cfgFile, "-cnilogfile="+CNILogDir+"/cni.log")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(Logging.CNIFile).To(gomega.Equal(CNILogDir + "/cni.log"))
 	})
 
 	It("uses expected defaults", func() {
@@ -334,6 +422,7 @@ var _ = Describe("Config Operations", func() {
 			gomega.Expect(Metrics.NodeServerCert).To(gomega.Equal(""))
 			gomega.Expect(TLS.MinVersion).To(gomega.Equal(""))
 			gomega.Expect(TLS.ParseCipherSuites()).To(gomega.BeEmpty())
+			gomega.Expect(TLS.ParseCurvePreferences()).To(gomega.BeEmpty())
 			gomega.Expect(Default.ClusterSubnets).To(gomega.Equal([]CIDRNetworkEntry{
 				{ovntest.MustParseIPNet("10.128.0.0/14"), 23},
 			}))
@@ -348,6 +437,7 @@ var _ = Describe("Config Operations", func() {
 			gomega.Expect(Gateway.SingleNode).To(gomega.BeFalse())
 			gomega.Expect(Gateway.DisableForwarding).To(gomega.BeFalse())
 			gomega.Expect(Gateway.AllowNoUplink).To(gomega.BeFalse())
+			gomega.Expect(Gateway.DisableUDNARPNDPFlood).To(gomega.BeFalse())
 			gomega.Expect(OVNKubernetesFeature.EgressIPReachabiltyTotalTimeout).To(gomega.Equal(1))
 			gomega.Expect(OVNKubernetesFeature.EgressIPNodeHealthCheckPort).To(gomega.Equal(0))
 			gomega.Expect(OVNKubernetesFeature.EnableMultiNetwork).To(gomega.BeFalse())
@@ -508,6 +598,7 @@ routing-table-id-start=2002
 			"enable-multi-external-gateway=true",
 			"enable-admin-network-policy=true",
 			"enable-persistent-ips=true",
+			"disable-udn-arp-ndp-flood=true",
 		)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -557,11 +648,18 @@ routing-table-id-start=2002
 			gomega.Expect(Metrics.EnableConfigDuration).To(gomega.BeTrue())
 			gomega.Expect(Metrics.EnableScaleMetrics).To(gomega.BeTrue())
 
-			gomega.Expect(TLS.MinVersion).To(gomega.Equal("VersionTLS12"))
-			gomega.Expect(TLS.ParseCipherSuites()).To(gomega.Equal([]string{
-				"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
-				"TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
-			}))
+			// Verify TLS.ApplyOptions produces the correct tls.Config
+			tlsConfig := &tls.Config{}
+			TLS.ApplyOptions(tlsConfig)
+			gomega.Expect(tlsConfig.MinVersion).To(gomega.Equal(uint16(tls.VersionTLS12)))
+			gomega.Expect(tlsConfig.CipherSuites).To(gomega.ConsistOf(
+				tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+				tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+			))
+			gomega.Expect(tlsConfig.CurvePreferences).To(gomega.ConsistOf(
+				tls.CurveP256,
+				tls.CurveP384,
+			))
 
 			gomega.Expect(EgressIPHealthCheckTLS.PrivKey).To(gomega.Equal("/path/to/nb-client-private.key"))
 			gomega.Expect(EgressIPHealthCheckTLS.Cert).To(gomega.Equal("/path/to/nb-client.crt"))
@@ -588,6 +686,7 @@ routing-table-id-start=2002
 			gomega.Expect(Gateway.SingleNode).To(gomega.BeFalse())
 			gomega.Expect(Gateway.DisableForwarding).To(gomega.BeTrue())
 			gomega.Expect(Gateway.AllowNoUplink).To(gomega.BeFalse())
+			gomega.Expect(Gateway.DisableUDNARPNDPFlood).To(gomega.BeTrue())
 
 			gomega.Expect(HybridOverlay.Enabled).To(gomega.BeTrue())
 			gomega.Expect(OVNKubernetesFeature.EgressIPReachabiltyTotalTimeout).To(gomega.Equal(3))
@@ -675,11 +774,18 @@ routing-table-id-start=2002
 			gomega.Expect(Metrics.EnableScaleMetrics).To(gomega.BeTrue())
 			gomega.Expect(Metrics.CollectionInterval).To(gomega.Equal(15))
 
-			gomega.Expect(TLS.MinVersion).To(gomega.Equal("VersionTLS13"))
-			gomega.Expect(TLS.ParseCipherSuites()).To(gomega.Equal([]string{
-				"TLS_AES_128_GCM_SHA256",
-				"TLS_AES_256_GCM_SHA384",
-			}))
+			// Verify TLS.ApplyOptions produces the correct tls.Config
+			tlsConfig := &tls.Config{}
+			TLS.ApplyOptions(tlsConfig)
+			gomega.Expect(tlsConfig.MinVersion).To(gomega.Equal(uint16(tls.VersionTLS13)))
+			gomega.Expect(tlsConfig.CipherSuites).To(gomega.ConsistOf(
+				tls.TLS_AES_128_GCM_SHA256,
+				tls.TLS_AES_256_GCM_SHA384,
+			))
+			gomega.Expect(tlsConfig.CurvePreferences).To(gomega.ConsistOf(
+				tls.CurveP521,
+				tls.X25519MLKEM768,
+			))
 
 			gomega.Expect(EgressIPHealthCheckTLS.PrivKey).To(gomega.Equal("/client/privkey"))
 			gomega.Expect(EgressIPHealthCheckTLS.Cert).To(gomega.Equal("/client/cert"))
@@ -772,6 +878,7 @@ routing-table-id-start=2002
 			"-metrics-collection-interval=15",
 			"-tls-min-version=VersionTLS13",
 			"-tls-cipher-suites=TLS_AES_128_GCM_SHA256,TLS_AES_256_GCM_SHA384",
+			"-tls-curve-preferences=25,4588",
 			"-egressip-reachability-total-timeout=5",
 			"-egressip-node-healthcheck-port=4321",
 			"-enable-multi-network=true",

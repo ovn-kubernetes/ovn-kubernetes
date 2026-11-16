@@ -208,9 +208,16 @@ set_common_default_params() {
   KIND_NUM_WORKER=${KIND_NUM_WORKER:-2}
 
   ENABLE_MULTI_NET=${ENABLE_MULTI_NET:-false}
+  OVN_ENABLE_PERSISTENT_IPS=${OVN_ENABLE_PERSISTENT_IPS:-true}
   ENABLE_NETWORK_SEGMENTATION=${ENABLE_NETWORK_SEGMENTATION:-false}
   if [ "$ENABLE_NETWORK_SEGMENTATION" == true ] && [ "$ENABLE_MULTI_NET" != true ]; then
     echo "Network segmentation (UDN) requires multi-network to be enabled (-mne)"
+    exit 1
+  fi
+
+  DISABLE_UDN_ARP_NDP_FLOOD=${DISABLE_UDN_ARP_NDP_FLOOD:-false}
+  if [ "$DISABLE_UDN_ARP_NDP_FLOOD" == true ] && [ "$ENABLE_NETWORK_SEGMENTATION" != true ]; then
+    echo "Disable UDN ARP/NDP Flood requires network-segmentation (UDN) to be enabled (-nse)"
     exit 1
   fi
 
@@ -458,6 +465,24 @@ docker_disable_ipv6() {
   done
 }
 
+kind_connect_extra_network() {
+  local network=$1 node=$2 endpoints index
+  local -a args=()
+  endpoints=$("$OCI_BIN" inspect "$node" | jq -c '.[0].NetworkSettings.Networks')
+  if jq -e --arg network "$network" 'has($network)' <<< "$endpoints" >/dev/null; then
+    return 0
+  fi
+  if [ "$OCI_BIN" = docker ]; then
+    # Docker 28+ can reorder endpoints on restart. Pin all extra networks
+    # to eth1 and above, leaving the primary Kind network as the only
+    # automatically named endpoint. Docker picks the lowest unused suffix,
+    # so the primary stays eth0 regardless of endpoint attachment order.
+    index=$(jq 'length' <<< "$endpoints")
+    args+=(--driver-opt "com.docker.network.endpoint.ifname=eth${index}")
+  fi
+  "$OCI_BIN" network connect "${args[@]}" "$network" "$node"
+}
+
 docker_create_second_interface() {
   echo "adding second interfaces to nodes"
 
@@ -466,7 +491,7 @@ docker_create_second_interface() {
 
   KIND_NODES=$(kind get nodes --name "${KIND_CLUSTER_NAME}")
   for n in $KIND_NODES; do
-    "$OCI_BIN" network connect xgw "$n"
+    kind_connect_extra_network xgw "$n"
   done
 }
 
@@ -544,7 +569,7 @@ docker_create_uplink_interface() {
   KIND_NODES=$(kind_get_nodes)
   for n in $KIND_NODES; do
     if [ -z "$(kind_uplink_network_value "$n" IPAddress)" ]; then
-      "$OCI_BIN" network connect "${OVN_UPLINK_NETWORK_NAME}" "$n"
+      kind_connect_extra_network "${OVN_UPLINK_NETWORK_NAME}" "$n"
     fi
   done
 }
@@ -968,9 +993,12 @@ install_metallb() {
     # Enable IPv6 forwarding in FRR
     $OCI_BIN exec frr sysctl -w net.ipv6.conf.all.forwarding=1
   fi
-  # Note: this image let's us use it also for creating load balancer backends that can send big packets
+  # External MetalLB client: needs iproute and nc. Prefer NETSHOOT_IMAGE when set
+  # so offline/mirrored environments can override the default.
+  NETSHOOT_IMAGE="${NETSHOOT_IMAGE:-ghcr.io/nicolaka/netshoot:v0.16}"
   $OCI_BIN rm -f lbclient
-  $OCI_BIN run  --cap-add NET_ADMIN --user 0  -d --network clientnet  --rm  --name lbclient  quay.io/itssurya/dev-images:metallb-lbservice
+  $OCI_BIN run --cap-add NET_ADMIN --user 0 -d --network clientnet --rm --name lbclient \
+    --entrypoint sleep "${NETSHOOT_IMAGE}" infinity
   popd
   delete_metallb_dir
 
@@ -1083,7 +1111,7 @@ wait_for_ovn_daemonset() {
   timeout=$(calculate_timeout ${endtime})
   echo "Waiting for k8s to launch all ${ds} pods (timeout ${timeout})..."
   # `kubectl rollout status` errors on DaemonSets with updateStrategy=OnDelete
-  # (upgrade-ovn.sh sets ovs-node to OnDelete so helm upgrade doesn't roll
+  # (staged-upgrade-ovn.sh sets ovs-node to OnDelete so helm upgrade doesn't roll
   # OVS out from under still-running ovnkube-node pods). For OnDelete DSes
   # we can't observe rollout progress; just wait for pods to be Ready.
   local strategy
@@ -1330,7 +1358,7 @@ docker_create_second_disconnected_interface() {
 
   KIND_NODES=$(kind_get_nodes)
   for n in $KIND_NODES; do
-    "$OCI_BIN" network connect "$bridge_name" "$n" || true
+    kind_connect_extra_network "$bridge_name" "$n"
   done
 }
 
@@ -1609,7 +1637,7 @@ readonly FRR_K8S_VERSION=v0.0.0-20260603082256-b43efcb206be
 readonly FRR_K8S_GIT_REF=b43efcb206be
 readonly FRR_K8S_OVNK_BGP_PATCH="${DIR}/frr-k8s/patches/0001-Improvements-to-the-demo.patch"
 readonly FRR_K8S_UPSTREAM_FRR_IMAGE=quay.io/frrouting/frr:10.4.3
-readonly FRR_DEPLOYED_IMAGE=quay.io/frrouting/frr:10.6.0
+readonly FRR_DEPLOYED_IMAGE=quay.io/frrouting/frr:10.6.2
 # Override to test newer FRR builds in the in-cluster frr-k8s daemonset
 # without changing the pinned frr-k8s release.
 FRR_K8S_FRR_IMAGE=${FRR_K8S_FRR_IMAGE:-${FRR_DEPLOYED_IMAGE}}

@@ -28,8 +28,9 @@ component does, which pods/containers they run in, and their database access.
 The key distinction for code navigation: only ovnkube-controller has direct
 access to OVN NB/SB databases (via libovsdb). The cluster-manager interacts
 with the K8s API only. ovnkube-node interacts with the K8s API, OVS bridges,
-and host networking (nftables, VRF, routes, interfaces) but does not access
-OVN databases directly.
+and host networking (nftables, VRF, routes, interfaces). It does not access
+OVN databases directly, except the MAC binding controller. That controller
+uses the NB/SB clients when `DisableUDNARPNDPFlood` is enabled.
 
 Note: ovnkube-controller and ovnkube-node both run on every node as part of
 the data plane and could logically be a single process. They are separate

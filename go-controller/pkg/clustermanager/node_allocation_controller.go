@@ -20,12 +20,8 @@ import (
 	ipgenerator "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/generator/ip"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
 	objretry "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/retry"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
-)
-
-const (
-	// Maximum node IDs that can be generated. Limited to maximum nodes supported by k8s.
-	maxNodeIDs = 5000
 )
 
 // nodeAllocationController allocates node IDs and transit switch port addresses.
@@ -51,7 +47,7 @@ type nodeAllocationController struct {
 
 func newNodeAllocationController(ovnClient *util.OVNClusterManagerClientset, wf *factory.WatchFactory) (*nodeAllocationController, error) {
 	// Since we don't assign 0 to any node, create IDAllocator with one extra element in maxIds.
-	nodeIDAllocator := id.NewIDAllocator("NodeIDs", maxNodeIDs+1)
+	nodeIDAllocator := id.NewIDAllocator("NodeIDs", types.MaxNodeIDs+1)
 	// Reserve the id 0. We don't want to assign this id to any of the nodes.
 	if err := nodeIDAllocator.ReserveID("zero", 0); err != nil {
 		return nil, fmt.Errorf("idAllocator failed to reserve id 0")
@@ -138,7 +134,7 @@ func needsNodeAllocation(node *corev1.Node) bool {
 		return false
 	}
 
-	if _, ok := node.Annotations[util.OvnNodeID]; !ok {
+	if _, err := util.GetNodeID(node); err != nil {
 		return true
 	}
 	if _, ok := node.Annotations[util.OvnTransitSwitchPortAddr]; !ok {
@@ -148,7 +144,7 @@ func needsNodeAllocation(node *corev1.Node) bool {
 }
 
 // handleAddUpdateNodeEvent handles the add or update node event
-func (nac *nodeAllocationController) handleAddUpdateNodeEvent(node *corev1.Node) error {
+func (nac *nodeAllocationController) handleAddUpdateNodeEvent(ctx context.Context, node *corev1.Node) error {
 	if config.HybridOverlay.Enabled && util.NoHostSubnet(node) {
 		// skip hybrid overlay nodes
 		return nil
@@ -184,7 +180,7 @@ func (nac *nodeAllocationController) handleAddUpdateNodeEvent(node *corev1.Node)
 			node.Name, err)
 	}
 
-	return nac.kube.SetAnnotationsOnNode(node.Name, nodeAnnotations)
+	return nac.kube.SetAnnotationsOnNode(ctx, node.Name, nodeAnnotations)
 }
 
 // handleDeleteNode handles the delete node event.
@@ -249,7 +245,7 @@ func (h *nodeAllocationControllerEventHandler) FilterOutResource(_ interface{}) 
 
 // AddResource adds the specified object to the cluster according to its type and
 // returns the error, if any, yielded during object creation.
-func (h *nodeAllocationControllerEventHandler) AddResource(obj interface{}, _ bool) error {
+func (h *nodeAllocationControllerEventHandler) AddResource(ctx context.Context, obj interface{}, _ bool) error {
 	var err error
 
 	switch h.objType {
@@ -258,7 +254,7 @@ func (h *nodeAllocationControllerEventHandler) AddResource(obj interface{}, _ bo
 		if !ok {
 			return fmt.Errorf("could not cast %T object to *corev1.Node", obj)
 		}
-		if err = h.nac.handleAddUpdateNodeEvent(node); err != nil {
+		if err = h.nac.handleAddUpdateNodeEvent(ctx, node); err != nil {
 			h.nodeSyncFailed.Store(node.Name, true)
 			return fmt.Errorf("node add failed for %s, will try again later: %w",
 				node.Name, err)
@@ -273,7 +269,7 @@ func (h *nodeAllocationControllerEventHandler) AddResource(obj interface{}, _ bo
 // UpdateResource updates the specified object in the cluster to its version in newObj according
 // to its type and returns the error, if any, yielded during the object update.
 // The inRetryCache boolean argument is to indicate if the given resource is in the retryCache or not.
-func (h *nodeAllocationControllerEventHandler) UpdateResource(_, newObj interface{}, _ bool) error {
+func (h *nodeAllocationControllerEventHandler) UpdateResource(ctx context.Context, _, newObj interface{}, _ bool) error {
 	var err error
 
 	switch h.objType {
@@ -287,7 +283,7 @@ func (h *nodeAllocationControllerEventHandler) UpdateResource(_, newObj interfac
 			// node ID and transit switch IP are assigned by us and cannot change
 			return nil
 		}
-		if err = h.nac.handleAddUpdateNodeEvent(node); err != nil {
+		if err = h.nac.handleAddUpdateNodeEvent(ctx, node); err != nil {
 			return fmt.Errorf("node update failed for %s, will try again later: %w",
 				node.Name, err)
 		}
@@ -300,7 +296,7 @@ func (h *nodeAllocationControllerEventHandler) UpdateResource(_, newObj interfac
 
 // DeleteResource deletes the object from the cluster according to the delete logic of its resource type.
 // cachedObj is the internal cache entry for this object, used for now for pods and network policies.
-func (h *nodeAllocationControllerEventHandler) DeleteResource(obj, _ interface{}) error {
+func (h *nodeAllocationControllerEventHandler) DeleteResource(_ context.Context, obj, _ interface{}) error {
 	switch h.objType {
 	case factory.NodeType:
 		node, ok := obj.(*corev1.Node)
@@ -316,7 +312,7 @@ func (h *nodeAllocationControllerEventHandler) DeleteResource(obj, _ interface{}
 	return nil
 }
 
-func (h *nodeAllocationControllerEventHandler) SyncFunc(objs []interface{}) error {
+func (h *nodeAllocationControllerEventHandler) SyncFunc(_ context.Context, objs []interface{}) error {
 	var syncFunc func([]interface{}) error
 
 	if h.syncFunc != nil {

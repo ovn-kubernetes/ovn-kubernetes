@@ -246,7 +246,7 @@ func (oc *DefaultNodeNetworkController) shouldReconcileNetworkChange(old, new ut
 	return wasPodNetworkAdvertisedAtNode != isPodNetworkAdvertisedAtNode
 }
 
-func (oc *DefaultNodeNetworkController) Reconcile(netInfo util.NetInfo) error {
+func (oc *DefaultNodeNetworkController) Reconcile(_ context.Context, netInfo util.NetInfo) error {
 	// inspect changes first
 	reconcilePodNetwork := oc.shouldReconcileNetworkChange(oc.ReconcilableNetInfo, netInfo)
 
@@ -274,6 +274,18 @@ func (oc *DefaultNodeNetworkController) Reconcile(netInfo util.NetInfo) error {
 	}
 
 	return nil
+}
+
+func (oc *DefaultNodeNetworkController) GetOpenflowManager() (OpenflowManager, error) {
+	gw, ok := oc.Gateway.(*gateway)
+	if !ok || gw == nil || gw.openflowManager == nil {
+		return nil, fmt.Errorf("openflow manager is not available for node %s", oc.name)
+	}
+	fmops := &OpenflowManagerOps{
+		GetMacBindingSourceForUplinksFn: gw.openflowManager.GetMacBindingSourceForUplinks,
+		RegisterUplinkCallbackFn:        gw.openflowManager.RegisterUplinkCallback,
+	}
+	return fmops, nil
 }
 
 func clearOVSFlowTargets() error {
@@ -997,7 +1009,7 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) (err error) {
 			nc.Kube,
 			nc.name,
 			nc.watchFactory.NodeInformer(),
-			nc.watchFactory.LocalPodInformer(),
+			nc.watchFactory.PodInformer(),
 			informer.NewDefaultEventHandler,
 			false,
 		)
@@ -1083,7 +1095,7 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) (err error) {
 	if config.OVNKubernetesFeature.EnableEgressService && (config.IsModeDPUHost() || config.IsModeFull()) {
 		wf := nc.watchFactory.(*factory.WatchFactory)
 		c, err := egressservice.NewController(nc.stopChan, nodetypes.OvnKubeNodeSNATMark, nc.name,
-			wf.EgressServiceInformer(), wf.ServiceInformer(), wf.EndpointSliceInformer())
+			wf.EgressServiceInformer(), wf.ServiceInformer(), wf.EndpointSliceInformer(), wf.PodInformer())
 		if err != nil {
 			return err
 		}

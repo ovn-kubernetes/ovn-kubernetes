@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
 
 	"github.com/ovn-kubernetes/libovsdb/client"
@@ -112,7 +113,7 @@ func (nc *UserDefinedNodeNetworkController) Stop() {
 }
 
 // Cleanup cleans up node entities for the given user-defined network
-func (nc *UserDefinedNodeNetworkController) Cleanup() error {
+func (nc *UserDefinedNodeNetworkController) Cleanup(_ context.Context) error {
 	var errors []error
 	var err error
 
@@ -134,7 +135,7 @@ func (nc *UserDefinedNodeNetworkController) Cleanup() error {
 
 // HandleNetworkRefChange satisfies the NetworkController interface. UDN node controllers only
 // manage local node state, so NAD reference changes for remote nodes are ignored.
-func (nc *UserDefinedNodeNetworkController) HandleNetworkRefChange(_ string, _ bool) {}
+func (nc *UserDefinedNodeNetworkController) HandleNetworkRefChange(context.Context, string, bool) {}
 
 func (nc *UserDefinedNodeNetworkController) shouldReconcileNetworkChange(old, new util.NetInfo) bool {
 	switch {
@@ -150,8 +151,9 @@ func (nc *UserDefinedNodeNetworkController) shouldReconcileNetworkChange(old, ne
 // and the gateway mode:
 // 1. IP rules
 // 2. OpenFlows on br-ex bridge to forward traffic to correct ofports
-func (nc *UserDefinedNodeNetworkController) Reconcile(netInfo util.NetInfo) error {
+func (nc *UserDefinedNodeNetworkController) Reconcile(_ context.Context, netInfo util.NetInfo) error {
 	reconcilePodNetwork := nc.shouldReconcileNetworkChange(nc.ReconcilableNetInfo, netInfo)
+	oldNamespaces := sets.New(nc.GetNADNamespaces()...)
 	err := util.ReconcileNetInfo(nc.ReconcilableNetInfo, netInfo)
 	if err != nil {
 		klog.Errorf("Failed to reconcile network information for network %s: %v", nc.GetNetworkName(), err)
@@ -160,6 +162,20 @@ func (nc *UserDefinedNodeNetworkController) Reconcile(netInfo util.NetInfo) erro
 	if reconcilePodNetwork {
 		if nc.gateway != nil {
 			nc.gateway.Reconcile()
+		}
+	}
+
+	// Services in a namespace that joins this already running network were
+	// skipped while the namespace had no active primary network. AddNetwork only
+	// replays services when the network starts, so replay them here.
+	if nc.IsPrimaryNetwork() && nc.gateway != nil && nc.gateway.gateway != nil &&
+		nc.gateway.gateway.servicesRetryFramework != nil {
+		joined := sets.List(sets.New(nc.GetNADNamespaces()...).Difference(oldNamespaces))
+		if len(joined) > 0 {
+			if errs := nc.gateway.gateway.resyncNamespaceServices(joined); len(errs) > 0 {
+				return fmt.Errorf("failed to resync services for namespaces %v joining network %s: %w",
+					joined, nc.GetNetworkName(), kerrors.NewAggregate(errs))
+			}
 		}
 	}
 

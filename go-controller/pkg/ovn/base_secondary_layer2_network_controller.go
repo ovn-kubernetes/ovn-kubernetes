@@ -4,6 +4,7 @@
 package ovn
 
 import (
+	"context"
 	"fmt"
 	"net"
 
@@ -107,7 +108,7 @@ func (oc *BaseLayer2UserDefinedNetworkController) cleanup() error {
 	return nil
 }
 
-func (oc *BaseLayer2UserDefinedNetworkController) run() error {
+func (oc *BaseLayer2UserDefinedNetworkController) run(_ context.Context) error {
 	// WatchNamespaces() should be started first because it has no other
 	// dependencies.
 	if err := oc.WatchNamespaces(); err != nil {
@@ -259,7 +260,7 @@ func (oc *BaseLayer2UserDefinedNetworkController) initializeLogicalSwitch(switch
 		return nil, fmt.Errorf("failed to transact logical switch operations: %w", err)
 	}
 
-	if err = oc.lsManager.AddOrUpdateSwitch(switchName, hostSubnets, reservedSubnets, excludeSubnets...); err != nil {
+	if err = oc.lsManager.AddOrUpdateSwitch(switchName, hostSubnets, reservedSubnets, nil, excludeSubnets...); err != nil {
 		return nil, err
 	}
 

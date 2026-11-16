@@ -12,6 +12,8 @@ type Config string
 const (
 	// L3UDNMultiSubnetConfig indicates whether L3 User Defined Network multi-subnet support is enabled
 	L3UDNMultiSubnetConfig Config = "L3UDNMultiSubnet"
+	// UDNARPNDPFloodDisabled indicates wheter disabling UDN ARP/NDP flood setting is set true
+	UDNARPNDPFloodDisabled Config = "UDNARPNDPFloodDisabled"
 )
 
 type ImageID int
@@ -24,13 +26,11 @@ type ImageConfig struct {
 // Image IDs for OVN-Kubernetes e2e test images
 const (
 	Agnhost ImageID = iota
-	IPerf3
 	Netshoot
 	Nginx
-	MetalLBLBService
-	UDPServerSrcIPPrinter
 	FRR
 	DNSMasq
+	FedoraKubevirtContainerDisk
 	MaxDefaultImageIDs
 )
 
@@ -52,4 +52,11 @@ type DeploymentConfig interface {
 	AddRequiredImage(imageID ...ImageID)
 	// GetRequiredImages returns the set of images needed for the current test run.
 	GetRequiredImages() []ImageConfig
+	// GetNodeMachineNetworks returns the routable subnet CIDRs for all nodes,
+	// keyed by node name. Each node's slice contains IPv4 and/or IPv6 CIDRs
+	// depending on the cluster's IP family configuration.
+	GetNodeMachineNetworks() (map[string][]string, error)
+	// OVNControllerLogPath returns the host filesystem path of the ovn-controller log
+	// on cluster nodes (used by e2e to grep ACL audit lines).
+	OVNControllerLogPath() string
 }

@@ -19,6 +19,7 @@ import (
 	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	ovnkubeutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
+	deploymentconfigapi "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig/api"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/feature"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/images"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider"
@@ -298,7 +299,13 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 						udnPodConfig.namespace = f.Namespace.Name
 						udnPodConfig.nodeSelector = map[string]string{nodeHostnameKey: nodes.Items[0].Name}
 
+						// An unprivileged ovnkube-node cannot let kubelet through the host
+						// isolation, so the probes would never succeed there.
+						kubeletProbesSupported := !isUnprivilegedMode()
 						udnPod := runUDNPod(cs, f.Namespace.Name, udnPodConfig, func(pod *v1.Pod) {
+							if !kubeletProbesSupported {
+								return
+							}
 							pod.Spec.Containers[0].ReadinessProbe = &v1.Probe{
 								ProbeHandler: v1.ProbeHandler{
 									HTTPGet: &v1.HTTPGetAction{
@@ -393,22 +400,26 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 						udnPod, err = cs.CoreV1().Pods(udnPod.Namespace).Get(context.Background(), udnPod.Name, metav1.GetOptions{})
 						Expect(err).NotTo(HaveOccurred())
 
-						By("asserting healthcheck works (kubelet can access the UDN pod)")
-						// The pod should be ready
-						Expect(podutils.IsPodReady(udnPod)).To(BeTrue(), fmt.Sprintf("UDN pod is not ready: %v", udnPod))
+						if kubeletProbesSupported {
+							By("asserting healthcheck works (kubelet can access the UDN pod)")
+							// The pod should be ready
+							Expect(podutils.IsPodReady(udnPod)).To(BeTrue(), fmt.Sprintf("UDN pod is not ready: %v", udnPod))
 
-						Expect(udnPod.Status.ContainerStatuses[0].RestartCount).To(Equal(int32(0)))
+							Expect(udnPod.Status.ContainerStatuses[0].RestartCount).To(Equal(int32(0)))
 
-						By("restarting kubelet, pod should stay ready")
-						_, err = infraprovider.Get().ExecK8NodeCommand(nodeName, []string{"systemctl", "restart", "kubelet"})
-						Expect(err).NotTo(HaveOccurred())
+							By("restarting kubelet, pod should stay ready")
+							_, err = infraprovider.Get().ExecK8NodeCommand(nodeName, []string{"systemctl", "restart", "kubelet"})
+							Expect(err).NotTo(HaveOccurred())
 
-						By("asserting healthcheck still works (kubelet can access the UDN pod)")
-						// The pod should stay ready
-						Consistently(func() bool {
-							return podutils.IsPodReady(udnPod)
-						}, 10*time.Second, 1*time.Second).Should(BeTrue())
-						Expect(udnPod.Status.ContainerStatuses[0].RestartCount).To(Equal(int32(0)))
+							By("asserting healthcheck still works (kubelet can access the UDN pod)")
+							// The pod should stay ready
+							Consistently(func() bool {
+								return podutils.IsPodReady(udnPod)
+							}, 10*time.Second, 1*time.Second).Should(BeTrue())
+							Expect(udnPod.Status.ContainerStatuses[0].RestartCount).To(Equal(int32(0)))
+						} else {
+							By("skipping the kubelet healthcheck assertions: ovnkube-node runs in unprivileged mode")
+						}
 
 						By("checking default network hostNetwork pod and non-kubelet host process can't reach the UDN pod")
 						hostNetPod, err := createPod(f, "host-net-pod", nodeName,
@@ -1785,6 +1796,50 @@ spec:
 		}, 15*time.Second, time.Second).Should(Succeed())
 	}, Entry("UDN", false), Entry("CUDN", true))
 
+	It("when primary UDN already exists, second primary UDN in the same namespace should report not-ready", func(ctx SpecContext) {
+		const (
+			firstPrimaryUdnName  = "primary-net-1"
+			secondPrimaryUdnName = "primary-net-2"
+		)
+
+		By("create first primary UDN and wait until it is ready")
+		cleanupFirst, err := createManifest(f.Namespace.Name, newPrimaryUserDefinedNetworkManifest(cs, firstPrimaryUdnName))
+		DeferCleanup(cleanupFirst)
+		Expect(err).NotTo(HaveOccurred(), "create first primary UserDefinedNetwork %q", firstPrimaryUdnName)
+		Eventually(ctx, userDefinedNetworkReadyFunc(ctx, f.DynamicClient, f.Namespace.Name, firstPrimaryUdnName), 30*time.Second, time.Second).
+			Should(Succeed(), "wait for first primary UserDefinedNetwork %q to become ready", firstPrimaryUdnName)
+
+		By("create second primary UDN in the same namespace")
+		cleanupSecond, err := createManifest(f.Namespace.Name, newPrimaryUserDefinedNetworkManifest(cs, secondPrimaryUdnName))
+		DeferCleanup(cleanupSecond)
+		Expect(err).NotTo(HaveOccurred(), "create second primary UserDefinedNetwork %q", secondPrimaryUdnName)
+
+		expectedMessage := fmt.Sprintf("primary network already exist in namespace %q: %q", f.Namespace.Name, firstPrimaryUdnName)
+		Eventually(func(g Gomega) []metav1.Condition {
+			conditionsJSON, err := e2ekubectl.RunKubectl(f.Namespace.Name, "get", "userdefinednetwork", secondPrimaryUdnName, "-o", "jsonpath={.status.conditions}")
+			g.Expect(err).NotTo(HaveOccurred(), "get UserDefinedNetwork %q status conditions", secondPrimaryUdnName)
+			var actualConditions []metav1.Condition
+			g.Expect(json.Unmarshal([]byte(conditionsJSON), &actualConditions)).To(Succeed(), "unmarshal UserDefinedNetwork %q status conditions", secondPrimaryUdnName)
+			return normalizeConditions(actualConditions)
+		}, 5*time.Second, 1*time.Second).Should(ConsistOf(metav1.Condition{
+			Type:    "NetworkCreated",
+			Status:  metav1.ConditionFalse,
+			Reason:  "SyncError",
+			Message: expectedMessage,
+		}), "second primary UserDefinedNetwork %q should report NetworkCreated=false", secondPrimaryUdnName)
+
+		By("verify the first primary UDN remains ready")
+		Consistently(ctx, userDefinedNetworkReadyFunc(ctx, f.DynamicClient, f.Namespace.Name, firstPrimaryUdnName), 5*time.Second, time.Second).
+			Should(Succeed(), "first primary UserDefinedNetwork %q should remain ready", firstPrimaryUdnName)
+
+		By("verify the second primary UDN did not create a NetworkAttachmentDefinition")
+		Consistently(func(g Gomega) {
+			_, err := nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Get(context.Background(), secondPrimaryUdnName, metav1.GetOptions{})
+			g.Expect(err).To(HaveOccurred(), "second primary UserDefinedNetwork %q should not create a NetworkAttachmentDefinition", secondPrimaryUdnName)
+			g.Expect(kerrors.IsNotFound(err)).To(BeTrue(), "NetworkAttachmentDefinition %q should not exist in namespace %q", secondPrimaryUdnName, f.Namespace.Name)
+		}, 5*time.Second, time.Second).Should(Succeed())
+	})
+
 	Context("ClusterUserDefinedNetwork CRD Controller", func() {
 		const clusterUserDefinedNetworkResource = "clusteruserdefinednetwork"
 
@@ -2216,6 +2271,71 @@ spec:
 		}))
 	})
 
+	It("when primary CUDN already exists, second primary CUDN targeting the same namespace should report not-ready", func() {
+		tenantNamespace := f.Namespace.Name + "tenant"
+		By("creating tenant namespace")
+		_, err := cs.CoreV1().Namespaces().Create(context.Background(), &v1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   tenantNamespace,
+				Labels: map[string]string{RequiredUDNNamespaceLabel: ""},
+			}}, metav1.CreateOptions{})
+		Expect(err).NotTo(HaveOccurred(), "create tenant namespace %q", tenantNamespace)
+		DeferCleanup(func() error {
+			if err := cs.CoreV1().Namespaces().Delete(context.Background(), tenantNamespace, metav1.DeleteOptions{}); err != nil {
+				return fmt.Errorf("delete tenant namespace %q: %w", tenantNamespace, err)
+			}
+			return nil
+		})
+
+		firstCudnName := randomNetworkMetaName()
+		secondCudnName := randomNetworkMetaName()
+
+		By("create first primary CUDN and wait until it is ready")
+		cleanupFirst, err := createManifest(f.Namespace.Name, newPrimaryClusterUDNManifest(cs, firstCudnName, tenantNamespace))
+		DeferCleanup(func() {
+			cleanupFirst()
+			_, err := e2ekubectl.RunKubectl("", "delete", "clusteruserdefinednetwork", firstCudnName, "--ignore-not-found", "--wait", fmt.Sprintf("--timeout=%ds", 60))
+			Expect(err).NotTo(HaveOccurred(), "delete ClusterUserDefinedNetwork %q during cleanup", firstCudnName)
+		})
+		Expect(err).NotTo(HaveOccurred(), "create first primary ClusterUserDefinedNetwork %q", firstCudnName)
+		Eventually(validateClusterUDNStatusReportsActiveNamespacesFunc(f.DynamicClient, firstCudnName, tenantNamespace), 30*time.Second, time.Second).
+			Should(Succeed(), "wait for first primary ClusterUserDefinedNetwork %q to report active namespace %q", firstCudnName, tenantNamespace)
+
+		By("create second primary CUDN targeting the same namespace")
+		cleanupSecond, err := createManifest(f.Namespace.Name, newPrimaryClusterUDNManifest(cs, secondCudnName, tenantNamespace))
+		DeferCleanup(func() {
+			cleanupSecond()
+			_, err := e2ekubectl.RunKubectl("", "delete", "clusteruserdefinednetwork", secondCudnName, "--ignore-not-found", "--wait", fmt.Sprintf("--timeout=%ds", 60))
+			Expect(err).NotTo(HaveOccurred(), "delete ClusterUserDefinedNetwork %q during cleanup", secondCudnName)
+		})
+		Expect(err).NotTo(HaveOccurred(), "create second primary ClusterUserDefinedNetwork %q", secondCudnName)
+
+		expectedMessage := fmt.Sprintf("primary network already exist in namespace %q: %q", tenantNamespace, firstCudnName)
+		Eventually(func(g Gomega) []metav1.Condition {
+			conditionsJSON, err := e2ekubectl.RunKubectl(f.Namespace.Name, "get", "clusteruserdefinednetwork", secondCudnName, "-o", "jsonpath={.status.conditions}")
+			g.Expect(err).NotTo(HaveOccurred(), "get ClusterUserDefinedNetwork %q status conditions", secondCudnName)
+			var actualConditions []metav1.Condition
+			g.Expect(json.Unmarshal([]byte(conditionsJSON), &actualConditions)).To(Succeed(), "unmarshal ClusterUserDefinedNetwork %q status conditions", secondCudnName)
+			return normalizeConditions(actualConditions)
+		}, 5*time.Second, 1*time.Second).Should(ContainElement(metav1.Condition{
+			Type:    "NetworkCreated",
+			Status:  metav1.ConditionFalse,
+			Reason:  "NetworkAttachmentDefinitionSyncError",
+			Message: expectedMessage,
+		}), "second primary ClusterUserDefinedNetwork %q should report NetworkCreated=false", secondCudnName)
+
+		By("verify the first primary CUDN remains ready")
+		Consistently(validateClusterUDNStatusReportsActiveNamespacesFunc(f.DynamicClient, firstCudnName, tenantNamespace), 5*time.Second, time.Second).
+			Should(Succeed(), "first primary ClusterUserDefinedNetwork %q should keep namespace %q active", firstCudnName, tenantNamespace)
+
+		By("verify the second primary CUDN did not create a NetworkAttachmentDefinition")
+		Consistently(func(g Gomega) {
+			_, err := nadClient.NetworkAttachmentDefinitions(tenantNamespace).Get(context.Background(), secondCudnName, metav1.GetOptions{})
+			g.Expect(err).To(HaveOccurred(), "second primary ClusterUserDefinedNetwork %q should not create a NetworkAttachmentDefinition", secondCudnName)
+			g.Expect(kerrors.IsNotFound(err)).To(BeTrue(), "NetworkAttachmentDefinition %q should not exist in namespace %q", secondCudnName, tenantNamespace)
+		}, 5*time.Second, time.Second).Should(Succeed())
+	})
+
 	Context("pod2Egress on a user defined primary network", func() {
 		const (
 			externalContainerName = "ovn-k-egress-test-helper"
@@ -2584,6 +2704,10 @@ spec:
 	})
 
 	It("should set NO_FLOOD on CUDN patch ports, direct node-IP ARP to default GR (p12 flow), and fan out external GARP to all GRs (p11 flow)", func(ctx SpecContext) {
+		if deploymentconfig.Get().IsConfigurationEnabled(deploymentconfigapi.UDNARPNDPFloodDisabled) {
+			Skip("requires to run without --disable-udn-arp-ndp-flood (DISABLE_UDN_ARP_NDP_FLOOD=false)")
+		}
+
 		By("getting two nodes: a target node and a sender node")
 		nodes, err := e2enode.GetReadySchedulableNodes(context.TODO(), cs)
 		framework.ExpectNoError(err)

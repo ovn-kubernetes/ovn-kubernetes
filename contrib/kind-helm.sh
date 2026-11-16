@@ -85,6 +85,7 @@ usage() {
     echo "-me  | --multicast-enabled                    Enable multicast. DEFAULT: Disabled"
     echo "-ho  | --hybrid-enabled                       Enable hybrid overlay. DEFAULT: Disabled"
     echo "-obs | --observability                        Enable observability. DEFAULT: Disabled"
+    echo "-upm | --unprivileged-mode                    Run ovnkube-node without privileged: true."
     echo "-el  | --ovn-empty-lb-events                  Enable empty-lb-events generation for LB without backends. DEFAULT: Disabled"
     echo "-ii  | --install-ingress                      Flag to install Ingress Components."
     echo "                                              DEFAULT: Don't install ingress components."
@@ -93,6 +94,7 @@ usage() {
     echo "-ikv | --install-kubevirt                     Install kubevirt"
     echo "-mne | --multi-network-enable                 Enable multi networks. DEFAULT: Disabled"
     echo "-nse | --network-segmentation-enable          Enable network segmentation. DEFAULT: Disabled"
+    echo "-duanf | --disable-udn-arp-ndp-flood          Disable UDN ARP/NDP Flood. DEFAULT: Enabled"
     echo "-nce | --network-connect-enable               Enable network connect (requires network segmentation). DEFAULT: Disabled"
     echo "-ue  | --uplink-enable                        Enable uplink (requires network segmentation). DEFAULT: Disabled"
     echo "-uae | --preconfigured-udn-addresses-enable   Enable connecting workloads with preconfigured network to user-defined networks. DEFAULT: Disabled"
@@ -191,6 +193,8 @@ parse_args() {
                                                   ;;
             -obs | --observability )              OVN_OBSERV_ENABLE=true
                                                   ;;
+            -upm | --unprivileged-mode )          OVN_UNPRIVILEGED_MODE=true
+                                                  ;;
             -el | --ovn-empty-lb-events )         OVN_EMPTY_LB_EVENTS=true
                                                   ;;
             -ii | --install-ingress )             KIND_INSTALL_INGRESS=true
@@ -204,6 +208,8 @@ parse_args() {
             -mne | --multi-network-enable )       ENABLE_MULTI_NET=true
                                                   ;;
             -nse | --network-segmentation-enable) ENABLE_NETWORK_SEGMENTATION=true
+                                                  ;;
+            -duanf | --disable-udn-arp-ndp-flood) DISABLE_UDN_ARP_NDP_FLOOD=true
                                                   ;;
             -nce | --network-connect-enable )     ENABLE_NETWORK_CONNECT=true
                                                   ;;
@@ -514,6 +520,7 @@ print_params() {
      echo "KIND_REMOVE_TAINT = $KIND_REMOVE_TAINT"
      echo "ENABLE_MULTI_NET = $ENABLE_MULTI_NET"
      echo "ENABLE_NETWORK_SEGMENTATION = $ENABLE_NETWORK_SEGMENTATION"
+     echo "DISABLE_UDN_ARP_NDP_FLOOD = $DISABLE_UDN_ARP_NDP_FLOOD"
      echo "ENABLE_NETWORK_CONNECT = $ENABLE_NETWORK_CONNECT"
      echo "ENABLE_UPLINK = $ENABLE_UPLINK"
      echo "ENABLE_PRE_CONF_UDN_ADDR = $ENABLE_PRE_CONF_UDN_ADDR"
@@ -675,6 +682,7 @@ helm upgrade --install ovn-kubernetes . -f "${value_file}" ${extra_values_args} 
           --set global.enableMulticast=$(if [ "${OVN_MULTICAST_ENABLE}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableMultiNetwork=$(if [ "${ENABLE_MULTI_NET}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableNetworkSegmentation=$(if [ "${ENABLE_NETWORK_SEGMENTATION}" == "true" ]; then echo "true"; else echo "false"; fi) \
+          --set global.disableUDNARPNDPFlood=$(if [ "${DISABLE_UDN_ARP_NDP_FLOOD}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableNetworkConnect=$(if [ "${ENABLE_NETWORK_CONNECT}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableUplink=$(if [ "${ENABLE_UPLINK}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableDynamicUDNAllocation=$(if [ "${DYNAMIC_UDN_ALLOCATION}" == "true" ]; then echo "true"; else echo "false"; fi) \
@@ -692,7 +700,7 @@ helm upgrade --install ovn-kubernetes . -f "${value_file}" ${extra_values_args} 
           --set global.enableNoOverlay=$(if [ "${ENABLE_NO_OVERLAY}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableNoOverlaySnat=$(if [ "${ENABLE_NO_OVERLAY_OUTBOUND_SNAT}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.enableNoOverlayManagedRouting=$(if [ "${ENABLE_NO_OVERLAY_MANAGED_ROUTING}" == "true" ]; then echo "true"; else echo "false"; fi) \
-          --set global.enablePersistentIPs=true \
+          --set global.enablePersistentIPs="${OVN_ENABLE_PERSISTENT_IPS}" \
           --set global.enableConfigDuration=true \
           --set global.enableCoredumps=$(if [ "${ENABLE_COREDUMPS}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.allowICMPNetworkPolicy=$(if [ "${OVN_ALLOW_ICMP_NETPOL}" == "true" ]; then echo "true"; else echo "false"; fi) \
@@ -701,7 +709,7 @@ helm upgrade --install ovn-kubernetes . -f "${value_file}" ${extra_values_args} 
           --set global.extGatewayNetworkInterface=$(if [ "${OVN_SECOND_BRIDGE}" == "true" ]; then echo "eth1"; else echo ""; fi) \
           --set global.disableSnatMultipleGws=$(if [ "${OVN_DISABLE_SNAT_MULTIPLE_GWS}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.disableForwarding=$(if [ "${OVN_DISABLE_FORWARDING}" == "true" ]; then echo "true"; else echo "false"; fi) \
-          --set global.unprivilegedMode=false \
+          --set global.unprivilegedMode=$(if [ "${OVN_UNPRIVILEGED_MODE}" == "true" ]; then echo "true"; else echo "false"; fi) \
           --set global.metricsIp="${METRICS_IP:-}" \
           --set ovs-node.updateStrategy="${OVS_NODE_UPDATE_STRATEGY:-RollingUpdate}" \
           --set global.dummyGatewayBridge=$(if [ "${OVN_DUMMY_GATEWAY_BRIDGE}" == "true" ]; then echo "true"; else echo "false"; fi) \
@@ -726,6 +734,28 @@ EOF
        )
     echo "${cmd}"
     eval "${cmd}"
+}
+
+# install_ovs_tools_on_nodes installs ovs-vsctl and ovs-ofctl on every kind node.
+# Strictly, only unprivileged mode needs them: there the CNI plugin running
+# on the node plugs the pod interface into OVS itself, so the OVS client
+# tools have to be on the node's PATH. They are installed for every
+# deployment anyway because they make debugging from the node easier.
+# They talk to the ovs-node pod through the sockets in /var/run/openvswitch;
+# the node must not run OVS daemons of its own, so the package's units are
+# masked before installing it.
+install_ovs_tools_on_nodes() {
+  local node
+  for node in $(kind_get_nodes); do
+    if $OCI_BIN exec "${node}" sh -c 'command -v ovs-vsctl >/dev/null && command -v ovs-ofctl >/dev/null'; then
+      continue
+    fi
+    echo "Installing OVS client tools on ${node}"
+    $OCI_BIN exec "${node}" sh -c '
+      systemctl mask openvswitch-switch.service ovsdb-server.service ovs-vswitchd.service ovs-record-hostname.service >/dev/null 2>&1
+      apt-get update -qq >/dev/null
+      apt-get install -y -qq --no-install-recommends openvswitch-switch >/dev/null'
+  done
 }
 
 install_online_ovn_kubernetes_crds() {
@@ -837,6 +867,9 @@ if [ "$ENABLE_ROUTE_ADVERTISEMENTS" == true ]; then
 fi
 if [ "$KIND_REMOVE_TAINT" == true ]; then
   remove_no_schedule_taint
+fi
+if [ "${DPU_MODE}" != "host" ]; then
+  install_ovs_tools_on_nodes
 fi
 create_ovn_kubernetes
 

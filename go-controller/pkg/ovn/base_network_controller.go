@@ -4,6 +4,7 @@
 package ovn
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -140,14 +141,16 @@ type BaseNetworkController struct {
 	// network policies map, key should be retrieved with getPolicyKey(policy *knet.NetworkPolicy).
 	// network policies that failed to be created will also be added here, and can be retried or cleaned up later.
 	// network policy is only deleted from this map after successful cleanup.
-	// Allowed order of locking is namespace Lock -> oc.networkPolicies key Lock -> networkPolicy.Lock
+	// Allowed order of locking is namespace Lock -> networkPolicies key Lock -> sharedNetpolPortGroups key Lock.
 	// Don't take namespace Lock while holding networkPolicy key lock to avoid deadlock.
 	networkPolicies *syncmap.SyncMap[*networkPolicy]
+	// Indexes policies by namespace for pod membership reconciliation.
+	networkPolicyKeysByNamespace *syncmap.SyncMap[sets.Set[string]]
 
 	// map of existing shared port groups for network policies
 	// port group exists in the db if and only if port group key is present in this map
 	// key is namespace
-	// allowed locking order is namespace Lock -> networkPolicy.Lock -> sharedNetpolPortGroups key Lock
+	// allowed locking order is namespace Lock -> networkPolicies key Lock -> sharedNetpolPortGroups key Lock
 	// make sure to keep this order to avoid deadlocks
 	sharedNetpolPortGroups *syncmap.SyncMap[*defaultDenyPortGroups]
 
@@ -171,11 +174,6 @@ type BaseNetworkController struct {
 	// networkManager used for getting network information
 	networkManager networkmanager.Interface
 
-	// releasedPodsBeforeStartup tracks pods per NAD (map of NADs to pods UIDs)
-	// might have been already be released on startup
-	releasedPodsBeforeStartup  map[string]sets.Set[string]
-	releasedPodsOnStartupMutex sync.Mutex
-
 	// IP addresses of OVN Cluster logical router port ("GwRouterToJoinSwitchPrefix + OVNClusterRouter")
 	// connecting to the join switch
 	ovnClusterLRPToJoinIfAddrs []*net.IPNet
@@ -188,7 +186,7 @@ type BaseNetworkController struct {
 	nqosController *nqoscontroller.Controller
 }
 
-func (oc *BaseNetworkController) reconcile(netInfo util.NetInfo, setNodeFailed func(string)) error {
+func (oc *BaseNetworkController) reconcile(_ context.Context, netInfo util.NetInfo, setNodeFailed func(string)) error {
 	// gather some information first
 	reconcileLocalNode := false
 	subnetsChanged := clusterSubnetsChanged(oc, netInfo)
@@ -257,8 +255,11 @@ func (oc *BaseNetworkController) doReconcile(reconcileRoutes, reconcilePendingPo
 	}
 
 	if reconcileLocalNode {
-		setNodeFailed(oc.nodeName)
-		oc.nodeReconciler.ReconcileNetwork(oc.nodeName, oc.GetNetworkName())
+		// Mark the node dirty under the node controller's per-network lock so
+		// that an in-flight node sync, which may have already observed the
+		// previous NetInfo, can't clear the mark after we set it.
+		oc.nodeReconciler.ReconcileNetworkWithPreflight(oc.nodeName, oc.GetNetworkName(),
+			func(nodecontroller.NodeHandler) { setNodeFailed(oc.nodeName) })
 	}
 
 	if reconcilePendingPods {
@@ -653,12 +654,12 @@ func (bnc *BaseNetworkController) createNodeLogicalSwitch(nodeName string, hostS
 		}
 	}
 	// Add the switch to the logical switch cache
-	migratableIPsByPod, err := bnc.findMigratablePodIPsForSubnets(hostSubnets)
+	migratableIPsByOwner, err := bnc.findMigratablePodIPsForSubnets(hostSubnets)
 	if err != nil {
 		return fmt.Errorf("failed finding migratable pod IPs belonging to %s: %v", nodeName, err)
 	}
 
-	return bnc.lsManager.AddOrUpdateSwitch(logicalSwitch.Name, hostSubnets, nil, migratableIPsByPod...)
+	return bnc.lsManager.AddOrUpdateSwitch(logicalSwitch.Name, hostSubnets, nil, migratableIPsByOwner)
 }
 
 // deleteNodeLogicalNetwork removes the logical switch and logical router port associated with the node
@@ -1005,7 +1006,7 @@ func (bnc *BaseNetworkController) isLayer2WithInterconnectTransport() bool {
 }
 
 // HandleNetworkRefChange enqueues node reconciliation when a NAD reference becomes active/inactive.
-func (bnc *BaseNetworkController) HandleNetworkRefChange(nodeName string, _ bool) {
+func (bnc *BaseNetworkController) HandleNetworkRefChange(_ context.Context, nodeName string, _ bool) {
 	bnc.nodeReconciler.ReconcileNetwork(nodeName, bnc.GetNetworkName())
 }
 
@@ -1023,23 +1024,19 @@ func (bnc *BaseNetworkController) nodeZoneClusterChanged(oldNode, newNode *corev
 	return false
 }
 
-func (bnc *BaseNetworkController) findMigratablePodIPsForSubnets(subnets []*net.IPNet) ([]*net.IPNet, error) {
+func (bnc *BaseNetworkController) findMigratablePodIPsForSubnets(subnets []*net.IPNet) (map[string][]*net.IPNet, error) {
 	// live migration is not supported in combination with UDNs
 	if bnc.IsUserDefinedNetwork() {
 		return nil, nil
 	}
 
-	ipSet := sets.New[string]()
-	ipList := []*net.IPNet{}
+	ipsByOwner := map[string][]*net.IPNet{}
 	liveMigratablePods, err := kubevirt.FindLiveMigratablePods(bnc.watchFactory)
 	if err != nil {
 		return nil, err
 	}
 
 	for _, liveMigratablePod := range liveMigratablePods {
-		if util.PodCompleted(liveMigratablePod) {
-			continue
-		}
 		isMigratedSourcePodStale, err := kubevirt.IsMigratedSourcePodStale(bnc.watchFactory, liveMigratablePod)
 		if err != nil {
 			return nil, err
@@ -1060,21 +1057,14 @@ func (bnc *BaseNetworkController) findMigratablePodIPsForSubnets(subnets []*net.
 				err)
 			continue
 		}
+		owner := bnc.podIPOwner(liveMigratablePod, bnc.GetNetworkName())
 		for _, podIP := range podAnnotation.IPs {
 			if util.IsContainedInAnyCIDR(podIP, subnets...) {
-				podIPString := podIP.String()
-				// Skip duplicate IPs
-				if !ipSet.Has(podIPString) {
-					ipSet = ipSet.Insert(podIPString)
-					ipList = append(ipList, &net.IPNet{
-						IP:   podIP.IP,
-						Mask: util.GetIPFullMask(podIP.IP),
-					})
-				}
+				ipsByOwner[owner] = append(ipsByOwner[owner], podIP)
 			}
 		}
 	}
-	return ipList, nil
+	return ipsByOwner, nil
 }
 
 func (bnc *BaseNetworkController) AddResourceCommon(objType reflect.Type, obj interface{}) error {

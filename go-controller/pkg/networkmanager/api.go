@@ -160,6 +160,7 @@ func NewForCluster(
 		recorder,
 		tunnelKeysAllocator,
 		"",
+		false,
 	)
 }
 
@@ -178,6 +179,28 @@ func NewForNode(
 		nil,
 		nil,
 		node,
+		false,
+	)
+}
+
+// NewForController builds a controller for ovnkube-controller. Existing networks
+// are started asynchronously with bounded concurrency so bulk UDN start does not
+// block controller readiness.
+func NewForController(
+	node string,
+	cm ControllerManager,
+	wf watchFactory,
+) (Controller, error) {
+	return new(
+		"ovnkube-controller-nad-controller",
+		node,
+		cm,
+		wf,
+		nil,
+		nil,
+		nil,
+		node,
+		true,
 	)
 }
 
@@ -193,8 +216,9 @@ func new(
 	recorder record.EventRecorder,
 	tunnelKeysAllocator *id.TunnelKeysAllocator,
 	filterNADsOnNode string,
+	asyncNetworkStart bool,
 ) (Controller, error) {
-	return newController(name, node, cm, wf, ovnClient, recorder, tunnelKeysAllocator, filterNADsOnNode)
+	return newController(name, node, cm, wf, ovnClient, recorder, tunnelKeysAllocator, filterNADsOnNode, asyncNetworkStart)
 }
 
 // ControllerManager manages controllers. Needs to be provided in order to build
@@ -220,7 +244,7 @@ type ReconcilableNetworkController interface {
 	// network information on their as there is nothing network manager can do
 	// about it. In this case implementations should either carry their on
 	// retries or log the error and give up.
-	Reconcile(util.NetInfo) error
+	Reconcile(context.Context, util.NetInfo) error
 }
 
 // BaseNetworkController is a ReconcilableNetworkController that can be started and
@@ -235,10 +259,10 @@ type BaseNetworkController interface {
 // itself.
 type NetworkController interface {
 	BaseNetworkController
-	Cleanup() error
+	Cleanup(context.Context) error
 	// HandleNetworkRefChange is only used by nadControllers with Dynamic UDN
 	// to inform the network controller that a relevant NAD has become active or inactive.
-	HandleNetworkRefChange(node string, active bool)
+	HandleNetworkRefChange(ctx context.Context, node string, active bool)
 }
 
 // defaultNetworkManager assumes the default network is

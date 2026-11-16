@@ -29,15 +29,15 @@ func (fnc *FakeNetworkController) Start(_ context.Context) error {
 
 func (fnc *FakeNetworkController) Stop() {}
 
-func (fnc *FakeNetworkController) Cleanup() error {
+func (fnc *FakeNetworkController) Cleanup(context.Context) error {
 	return nil
 }
 
-func (fnc *FakeNetworkController) Reconcile(util.NetInfo) error {
+func (fnc *FakeNetworkController) Reconcile(context.Context, util.NetInfo) error {
 	return nil
 }
 
-func (fnc *FakeNetworkController) HandleNetworkRefChange(_ string, _ bool) {}
+func (fnc *FakeNetworkController) HandleNetworkRefChange(context.Context, string, bool) {}
 
 type FakeControllerManager struct{}
 
@@ -74,6 +74,10 @@ type FakeNetworkManager struct {
 	NotFoundNamespaces sets.Set[string]
 	// ActiveNodes tracks node activity per network for Dynamic UDN tests.
 	ActiveNodes map[string]map[string]bool
+	// StartFunc overrides Start when set. Used by tests that need custom
+	// start behavior (errors, blocking NAD/UDN reconcile simulation).
+	StartFunc func() error
+	started   bool
 }
 
 func (fnm *FakeNetworkManager) RegisterNADReconciler(r NADReconciler) uint64 {
@@ -130,7 +134,23 @@ func (fnm *FakeNetworkManager) Interface() Interface {
 	return fnm
 }
 
-func (fnm *FakeNetworkManager) Start() error { return nil }
+func (fnm *FakeNetworkManager) Start() error {
+	var err error
+	if fnm.StartFunc != nil {
+		err = fnm.StartFunc()
+	}
+	fnm.Lock()
+	fnm.started = true
+	fnm.Unlock()
+	return err
+}
+
+// Started reports whether Start has been invoked and returned.
+func (fnm *FakeNetworkManager) Started() bool {
+	fnm.Lock()
+	defer fnm.Unlock()
+	return fnm.started
+}
 
 func (fnm *FakeNetworkManager) Stop() {}
 

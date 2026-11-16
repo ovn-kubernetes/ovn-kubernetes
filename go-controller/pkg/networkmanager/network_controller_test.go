@@ -217,7 +217,7 @@ func TestSetAdvertisements(t *testing.T) {
 					ReconcilableNetInfo: &util.DefaultNetInfo{},
 				},
 			}
-			nm := newNetworkController("", testNodeName, tcm, wf)
+			nm := newNetworkController("", testNodeName, tcm, wf, false)
 
 			namespace, name, err := cache.SplitMetaNamespaceKey(testNADName)
 			g.Expect(err).ToNot(gomega.HaveOccurred())
@@ -384,7 +384,7 @@ func TestNetworkControllerReconcilePendingNetworkRefChange(t *testing.T) {
 					ReconcilableNetInfo: &util.DefaultNetInfo{},
 				},
 			}
-			nm := newNetworkController("", "", tcm, nil)
+			nm := newNetworkController("", "", tcm, nil, false)
 			nm.nodeHasNetwork = func(_, _ string) bool { return tt.nodeHasNetwork }
 
 			networkName := netInfo.GetNetworkName()
@@ -409,7 +409,7 @@ func TestNetworkControllerReconcilePendingNetworkRefChange(t *testing.T) {
 			}
 
 			nm.NotifyNetworkRefChange(networkName, "node1")
-			err := nm.syncNetwork(networkName)
+			err := nm.syncNetwork(context.Background(), networkName)
 			g.Expect(err).ToNot(gomega.HaveOccurred())
 
 			g.Expect(callCount).To(gomega.Equal(1))
@@ -417,7 +417,7 @@ func TestNetworkControllerReconcilePendingNetworkRefChange(t *testing.T) {
 			g.Expect(gotActive).To(gomega.Equal(tt.nodeHasNetwork))
 
 			nm.NotifyNetworkRefChange(networkName, "node1")
-			err = nm.syncNetwork(networkName)
+			err = nm.syncNetwork(context.Background(), networkName)
 			g.Expect(err).ToNot(gomega.HaveOccurred())
 			g.Expect(callCount).To(gomega.Equal(1))
 		})
@@ -452,7 +452,7 @@ func TestNetworkControllerClearsPendingNetworkRefOnDelete(t *testing.T) {
 			ReconcilableNetInfo: &util.DefaultNetInfo{},
 		},
 	}
-	nm := newNetworkController("", "", tcm, nil)
+	nm := newNetworkController("", "", tcm, nil, false)
 	nm.nodeHasNetwork = func(_, _ string) bool { return true }
 
 	networkName := netInfo.GetNetworkName()
@@ -473,7 +473,7 @@ func TestNetworkControllerClearsPendingNetworkRefOnDelete(t *testing.T) {
 	}
 
 	nm.NotifyNetworkRefChange(networkName, "node1")
-	err = nm.deleteNetwork(networkName)
+	err = nm.deleteNetwork(context.Background(), networkName)
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	g.Expect(callCount).To(gomega.Equal(0))
 
@@ -489,7 +489,7 @@ func TestNetworkControllerClearsPendingNetworkRefOnDelete(t *testing.T) {
 		controller: followupController,
 	}
 	nm.setNetwork(networkName, mutableNetInfo)
-	err = nm.syncNetwork(networkName)
+	err = nm.syncNetwork(context.Background(), networkName)
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	g.Expect(followupCalls).To(gomega.Equal(0))
 }
@@ -523,14 +523,14 @@ func TestNetworkControllerCleansStoppedNetworkAfterStartFailureAndDeletion(t *te
 		},
 		raiseErrorWhenStartingController: fmt.Errorf("start failed"),
 	}
-	nm := newNetworkController("", "", tcm, nil)
+	nm := newNetworkController("", "", tcm, nil, false)
 
 	mutableNetInfo := util.NewMutableNetInfo(netInfo)
 	mutableNetInfo.SetNADs(netConf.NADName)
 	networkName := mutableNetInfo.GetNetworkName()
 	nm.setNetwork(networkName, mutableNetInfo)
 
-	err = nm.syncNetwork(networkName)
+	err = nm.syncNetwork(context.Background(), networkName)
 	g.Expect(err).To(gomega.HaveOccurred())
 	g.Expect(err.Error()).To(gomega.ContainSubstring("failed to start network"))
 	failedState := nm.getNetworkState(networkName)
@@ -538,7 +538,7 @@ func TestNetworkControllerCleansStoppedNetworkAfterStartFailureAndDeletion(t *te
 	g.Expect(failedState.startFailed).To(gomega.BeTrue())
 
 	nm.setNetwork(networkName, nil)
-	g.Expect(nm.syncNetwork(networkName)).To(gomega.Succeed())
+	g.Expect(nm.syncNetwork(context.Background(), networkName)).To(gomega.Succeed())
 	g.Expect(nm.getNetworkState(networkName).controller).To(gomega.BeNil())
 
 	tcm.Lock()
@@ -579,19 +579,19 @@ func TestNetworkControllerCleansFailedStartBeforeRetry(t *testing.T) {
 		},
 		raiseErrorWhenStartingController: startErr,
 	}
-	nm := newNetworkController("", "", tcm, nil)
+	nm := newNetworkController("", "", tcm, nil, false)
 
 	mutableNetInfo := util.NewMutableNetInfo(netInfo)
 	mutableNetInfo.SetNADs(netConf.NADName)
 	networkName := mutableNetInfo.GetNetworkName()
 	nm.setNetwork(networkName, mutableNetInfo)
 
-	g.Expect(nm.syncNetwork(networkName)).To(gomega.MatchError(gomega.ContainSubstring("failed to start network")))
+	g.Expect(nm.syncNetwork(context.Background(), networkName)).To(gomega.MatchError(gomega.ContainSubstring("failed to start network")))
 
 	tcm.Lock()
 	tcm.raiseErrorWhenStartingController = nil
 	tcm.Unlock()
-	g.Expect(nm.syncNetwork(networkName)).To(gomega.Succeed())
+	g.Expect(nm.syncNetwork(context.Background(), networkName)).To(gomega.Succeed())
 
 	state := nm.getNetworkState(networkName)
 	g.Expect(state.controller).ToNot(gomega.BeNil())
@@ -637,13 +637,13 @@ func TestNetworkControllerCleansFailedStartBeforeIncompatibleReplacement(t *test
 		},
 		raiseErrorWhenStartingController: startErr,
 	}
-	nm := newNetworkController("", "", tcm, nil)
+	nm := newNetworkController("", "", tcm, nil, false)
 
 	mutableNetInfo := util.NewMutableNetInfo(netInfo)
 	mutableNetInfo.SetNADs(netConf.NADName)
 	networkName := mutableNetInfo.GetNetworkName()
 	nm.setNetwork(networkName, mutableNetInfo)
-	g.Expect(nm.syncNetwork(networkName)).To(gomega.MatchError(gomega.ContainSubstring("failed to start network")))
+	g.Expect(nm.syncNetwork(context.Background(), networkName)).To(gomega.MatchError(gomega.ContainSubstring("failed to start network")))
 
 	replacementConf := *netConf
 	replacementConf.Uplink = "uplink-b"
@@ -657,7 +657,7 @@ func TestNetworkControllerCleansFailedStartBeforeIncompatibleReplacement(t *test
 	tcm.Lock()
 	tcm.raiseErrorWhenStartingController = nil
 	tcm.Unlock()
-	g.Expect(nm.syncNetwork(networkName)).To(gomega.Succeed())
+	g.Expect(nm.syncNetwork(context.Background(), networkName)).To(gomega.Succeed())
 
 	tcm.Lock()
 	defer tcm.Unlock()
@@ -699,23 +699,23 @@ func TestNetworkControllerFinishesTerminalCleanupBeforeFailedStartRecreation(t *
 		},
 		raiseErrorWhenStartingController: startErr,
 	}
-	nm := newNetworkController("", "", tcm, nil)
+	nm := newNetworkController("", "", tcm, nil, false)
 	networkName := mutableNetInfo.GetNetworkName()
 	nm.setNetwork(networkName, mutableNetInfo)
-	g.Expect(nm.syncNetwork(networkName)).To(gomega.MatchError(gomega.ContainSubstring("failed to start network")))
+	g.Expect(nm.syncNetwork(context.Background(), networkName)).To(gomega.MatchError(gomega.ContainSubstring("failed to start network")))
 
 	nm.setNetwork(networkName, nil)
 	tcm.Lock()
 	tcm.raiseErrorWhenCleaningController = cleanupErr
 	tcm.Unlock()
-	g.Expect(nm.syncNetwork(networkName)).To(gomega.MatchError(gomega.ContainSubstring("cleanup failed")))
+	g.Expect(nm.syncNetwork(context.Background(), networkName)).To(gomega.MatchError(gomega.ContainSubstring("cleanup failed")))
 
 	nm.setNetwork(networkName, mutableNetInfo)
 	tcm.Lock()
 	tcm.raiseErrorWhenStartingController = nil
 	tcm.raiseErrorWhenCleaningController = nil
 	tcm.Unlock()
-	g.Expect(nm.syncNetwork(networkName)).To(gomega.Succeed())
+	g.Expect(nm.syncNetwork(context.Background(), networkName)).To(gomega.Succeed())
 
 	state := nm.getNetworkState(networkName)
 	g.Expect(state.controller).ToNot(gomega.BeNil())
@@ -725,6 +725,69 @@ func TestNetworkControllerFinishesTerminalCleanupBeforeFailedStartRecreation(t *
 	g.Expect(tcm.started).To(gomega.HaveLen(2))
 	g.Expect(tcm.stopped).To(gomega.HaveLen(1))
 	g.Expect(tcm.cleaned).To(gomega.HaveLen(2))
+}
+
+func TestNetworkControllerAsyncSyncAllSkipsInlineStart(t *testing.T) {
+	g := gomega.NewWithT(t)
+	g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+	t.Cleanup(func() {
+		g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+	})
+	config.OVNKubernetesFeature.EnableMultiNetwork = true
+	config.OVNKubernetesFeature.EnableRouteAdvertisements = false
+
+	netConf := &ovncnitypes.NetConf{
+		NetConf: cnitypes.NetConf{
+			Name: "udn-net",
+			Type: "ovn-k8s-cni-overlay",
+		},
+		Topology: types.Layer3Topology,
+		Role:     types.NetworkRolePrimary,
+		NADName:  "ns1/primary",
+		Subnets:  "10.128.0.0/14",
+	}
+	netInfo, err := util.NewNetInfo(netConf)
+	g.Expect(err).ToNot(gomega.HaveOccurred())
+
+	tcm := &testControllerManager{
+		controllers: map[string]NetworkController{},
+		defaultNetwork: &testNetworkController{
+			ReconcilableNetInfo: &util.DefaultNetInfo{},
+		},
+		startDelay: 300 * time.Millisecond,
+	}
+	nm := newNetworkController("", "", tcm, nil, true)
+	t.Cleanup(nm.Stop)
+
+	mutableNetInfo := util.NewMutableNetInfo(netInfo)
+	mutableNetInfo.SetNADs(netConf.NADName)
+	networkName := mutableNetInfo.GetNetworkName()
+	// Mirror production: NAD sync ensures networks (and queues reconciler work)
+	// before networkController.Start / syncAll.
+	nm.EnsureNetwork(mutableNetInfo)
+
+	start := time.Now()
+	g.Expect(nm.Start()).To(gomega.Succeed(), "async syncAll must return before UDN Start finishes")
+	g.Expect(time.Since(start)).To(gomega.BeNumerically("<", 200*time.Millisecond),
+		"async syncAll must not wait for NetworkController.Start")
+
+	tcm.Lock()
+	startedImmediately := len(tcm.started)
+	tcm.Unlock()
+	g.Expect(startedImmediately).To(gomega.Equal(0),
+		"UDN Start must not run during syncAll when asyncNetworkStart is set")
+
+	expectedNetworkKey := testNetworkKey(netInfo)
+	g.Eventually(func() []string {
+		tcm.Lock()
+		defer tcm.Unlock()
+		return append([]string(nil), tcm.started...)
+	}).WithTimeout(2*time.Second).Should(gomega.ContainElement(expectedNetworkKey),
+		"reconciler workers should start the UDN queued by EnsureNetwork")
+
+	ctrl, _, startFailed := nm.getReconcilableNetworkState(networkName)
+	g.Expect(ctrl).ToNot(gomega.BeNil())
+	g.Expect(startFailed).To(gomega.BeFalse())
 }
 
 // TestNetworkController_ConcurrentReconciliation validates that the networkReconciler
@@ -744,7 +807,7 @@ func TestNetworkController_ConcurrentReconciliation(t *testing.T) {
 			ReconcilableNetInfo: &util.DefaultNetInfo{},
 		},
 	}
-	nm := newNetworkController("test", "", tcm, wf)
+	nm := newNetworkController("test", "", tcm, wf, false)
 
 	err = wf.Start()
 	g.Expect(err).ToNot(gomega.HaveOccurred())
@@ -829,7 +892,7 @@ func TestNetworkController_ConcurrentReconciliationMixed(t *testing.T) {
 			ReconcilableNetInfo: &util.DefaultNetInfo{},
 		},
 	}
-	nm := newNetworkController("test", "", tcm, wf)
+	nm := newNetworkController("test", "", tcm, wf, false)
 
 	err = wf.Start()
 	g.Expect(err).ToNot(gomega.HaveOccurred())

@@ -46,7 +46,7 @@ to the workloads in those networks from workloads in other networks.
 Here the tenants BERLIN and MUNICH are isolated from each other.
 So the workloads in namespaces belonging to BERLIN across the
 four namespaces - purple, yellow, green and blue can talk to each other
-but they can't talk to the workloads belogning to MUNICH tenant
+but they can't talk to the workloads belonging to MUNICH tenant
 across namespaces brown, cyan, orange and violet.
 
 There are more user stories which will be covered in the sections below
@@ -111,6 +111,53 @@ reconciliation. Setting it manually does not migrate an existing network.
 
 This prerequisite concerns legacy primary Layer2 deployments. Secondary Layer2
 networks and the current EVPN topology retain their existing behavior.
+
+### Gateway identity during live migration
+
+Current primary Layer2 networks use a network-wide gateway MAC and IPv6
+link-local address, independent of the node hosting a VM. OVN-Kubernetes no
+longer sends synthetic gateway GARPs or Router Advertisements after Layer2 VM
+live migration. Native OVN Router Advertisements continue to provide IPv6
+default-router discovery and refresh. VM addressing and source/target logical-port handoff
+continue to be managed by the live-migration controllers.
+
+The CNI plugin no longer installs the Router Advertisement source filter on
+primary Layer2 pod interfaces. With a stable gateway identity across nodes,
+the node-specific source restriction is no longer needed. Newly created
+interfaces can receive RAs from other router sources, subject to the rest of
+the network datapath and guest configuration.
+
+New workload annotations omit `ipv6_lla_gateway_ip`; existing values are
+preserved during annotation updates. Older CNI versions skip the filter when
+this field is absent. Installed filters keep their source restriction until
+the pod namespace is recreated.
+
+Before upgrading, surviving VMs must have completed legacy gateway-state repair,
+including removal of old node-specific IPv6 default routers and legacy join-subnet
+on-link prefix state. This release no longer sends the lifetime-zero RAs used
+to withdraw that state. Existing pod annotations and namespace filters are not
+rewritten by this cleanup.
+
+The cluster default network still refreshes IPv4 gateway neighbors after live
+migration because its gateway MAC can change between the subnet owner and
+foreign nodes. See [Live Migration](../live-migration.md) for that behavior.
+
+## Allocation annotations
+
+Cluster manager owns the network ID and tunnel key annotations on
+NetworkAttachmentDefinitions. Configure networks through the UDN/CUDN API or
+NAD network configuration; do not assign these allocation annotations manually.
+
+An admission policy permits only cluster manager to add, change, or remove
+`k8s.ovn.org/network-id` and `k8s.ovn.org/tunnel-keys`, including during NAD
+creation. When restoring a NAD from saved YAML, omit these annotations and let
+cluster manager regenerate them.
+Unchanged annotations, including legacy invalid values, do not block unrelated
+updates.
+
+Cluster manager preserves allocated tunnel keys across restarts and NAD
+configuration changes. A failed annotation update does not release the
+network's existing tunnel keys.
 
 ## Performance/Scale Optimizations for UDN
 
@@ -258,7 +305,7 @@ external DHCP server instead of an OVN-Kubernetes-managed pool. See the
 
 ### Creating UserDefinedNetworks
 
-Now that we understand what a UDN is, let's get handson!
+Now that we understand what a UDN is, let's get hands-on!
 
 Let's create two namespaces `blue` and `green`:
 
@@ -315,6 +362,26 @@ spec:
     - cidr: 203.203.0.0/16
       hostSubnet: 24
 ```
+
+### Deleting UserDefinedNetworks
+
+OVN-Kubernetes keeps the `k8s.ovn.org/user-defined-network-protection` finalizer on
+every `UserDefinedNetwork` and `ClusterUserDefinedNetwork`, and on the
+`NetworkAttachmentDefinition` it creates for them. Deleting the network resource
+sets its deletion timestamp, but the resource and its NADs stay until no pod uses
+the network any more.
+
+While a pod is still attached, the `NetworkCreated` condition turns `False`, with
+reason `SyncError` for a `UserDefinedNetwork` or
+`NetworkAttachmentDefinitionSyncError` for a `ClusterUserDefinedNetwork`. The
+message names the pods still using the network. The cluster manager retries the
+deletion with an exponential backoff, from 100 ms up to 5 s between attempts, so a
+network blocked for a long time is checked a few times a minute instead of on
+every pass. Once the last pod is gone, the next attempt removes the finalizer from
+the NADs, deletes them, waits for the network controller to stop, and then removes
+the finalizer from the network resource. A NAD is released even if its creation
+response was lost or a later step of the sync failed, so a network deleted right
+after its creation does not stay stuck.
 
 ### Expanding a Primary Layer3 UDN with additional cluster subnets
 
@@ -642,6 +709,12 @@ left out, so ovnkube-node keeps running. The node reports a
 * the kubelet cgroup is not found, and no usable path is configured
 * the kernel is built without `CONFIG_NFT_SOCKET`, so it has no `socket`
   expression and the rule cannot load
+* ovnkube-node runs in unprivileged mode (`global.unprivilegedMode`). An
+  unprivileged container has its own cgroup namespace, and since kernel
+  6.12 the kernel reads the match's `level` relative to the cgroup
+  namespace of the process that loads the rule, so a rule loaded from the
+  container can never match kubelet's cgroup. Only a privileged container
+  shares the host cgroup namespace
 
 `httpGet`, `tcpSocket` and `grpc` probes to primary UDN pods are dropped
 in that case. The rules drop rather than reject, so a probe times out
@@ -807,7 +880,7 @@ NAME                 ADDRESSTYPE   PORTS   ENDPOINTS                 AGE
 service-blue-55d6c   IPv4          8080    103.103.1.5,103.103.0.5   65s
 service-blue-pkll7   IPv4          8080    10.244.0.3,10.244.1.8     66s
 ```
-One set of endpoints show the UDN ntework IPs of the pods and the other set
+One set of endpoints shows the UDN network IPs of the pods and the other set
 shows default network IPs.
 
 When the service is created inside the blue namespace, the

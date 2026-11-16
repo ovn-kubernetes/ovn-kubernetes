@@ -180,9 +180,18 @@ type Controller struct {
 	// raNotifier notifies subscribing controllers about RouteAdvertisements events.
 	raNotifier *notifier.RouteAdvertisementsNotifier
 
-	networkInUseRequeueInterval time.Duration
-	eventRecorder               record.EventRecorder
+	eventRecorder record.EventRecorder
 }
+
+// Nothing enqueues the owner when its last pod leaves or its network controller
+// stops, so both controllers retry indefinitely. The cap bounds how late a
+// deletion completes after the network is released. The base leaves the informer
+// time to deliver the writes of the previous attempt before the next one lists
+// the cache.
+const (
+	reconcileBackoffBase = 100 * time.Millisecond
+	reconcileBackoffMax  = 5 * time.Second
+)
 
 func New(
 	nadClient netv1clientset.Interface,
@@ -221,7 +230,9 @@ func New(
 		eventRecorder:     eventRecorder,
 	}
 	udnCfg := &controller.ControllerConfig[userdefinednetworkv1.UserDefinedNetwork]{
-		RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
+		RateLimiter: workqueue.NewTypedItemExponentialFailureRateLimiter[string](
+			reconcileBackoffBase, reconcileBackoffMax),
+		MaxAttempts:    controller.InfiniteAttempts,
 		Reconcile:      c.reconcileUDN,
 		ObjNeedsUpdate: c.udnNeedUpdate,
 		Threadiness:    1,
@@ -231,7 +242,9 @@ func New(
 	c.udnController = controller.NewController[userdefinednetworkv1.UserDefinedNetwork]("user-defined-network-controller", udnCfg)
 
 	cudnCfg := &controller.ControllerConfig[userdefinednetworkv1.ClusterUserDefinedNetwork]{
-		RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
+		RateLimiter: workqueue.NewTypedItemExponentialFailureRateLimiter[string](
+			reconcileBackoffBase, reconcileBackoffMax),
+		MaxAttempts:    controller.InfiniteAttempts,
 		Reconcile:      c.reconcileCUDN,
 		ObjNeedsUpdate: c.cudnNeedUpdate,
 		Threadiness:    1,
@@ -280,7 +293,7 @@ func (c *Controller) Run() error {
 	}
 
 	if util.IsPreconfiguredUDNAddressesEnabled() {
-		if _, err := util.EnsureDefaultNetworkNAD(c.nadLister, c.nadClient); err != nil {
+		if _, err := util.EnsureDefaultNetworkNAD(context.Background(), c.nadLister, c.nadClient); err != nil {
 			return fmt.Errorf("failed to ensure default network nad exists: %w", err)
 		}
 	}
@@ -660,6 +673,7 @@ func (c *Controller) ReconcileNamespace(key string) error {
 // Events may be used to report additional information about the condition to avoid overloading the condition message.
 // When condition should not change, but new events should be reported, pass condition = nil.
 func (c *Controller) UpdateSubsystemCondition(
+	ctx context.Context,
 	networkName string,
 	fieldManager string,
 	condition *metav1.Condition,
@@ -713,11 +727,11 @@ func (c *Controller) UpdateSubsystemCondition(
 	if udnNamespace == "" {
 		applyConf := udnapplyconfkv1.ClusterUserDefinedNetwork(udnName).
 			WithStatus(udnapplyconfkv1.ClusterUserDefinedNetworkStatus().WithConditions(applyCondition))
-		_, err = c.udnClient.K8sV1().ClusterUserDefinedNetworks().ApplyStatus(context.Background(), applyConf, opts)
+		_, err = c.udnClient.K8sV1().ClusterUserDefinedNetworks().ApplyStatus(ctx, applyConf, opts)
 	} else {
 		udnStatus := udnapplyconfkv1.UserDefinedNetworkStatus().WithConditions(applyCondition)
 		applyUDN := udnapplyconfkv1.UserDefinedNetwork(udnName, udnNamespace).WithStatus(udnStatus)
-		_, err = c.udnClient.K8sV1().UserDefinedNetworks(udnNamespace).ApplyStatus(context.Background(), applyUDN, opts)
+		_, err = c.udnClient.K8sV1().UserDefinedNetworks(udnNamespace).ApplyStatus(ctx, applyUDN, opts)
 	}
 	if err != nil {
 		if apierrors.IsNotFound(err) {
@@ -736,7 +750,7 @@ func (c *Controller) udnNeedUpdate(_, _ *userdefinednetworkv1.UserDefinedNetwork
 // It creates NAD according to spec at the namespace the CR resides.
 // The NAD objects are created with the same key as the request CR, having both kinds have the same key enable
 // the controller to act on NAD changes as well and reconciles NAD objects (e.g: in case NAD is deleted it will be re-created).
-func (c *Controller) reconcileUDN(key string) error {
+func (c *Controller) reconcileUDN(ctx context.Context, key string) error {
 	namespace, name, err := cache.SplitMetaNamespaceKey(key)
 	if err != nil {
 		return err
@@ -749,21 +763,14 @@ func (c *Controller) reconcileUDN(key string) error {
 
 	udnCopy := udn.DeepCopy()
 
-	nadCopy, syncErr := c.syncUserDefinedNetwork(udnCopy)
+	nadCopy, syncErr := c.syncUserDefinedNetwork(ctx, udnCopy)
 
-	updateStatusErr := c.updateUserDefinedNetworkStatus(udnCopy, nadCopy, syncErr)
-
-	var networkInUse *networkInUseError
-	if errors.As(syncErr, &networkInUse) {
-		// Call ReconcileRateLimited directly to ensure retries without the default limits
-		c.udnController.ReconcileRateLimited(key)
-		return updateStatusErr
-	}
+	updateStatusErr := c.updateUserDefinedNetworkStatus(ctx, udnCopy, nadCopy, syncErr)
 
 	return errors.Join(syncErr, updateStatusErr)
 }
 
-func (c *Controller) syncUserDefinedNetwork(udn *userdefinednetworkv1.UserDefinedNetwork) (*netv1.NetworkAttachmentDefinition, error) {
+func (c *Controller) syncUserDefinedNetwork(ctx context.Context, udn *userdefinednetworkv1.UserDefinedNetwork) (*netv1.NetworkAttachmentDefinition, error) {
 	if udn == nil {
 		return nil, nil
 	}
@@ -778,7 +785,7 @@ func (c *Controller) syncUserDefinedNetwork(udn *userdefinednetworkv1.UserDefine
 
 	if !udn.DeletionTimestamp.IsZero() { // udn is being  deleted
 		if controllerutil.ContainsFinalizer(udn, template.FinalizerUserDefinedNetwork) {
-			if err := c.deleteNAD(udn, udn.Namespace); err != nil {
+			if err := c.deleteNAD(ctx, udn, udn.Namespace); err != nil {
 				return nil, fmt.Errorf("failed to delete NetworkAttachmentDefinition [%s/%s]: %w", udn.Namespace, udn.Name, err)
 			}
 
@@ -789,7 +796,7 @@ func (c *Controller) syncUserDefinedNetwork(udn *userdefinednetworkv1.UserDefine
 			}
 
 			controllerutil.RemoveFinalizer(udn, template.FinalizerUserDefinedNetwork)
-			udn, err := c.udnClient.K8sV1().UserDefinedNetworks(udn.Namespace).Update(context.Background(), udn, metav1.UpdateOptions{})
+			udn, err := c.udnClient.K8sV1().UserDefinedNetworks(udn.Namespace).Update(ctx, udn, metav1.UpdateOptions{})
 			if err != nil {
 				return nil, fmt.Errorf("failed to remove finalizer to UserDefinedNetwork: %w", err)
 			}
@@ -808,7 +815,7 @@ func (c *Controller) syncUserDefinedNetwork(udn *userdefinednetworkv1.UserDefine
 	}
 
 	if finalizerAdded := controllerutil.AddFinalizer(udn, template.FinalizerUserDefinedNetwork); finalizerAdded {
-		udn, err := c.udnClient.K8sV1().UserDefinedNetworks(udn.Namespace).Update(context.Background(), udn, metav1.UpdateOptions{})
+		udn, err := c.udnClient.K8sV1().UserDefinedNetworks(udn.Namespace).Update(ctx, udn, metav1.UpdateOptions{})
 		if err != nil {
 			return nil, fmt.Errorf("failed to add finalizer to UserDefinedNetwork: %w", err)
 		}
@@ -816,10 +823,10 @@ func (c *Controller) syncUserDefinedNetwork(udn *userdefinednetworkv1.UserDefine
 		metrics.IncrementUDNCount(role, topology)
 	}
 
-	return c.updateNAD(udn, udn.Namespace)
+	return c.updateNAD(ctx, udn, udn.Namespace)
 }
 
-func (c *Controller) updateUserDefinedNetworkStatus(udn *userdefinednetworkv1.UserDefinedNetwork, nad *netv1.NetworkAttachmentDefinition, syncError error) error {
+func (c *Controller) updateUserDefinedNetworkStatus(ctx context.Context, udn *userdefinednetworkv1.UserDefinedNetwork, nad *netv1.NetworkAttachmentDefinition, syncError error) error {
 	if udn == nil {
 		return nil
 	}
@@ -854,7 +861,7 @@ func (c *Controller) updateUserDefinedNetworkStatus(udn *userdefinednetworkv1.Us
 	udnApplyConf := udnapplyconfkv1.UserDefinedNetwork(udn.Name, udn.Namespace).
 		WithStatus(statusApply)
 	opts := metav1.ApplyOptions{FieldManager: "user-defined-network-controller"}
-	udn, err = c.udnClient.K8sV1().UserDefinedNetworks(udn.Namespace).ApplyStatus(context.Background(), udnApplyConf, opts)
+	udn, err = c.udnClient.K8sV1().UserDefinedNetworks(udn.Namespace).ApplyStatus(ctx, udnApplyConf, opts)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil
@@ -897,7 +904,7 @@ func (c *Controller) cudnNeedUpdate(_ *userdefinednetworkv1.ClusterUserDefinedNe
 // It creates NADs according to spec at the specified selected namespaces.
 // The NAD objects are created with the same key as the request CR, having both kinds have the same key enable
 // the controller to act on NAD changes as well and reconciles NAD objects (e.g: in case NAD is deleted it will be re-created).
-func (c *Controller) reconcileCUDN(key string) error {
+func (c *Controller) reconcileCUDN(ctx context.Context, key string) error {
 	_, name, err := cache.SplitMetaNamespaceKey(key)
 	if err != nil {
 		return err
@@ -907,17 +914,22 @@ func (c *Controller) reconcileCUDN(key string) error {
 	if err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("failed to get ClusterUserDefinedNetwork %q from cache: %v", key, err)
 	}
+	if cudn == nil {
+		// A CUDN can disappear without this controller's finalizer; release
+		// whatever this controller still holds for it.
+		c.namespaceTrackerLock.Lock()
+		c.releaseClusterUDN(name)
+		c.namespaceTrackerLock.Unlock()
+		return nil
+	}
 
 	cudnCopy := cudn.DeepCopy()
 
 	// Validate EVPN configuration once and pass the result to both sync and
 	// transport status so they see the same VTEP snapshot.
-	var evpnErr error
-	if cudnCopy != nil {
-		evpnErr = c.validateEVPN(cudnCopy)
-	}
+	evpnErr := c.validateEVPN(cudnCopy)
 
-	nads, syncErr := c.syncClusterUDN(cudnCopy, evpnErr)
+	nads, syncErr := c.syncClusterUDN(ctx, cudnCopy, evpnErr)
 
 	// Set transport status condition (TransportAccepted) on cudnCopy
 	// The actual status update will be performed by updateClusterUDNStatus() below
@@ -927,14 +939,7 @@ func (c *Controller) reconcileCUDN(key string) error {
 	}
 
 	// Update status with ALL conditions (TransportAccepted + NetworkCreated) in a single API call
-	updateStatusErr := c.updateClusterUDNStatus(cudnCopy, nads, syncErr, transportUpdated)
-
-	var networkInUse *networkInUseError
-	if errors.As(syncErr, &networkInUse) {
-		// Call ReconcileRateLimited directly to ensure retries without the default limits
-		c.cudnController.ReconcileRateLimited(key)
-		return updateStatusErr
-	}
+	updateStatusErr := c.updateClusterUDNStatus(ctx, cudnCopy, nads, syncErr, transportUpdated)
 
 	// vtepNotFoundError / vtepNotAcceptedError are non-fatal: the status has
 	// been updated to reflect the VTEP issue, and the VTEPNotifier will
@@ -948,7 +953,11 @@ func (c *Controller) reconcileCUDN(key string) error {
 	return errors.Join(syncErr, updateStatusErr)
 }
 
-func (c *Controller) syncClusterUDN(cudn *userdefinednetworkv1.ClusterUserDefinedNetwork, evpnErr error) ([]netv1.NetworkAttachmentDefinition, error) {
+// syncClusterUDN creates, updates or deletes the NADs of the CUDN in its
+// selected namespaces and manages the CUDN finalizer. It returns the NADs that
+// exist after the sync; a networkInUseError means the deletion must wait for
+// the network to be released.
+func (c *Controller) syncClusterUDN(ctx context.Context, cudn *userdefinednetworkv1.ClusterUserDefinedNetwork, evpnErr error) ([]netv1.NetworkAttachmentDefinition, error) {
 	c.namespaceTrackerLock.Lock()
 	defer c.namespaceTrackerLock.Unlock()
 
@@ -962,8 +971,8 @@ func (c *Controller) syncClusterUDN(cudn *userdefinednetworkv1.ClusterUserDefine
 	if !cudn.DeletionTimestamp.IsZero() {
 		if controllerutil.ContainsFinalizer(cudn, template.FinalizerUserDefinedNetwork) {
 			var errs []error
-			for nsToDelete := range affectedNamespaces {
-				if err := c.deleteNAD(cudn, nsToDelete); err != nil {
+			for _, nsToDelete := range sets.List(affectedNamespaces) {
+				if err := c.deleteNAD(ctx, cudn, nsToDelete); err != nil {
 					errs = append(errs, fmt.Errorf("failed to delete NetworkAttachmentDefinition [%s/%s]: %w",
 						nsToDelete, cudnName, err))
 				} else {
@@ -983,17 +992,13 @@ func (c *Controller) syncClusterUDN(cudn *userdefinednetworkv1.ClusterUserDefine
 
 			var err error
 			controllerutil.RemoveFinalizer(cudn, template.FinalizerUserDefinedNetwork)
-			cudn, err = c.udnClient.K8sV1().ClusterUserDefinedNetworks().Update(context.Background(), cudn, metav1.UpdateOptions{})
+			cudn, err = c.udnClient.K8sV1().ClusterUserDefinedNetworks().Update(ctx, cudn, metav1.UpdateOptions{})
 			if err != nil {
 				return nil, fmt.Errorf("failed to remove finalizer from ClusterUserDefinedNetwork %q: %w",
 					cudnName, err)
 			}
 			klog.Infof("Finalizer removed from ClusterUserDefinedNetwork %q", cudn.Name)
-			delete(c.namespaceTracker, cudnName)
-			c.cudnMetricUncounted(cudnName, &cudn.Spec.Network)
-			metrics.DeleteCUDNCondition(cudnName)
-			metrics.DeleteDynamicUDNNodeCount(util.GenerateCUDNNetworkName(cudn.Name))
-			c.releaseEVPNIDsForNetwork(cudnName)
+			c.releaseClusterUDN(cudnName)
 		}
 
 		return nil, nil
@@ -1011,7 +1016,7 @@ func (c *Controller) syncClusterUDN(cudn *userdefinednetworkv1.ClusterUserDefine
 
 	if finalizerAdded := controllerutil.AddFinalizer(cudn, template.FinalizerUserDefinedNetwork); finalizerAdded {
 		var err error
-		cudn, err = c.udnClient.K8sV1().ClusterUserDefinedNetworks().Update(context.Background(), cudn, metav1.UpdateOptions{})
+		cudn, err = c.udnClient.K8sV1().ClusterUserDefinedNetworks().Update(ctx, cudn, metav1.UpdateOptions{})
 		if err != nil {
 			return nil, fmt.Errorf("failed to add finalizer to ClusterUserDefinedNetwork %q: %w", cudnName, err)
 		}
@@ -1038,8 +1043,8 @@ func (c *Controller) syncClusterUDN(cudn *userdefinednetworkv1.ClusterUserDefine
 	}
 
 	var errs []error
-	for nsToDelete := range affectedNamespaces.Difference(selectedNamespaces) {
-		if err := c.deleteNAD(cudn, nsToDelete); err != nil {
+	for _, nsToDelete := range sets.List(affectedNamespaces.Difference(selectedNamespaces)) {
+		if err := c.deleteNAD(ctx, cudn, nsToDelete); err != nil {
 			errs = append(errs, fmt.Errorf("failed to delete NetworkAttachmentDefinition [%s/%s]: %w",
 				nsToDelete, cudnName, err))
 		} else {
@@ -1049,7 +1054,7 @@ func (c *Controller) syncClusterUDN(cudn *userdefinednetworkv1.ClusterUserDefine
 
 	var nads []netv1.NetworkAttachmentDefinition
 	for nsToUpdate := range selectedNamespaces {
-		nad, err := c.updateNAD(cudn, nsToUpdate)
+		nad, err := c.updateNAD(ctx, cudn, nsToUpdate)
 		if err != nil {
 			errs = append(errs, err)
 		} else {
@@ -1078,6 +1083,16 @@ func (c *Controller) getExistingNADs(cudn *userdefinednetworkv1.ClusterUserDefin
 	return nads, errors.Join(errs...)
 }
 
+// releaseClusterUDN drops the in-memory state and the metrics this controller
+// holds for a CUDN. Must be called with namespaceTrackerLock held.
+func (c *Controller) releaseClusterUDN(name string) {
+	delete(c.namespaceTracker, name)
+	c.cudnMetricUncounted(name)
+	metrics.DeleteCUDNCondition(name)
+	metrics.DeleteDynamicUDNNodeCount(util.GenerateCUDNNetworkName(name))
+	c.releaseEVPNIDsForNetwork(name)
+}
+
 // getSelectedNamespaces list all selected namespaces according to given selector and create
 // a set of the selected namespaces keys.
 func (c *Controller) getSelectedNamespaces(sel metav1.LabelSelector) (sets.Set[string], error) {
@@ -1100,7 +1115,7 @@ func (c *Controller) getSelectedNamespaces(sel metav1.LabelSelector) (sets.Set[s
 	return selectedNamespaces, nil
 }
 
-func (c *Controller) updateClusterUDNStatus(cudn *userdefinednetworkv1.ClusterUserDefinedNetwork, nads []netv1.NetworkAttachmentDefinition, syncError error, transportUpdated bool) error {
+func (c *Controller) updateClusterUDNStatus(ctx context.Context, cudn *userdefinednetworkv1.ClusterUserDefinedNetwork, nads []netv1.NetworkAttachmentDefinition, syncError error, transportUpdated bool) error {
 	if cudn == nil {
 		return nil
 	}
@@ -1145,7 +1160,7 @@ func (c *Controller) updateClusterUDNStatus(cudn *userdefinednetworkv1.ClusterUs
 		WithStatus(statusApply)
 	opts := metav1.ApplyOptions{FieldManager: "user-defined-network-controller"}
 	cudnName := cudn.Name
-	cudn, err = c.udnClient.K8sV1().ClusterUserDefinedNetworks().ApplyStatus(context.Background(), applyConf, opts)
+	cudn, err = c.udnClient.K8sV1().ClusterUserDefinedNetworks().ApplyStatus(ctx, applyConf, opts)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil

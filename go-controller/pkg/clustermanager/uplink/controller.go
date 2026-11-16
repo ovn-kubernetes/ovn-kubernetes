@@ -216,8 +216,9 @@ func NewController(
 // reconcilers.
 func (c *Controller) Start() error {
 	c.networkRefID = c.networkManager.RegisterNetworkRefReconciler(c.networkRefReconciler)
+	ctx := context.Background()
 	err := controllerutil.StartWithInitialSync(
-		c.initialSync,
+		func() error { return c.initialSync(ctx) },
 		c.uplinkController,
 		c.uplinkStateController,
 		c.cudnController,
@@ -233,7 +234,7 @@ func (c *Controller) Start() error {
 	return nil
 }
 
-func (c *Controller) initialSync() error {
+func (c *Controller) initialSync(ctx context.Context) error {
 	states, err := c.uplinkStateLister.List(labels.Everything())
 	if err != nil {
 		return fmt.Errorf("failed to list UplinkStates for initial sync: %w", err)
@@ -250,15 +251,13 @@ func (c *Controller) initialSync() error {
 		if !stale {
 			continue
 		}
-		klog.Infof("Deleting stale UplinkState %s during initial sync: %s",
-			state.Name, reason)
-		if err := c.deleteUplinkState(state.Name); err != nil {
+		if err := c.deleteStaleUplinkState(ctx, state.Name, reason); err != nil {
 			errs = append(errs, err)
 		}
 	}
 	if err := c.rebuildCUDNUplinkReferences(); err != nil {
 		errs = append(errs, err)
-	} else if err := c.syncAllUplinkFinalizers(); err != nil {
+	} else if err := c.syncAllUplinkFinalizers(ctx); err != nil {
 		errs = append(errs, err)
 	}
 	return errors.Join(errs...)
@@ -279,11 +278,11 @@ func (c *Controller) Stop() {
 	)
 }
 
-func (c *Controller) reconcileUplink(key string) error {
+func (c *Controller) reconcileUplink(ctx context.Context, key string) error {
 	uplink, err := c.uplinkLister.Get(key)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			return c.deleteUplinkStatesFor(key)
+			return c.deleteUplinkStatesFor(ctx, key)
 		}
 		return fmt.Errorf("failed to get Uplink %s: %w", key, err)
 	}
@@ -291,7 +290,7 @@ func (c *Controller) reconcileUplink(key string) error {
 	referencingCUDNs := c.getCUDNsReferencingUplink(uplink.Name)
 
 	if !uplink.DeletionTimestamp.IsZero() {
-		if err := c.updateStatus(uplink,
+		if err := c.updateStatus(ctx, uplink,
 			metav1.ConditionFalse, reasonUplinkTerminating,
 			"Uplink is terminating and cannot accept new CUDN references"); err != nil {
 			return err
@@ -306,7 +305,7 @@ func (c *Controller) reconcileUplink(key string) error {
 
 	selected, conflicts, validationErr := c.resolveSelectedNodeConfigs(uplink)
 	if validationErr != nil {
-		err := c.updateStatus(uplink,
+		err := c.updateStatus(ctx, uplink,
 			metav1.ConditionFalse, reasonInvalidSpec,
 			"Uplink is not ready because its spec is not accepted")
 		c.reconcileCUDNNames(referencingCUDNs)
@@ -323,7 +322,7 @@ func (c *Controller) reconcileUplink(key string) error {
 		selected,
 		conflicts,
 	)
-	if err := c.updateStatus(uplink,
+	if err := c.updateStatus(ctx, uplink,
 		readyStatus, readyReason, readyMessage); err != nil {
 		return err
 	}
@@ -333,13 +332,26 @@ func (c *Controller) reconcileUplink(key string) error {
 	return nil
 }
 
-func (c *Controller) reconcileUplinkState(key string) error {
+// reconcileUplinkState requeues the Uplink an UplinkState belongs to and
+// deletes the state when its Node is gone.
+func (c *Controller) reconcileUplinkState(ctx context.Context, key string) error {
 	uplinkState, err := c.uplinkStateLister.Get(key)
 	if err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("failed to get UplinkState %s: %w", key, err)
 	}
 	if err == nil {
-		if uplinkName, _ := c.rememberUplinkStateIdentity(uplinkState); uplinkName != "" {
+		uplinkName, nodeName := c.rememberUplinkStateIdentity(uplinkState)
+		if nodeName != "" {
+			if _, err := c.nodeLister.Get(nodeName); err != nil {
+				if !apierrors.IsNotFound(err) {
+					return fmt.Errorf("failed to get Node %s for UplinkState %s: %w", nodeName, key, err)
+				}
+				// A node controller that has not yet observed its Node's
+				// deletion can recreate the state after reconcileNode swept it.
+				return c.deleteStaleUplinkState(ctx, key, fmt.Sprintf("Node %s is missing", nodeName))
+			}
+		}
+		if uplinkName != "" {
 			c.uplinkController.Reconcile(uplinkName)
 			return nil
 		}
@@ -365,29 +377,40 @@ func (c *Controller) reconcileUplinkState(key string) error {
 	return nil
 }
 
-func (c *Controller) reconcileNode(_ string) error {
+// reconcileNode requeues every Uplink, since any of them may select the node,
+// and deletes the UplinkStates of a node that no longer exists.
+func (c *Controller) reconcileNode(ctx context.Context, key string) error {
 	c.uplinkController.ReconcileAll()
+	if _, err := c.nodeLister.Get(key); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return fmt.Errorf("failed to get Node %s: %w", key, err)
+		}
+		// Node controllers delete their own UplinkStates only while their
+		// Node exists, and the states are owned by their Uplink, not the
+		// Node, so garbage collection does not remove them either.
+		return c.deleteUplinkStatesForNode(ctx, key)
+	}
 	return nil
 }
 
-func (c *Controller) reconcileCUDN(key string) error {
+func (c *Controller) reconcileCUDN(ctx context.Context, key string) error {
 	cudn, err := c.cudnLister.Get(key)
 	if err != nil {
 		if !apierrors.IsNotFound(err) {
 			return fmt.Errorf("failed to get CUDN %s: %w", key, err)
 		}
 		c.deleteCUDNUplinkReferences(key)
-		return c.syncAllUplinkFinalizers()
+		return c.syncAllUplinkFinalizers(ctx)
 	}
 
 	c.setCUDNUplinkReferences(cudn.Name, cudn.Spec.Uplinks)
-	if err := c.syncAllUplinkFinalizers(); err != nil {
+	if err := c.syncAllUplinkFinalizers(ctx); err != nil {
 		return err
 	}
-	return c.updateCUDNUplinksReady(cudn)
+	return c.updateCUDNUplinksReady(ctx, cudn)
 }
 
-func (c *Controller) reconcileNetworkRef(key string) error {
+func (c *Controller) reconcileNetworkRef(_ context.Context, key string) error {
 	_, networkName, err := parseNetworkRefKey(key)
 	if err != nil {
 		klog.Warningf("Skipping invalid Uplink network-ref key %q: %v", key, err)
@@ -401,44 +424,44 @@ func (c *Controller) reconcileNetworkRef(key string) error {
 	return nil
 }
 
-func (c *Controller) ensureFinalizer(uplink *uplinkv1alpha1.Uplink) error {
+func (c *Controller) ensureFinalizer(ctx context.Context, uplink *uplinkv1alpha1.Uplink) error {
 	uplinkCopy := uplink.DeepCopy()
 	if !k8scontrollerutil.AddFinalizer(uplinkCopy, finalizerUplink) {
 		return nil
 	}
-	if err := c.applyUplinkFinalizers(uplinkCopy.Name, uplinkCopy.Finalizers); err != nil {
+	if err := c.applyUplinkFinalizers(ctx, uplinkCopy.Name, uplinkCopy.Finalizers); err != nil {
 		return fmt.Errorf("failed to add finalizer to Uplink %s: %w", uplink.Name, err)
 	}
 	klog.Infof("Added finalizer to Uplink %s", uplink.Name)
 	return nil
 }
 
-func (c *Controller) removeFinalizer(uplink *uplinkv1alpha1.Uplink) error {
+func (c *Controller) removeFinalizer(ctx context.Context, uplink *uplinkv1alpha1.Uplink) error {
 	uplinkCopy := uplink.DeepCopy()
 	if !k8scontrollerutil.RemoveFinalizer(uplinkCopy, finalizerUplink) {
 		return nil
 	}
-	if err := c.applyUplinkFinalizers(uplinkCopy.Name, uplinkCopy.Finalizers); err != nil {
+	if err := c.applyUplinkFinalizers(ctx, uplinkCopy.Name, uplinkCopy.Finalizers); err != nil {
 		return fmt.Errorf("failed to remove finalizer from Uplink %s: %w", uplink.Name, err)
 	}
 	klog.Infof("Removed finalizer from Uplink %s", uplink.Name)
 	return nil
 }
 
-func (c *Controller) applyUplinkFinalizers(uplinkName string, finalizers []string) error {
+func (c *Controller) applyUplinkFinalizers(ctx context.Context, uplinkName string, finalizers []string) error {
 	apply := uplinkapply.Uplink(uplinkName)
 	if len(finalizers) > 0 {
 		apply = apply.WithFinalizers(finalizers...)
 	}
 	_, err := c.uplinkClient.K8sV1alpha1().Uplinks().Apply(
-		context.Background(),
+		ctx,
 		apply,
 		metav1.ApplyOptions{FieldManager: fieldManager, Force: true},
 	)
 	return err
 }
 
-func (c *Controller) syncAllUplinkFinalizers() error {
+func (c *Controller) syncAllUplinkFinalizers(ctx context.Context) error {
 	uplinks, err := c.uplinkLister.List(labels.Everything())
 	if err != nil {
 		return fmt.Errorf("failed to list Uplinks: %w", err)
@@ -447,26 +470,26 @@ func (c *Controller) syncAllUplinkFinalizers() error {
 	var errs []error
 	for _, uplink := range uplinks {
 		referencingCUDNs := c.getCUDNsReferencingUplink(uplink.Name)
-		if err := c.syncUplinkFinalizer(uplink, referencingCUDNs); err != nil {
+		if err := c.syncUplinkFinalizer(ctx, uplink, referencingCUDNs); err != nil {
 			errs = append(errs, err)
 		}
 	}
 	return errors.Join(errs...)
 }
 
-func (c *Controller) syncUplinkFinalizer(uplink *uplinkv1alpha1.Uplink, referencingCUDNs []string) error {
+func (c *Controller) syncUplinkFinalizer(ctx context.Context, uplink *uplinkv1alpha1.Uplink, referencingCUDNs []string) error {
 	if len(referencingCUDNs) > 0 {
 		if !uplink.DeletionTimestamp.IsZero() {
 			return nil
 		}
-		return c.ensureFinalizer(uplink)
+		return c.ensureFinalizer(ctx, uplink)
 	}
 	if !uplink.DeletionTimestamp.IsZero() {
-		if err := c.deleteUplinkStatesFor(uplink.Name); err != nil {
+		if err := c.deleteUplinkStatesFor(ctx, uplink.Name); err != nil {
 			return err
 		}
 	}
-	return c.removeFinalizer(uplink)
+	return c.removeFinalizer(ctx, uplink)
 }
 
 func (c *Controller) rebuildCUDNUplinkReferences() error {
@@ -646,25 +669,53 @@ func (c *Controller) resolveSelectedNodeConfigs(
 	return uplinkutil.SelectNodeConfigs(uplink, nodes)
 }
 
-func (c *Controller) deleteUplinkStatesFor(uplinkName string) error {
+func (c *Controller) deleteUplinkStatesFor(ctx context.Context, uplinkName string) error {
+	return c.deleteUplinkStatesMatching(
+		ctx,
+		fmt.Sprintf("Uplink %s is missing", uplinkName),
+		func(state *uplinkv1alpha1.UplinkState) bool {
+			return state.Spec.UplinkName == uplinkName
+		})
+}
+
+func (c *Controller) deleteUplinkStatesForNode(ctx context.Context, nodeName string) error {
+	return c.deleteUplinkStatesMatching(
+		ctx,
+		fmt.Sprintf("Node %s is missing", nodeName),
+		func(state *uplinkv1alpha1.UplinkState) bool {
+			return state.Spec.NodeName == nodeName
+		})
+}
+
+// deleteUplinkStatesMatching deletes every cached UplinkState accepted by
+// match, logging reason for each, and attempts all of them before returning
+// the joined errors.
+func (c *Controller) deleteUplinkStatesMatching(ctx context.Context, reason string, match func(*uplinkv1alpha1.UplinkState) bool) error {
 	states, err := c.uplinkStateLister.List(labels.Everything())
 	if err != nil {
 		return fmt.Errorf("failed to list UplinkStates: %w", err)
 	}
+	var errs []error
 	for _, state := range states {
-		if state.Spec.UplinkName != uplinkName {
+		if !match(state) {
 			continue
 		}
-		if err := c.deleteUplinkState(state.Name); err != nil {
-			return err
+		if err := c.deleteStaleUplinkState(ctx, state.Name, reason); err != nil {
+			errs = append(errs, err)
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
-func (c *Controller) deleteUplinkState(name string) error {
+// deleteStaleUplinkState deletes one UplinkState and logs why it is stale.
+func (c *Controller) deleteStaleUplinkState(ctx context.Context, name, reason string) error {
+	klog.Infof("Deleting stale UplinkState %s: %s", name, reason)
+	return c.deleteUplinkState(ctx, name)
+}
+
+func (c *Controller) deleteUplinkState(ctx context.Context, name string) error {
 	err := c.uplinkClient.K8sV1alpha1().UplinkStates().Delete(
-		context.Background(),
+		ctx,
 		name,
 		metav1.DeleteOptions{},
 	)
@@ -869,7 +920,7 @@ func cudnUplinkStateGatewayConditionNotReadyReason(state *uplinkv1alpha1.UplinkS
 	}
 }
 
-func (c *Controller) updateCUDNUplinksReady(cudn *udnv1.ClusterUserDefinedNetwork) error {
+func (c *Controller) updateCUDNUplinksReady(ctx context.Context, cudn *udnv1.ClusterUserDefinedNetwork) error {
 	condition, changed := util.MergeStatusCondition(
 		cudn.Status.Conditions,
 		c.cudnUplinksReadyCondition(cudn),
@@ -879,7 +930,7 @@ func (c *Controller) updateCUDNUplinksReady(cudn *udnv1.ClusterUserDefinedNetwor
 	}
 
 	_, err := c.udnClient.K8sV1().ClusterUserDefinedNetworks().ApplyStatus(
-		context.Background(),
+		ctx,
 		udnapply.ClusterUserDefinedNetwork(cudn.Name).WithStatus(
 			udnapply.ClusterUserDefinedNetworkStatus().
 				WithConditions(util.ConditionToApply(condition)),
@@ -1067,6 +1118,7 @@ func (c *Controller) activeCUDNNodes(cudn *udnv1.ClusterUserDefinedNetwork) ([]*
 }
 
 func (c *Controller) updateStatus(
+	ctx context.Context,
 	uplink *uplinkv1alpha1.Uplink,
 	readyStatus metav1.ConditionStatus,
 	readyReason string,
@@ -1089,7 +1141,7 @@ func (c *Controller) updateStatus(
 	}
 
 	_, err := c.uplinkClient.K8sV1alpha1().Uplinks().ApplyStatus(
-		context.Background(),
+		ctx,
 		uplinkapply.Uplink(uplink.Name).WithStatus(
 			uplinkapply.UplinkStatus().WithConditions(util.ConditionToApply(ready)),
 		),
@@ -1126,8 +1178,15 @@ func uplinkNeedsUpdate(oldObj, newObj *uplinkv1alpha1.Uplink) bool {
 	if oldObj == nil {
 		return true
 	}
+	// A resolved UplinkState can arrive before an earlier Ready write
+	// reaches this cache. Reconcile delayed Ready changes to recover even
+	// when the UplinkState event saw the previous condition as unchanged.
 	return !reflect.DeepEqual(oldObj.Spec, newObj.Spec) ||
-		oldObj.DeletionTimestamp.IsZero() != newObj.DeletionTimestamp.IsZero()
+		oldObj.DeletionTimestamp.IsZero() != newObj.DeletionTimestamp.IsZero() ||
+		!reflect.DeepEqual(
+			meta.FindStatusCondition(oldObj.Status.Conditions, uplinkv1alpha1.UplinkConditionReady),
+			meta.FindStatusCondition(newObj.Status.Conditions, uplinkv1alpha1.UplinkConditionReady),
+		)
 }
 
 func uplinkStateNeedsUpdate(oldObj, newObj *uplinkv1alpha1.UplinkState) bool {
@@ -1145,8 +1204,15 @@ func cudnNeedsUpdate(oldObj, newObj *udnv1.ClusterUserDefinedNetwork) bool {
 	if newObj == nil {
 		return true
 	}
+	// A readiness write can reach this cache after an UplinkState event
+	// has already reconciled against the previous condition. Reconcile
+	// our condition changes so that delayed writes cannot leave it stale.
 	return !reflect.DeepEqual(oldObj.Spec.Uplinks, newObj.Spec.Uplinks) ||
-		oldObj.DeletionTimestamp.IsZero() != newObj.DeletionTimestamp.IsZero()
+		oldObj.DeletionTimestamp.IsZero() != newObj.DeletionTimestamp.IsZero() ||
+		!reflect.DeepEqual(
+			meta.FindStatusCondition(oldObj.Status.Conditions, conditionTypeUplinksReady),
+			meta.FindStatusCondition(newObj.Status.Conditions, conditionTypeUplinksReady),
+		)
 }
 
 func nodeNeedsUpdate(oldObj, newObj *corev1.Node) bool {

@@ -15,8 +15,6 @@ import (
 	"sync"
 
 	iputils "github.com/containernetworking/plugins/pkg/ip"
-	"github.com/google/go-cmp/cmp"
-	"github.com/google/go-cmp/cmp/cmpopts"
 	nettypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	"golang.org/x/exp/maps"
 
@@ -293,13 +291,12 @@ func (l *mutableNetInfo) equals(r *mutableNetInfo) bool {
 	r.RLock()
 	defer r.RUnlock()
 
-	lessCIDR := func(a, b config.CIDRNetworkEntry) bool { return a.String() < b.String() }
 	return reflect.DeepEqual(l.id, r.id) &&
 		reflect.DeepEqual(l.tunnelKeys, r.tunnelKeys) &&
 		reflect.DeepEqual(l.nads, r.nads) &&
 		reflect.DeepEqual(l.podNetworkAdvertisements, r.podNetworkAdvertisements) &&
 		reflect.DeepEqual(l.eipAdvertisements, r.eipAdvertisements) &&
-		cmp.Equal(l.subnets, r.subnets, cmpopts.SortSlices(lessCIDR))
+		cidrNetworkEntriesEqual(l.subnets, r.subnets)
 }
 
 func (l *mutableNetInfo) copyFrom(r *mutableNetInfo) {
@@ -1175,29 +1172,58 @@ func (nInfo *userDefinedNetInfo) canReconcile(other NetInfo) bool {
 		return false
 	}
 
-	lessCIDRNetworkEntry := func(a, b config.CIDRNetworkEntry) bool { return a.String() < b.String() }
-	if !cmp.Equal(nInfo.Subnets(), other.Subnets(), cmpopts.SortSlices(lessCIDRNetworkEntry)) {
-		// For Layer3 topology, adding subnets is considered compatible and reconcilable
-		// CRD validation ensures only subnet additions are allowed
-		if nInfo.topology != types.Layer3Topology {
-			return false
-		}
+	// For Layer3 topology, adding subnets is considered compatible and reconcilable.
+	// CRD validation ensures only subnet additions are allowed.
+	if nInfo.topology != types.Layer3Topology && !cidrNetworkEntriesEqual(nInfo.Subnets(), other.Subnets()) {
+		return false
 	}
 
-	lessIPNet := func(a, b net.IPNet) bool { return a.String() < b.String() }
-	if !cmp.Equal(nInfo.excludeSubnets, other.ExcludeSubnets(), cmpopts.SortSlices(lessIPNet)) {
+	if !IsIPNetsEqual(nInfo.excludeSubnets, other.ExcludeSubnets()) {
 		return false
 	}
-	if !cmp.Equal(nInfo.reservedSubnets, other.ReservedSubnets(), cmpopts.SortSlices(lessIPNet)) {
+	if !IsIPNetsEqual(nInfo.reservedSubnets, other.ReservedSubnets()) {
 		return false
 	}
-	if !cmp.Equal(nInfo.infrastructureSubnets, other.InfrastructureSubnets(), cmpopts.SortSlices(lessIPNet)) {
+	if !IsIPNetsEqual(nInfo.infrastructureSubnets, other.InfrastructureSubnets()) {
 		return false
 	}
-	if !cmp.Equal(nInfo.joinSubnets, other.JoinSubnets(), cmpopts.SortSlices(lessIPNet)) {
+	if !IsIPNetsEqual(nInfo.joinSubnets, other.JoinSubnets()) {
 		return false
 	}
-	return cmp.Equal(nInfo.transitSubnets, other.TransitSubnets(), cmpopts.SortSlices(lessIPNet))
+	return IsIPNetsEqual(nInfo.transitSubnets, other.TransitSubnets())
+}
+
+// cidrNetworkEntriesEqual compares subnet entries without changing either input's
+// order. Nil and empty slices are distinct, and duplicate counts must match.
+//
+// When the in-order comparison fails, copies are sorted by CIDRNetworkEntry.String
+// and compared element-wise. Entries produced by net.ParseCIDR render identically
+// when they are equal, so equal entries always pair up. Malformed entries that both
+// render as "<nil>" could tie while comparing unequal, which can only make a
+// reordered pair report unequal.
+func cidrNetworkEntriesEqual(a, b []config.CIDRNetworkEntry) bool {
+	if (a == nil) != (b == nil) || len(a) != len(b) {
+		return false
+	}
+	equal := func(a, b config.CIDRNetworkEntry) bool {
+		return a.HostSubnetLength == b.HostSubnetLength && isIPNetEqual(a.CIDR, b.CIDR)
+	}
+	// Most comparisons are unchanged configurations in the same order. Avoid
+	// allocating and sorting copies for that case.
+	if slices.EqualFunc(a, b, equal) {
+		return true
+	}
+	// A single entry cannot be reordered, so the in-order result above is final.
+	if len(a) < 2 {
+		return false
+	}
+	a, b = slices.Clone(a), slices.Clone(b)
+	compare := func(a, b config.CIDRNetworkEntry) int {
+		return strings.Compare(a.String(), b.String())
+	}
+	slices.SortStableFunc(a, compare)
+	slices.SortStableFunc(b, compare)
+	return slices.EqualFunc(a, b, equal)
 }
 
 func (nInfo *userDefinedNetInfo) copy() *userDefinedNetInfo {
@@ -1536,6 +1562,27 @@ func GetUserDefinedNetworkPrefix(netName string) string {
 	return name + "_"
 }
 
+// GetNetworkScopedNameForNetwork scopes a name to the network identified by
+// netName, without requiring a NetInfo. It mirrors NetInfo.GetNetworkScopedName:
+// the default network is unscoped, user defined networks are prefixed with
+// GetUserDefinedNetworkPrefix(netName).
+func GetNetworkScopedNameForNetwork(netName, name string) string {
+	if netName == types.DefaultNetworkName {
+		return name
+	}
+	return GetUserDefinedNetworkPrefix(netName) + name
+}
+
+// GetNetworkScopedGWRouterExtPortName returns the external Gateway Router port
+// name (the "rtoe-" router-to-external-switch port) for the given network on the
+// given node, derived from the network name alone. It is equivalent to
+// types.GWRouterToExtSwitchPrefix + NetInfo.GetNetworkScopedGWRouterName(nodeName)
+// but does not require a NetInfo.
+func GetNetworkScopedGWRouterExtPortName(netName, nodeName string) string {
+	gwRouterName := GetGatewayRouterFromNode(GetNetworkScopedNameForNetwork(netName, nodeName))
+	return types.GWRouterToExtSwitchPrefix + gwRouterName
+}
+
 func NewNetInfo(netconf *ovncnitypes.NetConf) (NetInfo, error) {
 	return newNetInfo(netconf)
 }
@@ -1606,6 +1653,7 @@ func ParseNADInfo(nad *nettypes.NetworkAttachmentDefinition) (NetInfo, error) {
 	}
 	if nad.Annotations[types.OvnNetworkIDAnnotation] != "" {
 		annotated := nad.Annotations[types.OvnNetworkIDAnnotation]
+		// Only ovn-k8s cluster-manager writes network IDs, so malformed values are unexpected.
 		id, err = strconv.Atoi(annotated)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse annotated network ID: %w", err)
@@ -1613,8 +1661,9 @@ func ParseNADInfo(nad *nettypes.NetworkAttachmentDefinition) (NetInfo, error) {
 	}
 	n.SetNetworkID(id)
 
-	if nad.Annotations[types.OvnNetworkTunnelKeysAnnotation] != "" {
-		tunnelKeys, err := ParseTunnelKeysAnnotation(nad.Annotations[types.OvnNetworkTunnelKeysAnnotation])
+	if annotated := nad.Annotations[types.OvnNetworkTunnelKeysAnnotation]; annotated != "" {
+		// Only ovn-k8s cluster-manager writes tunnel keys, so malformed values are unexpected.
+		tunnelKeys, err := ParseTunnelKeysAnnotation(annotated)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse annotated tunnel keys: %w", err)
 		}

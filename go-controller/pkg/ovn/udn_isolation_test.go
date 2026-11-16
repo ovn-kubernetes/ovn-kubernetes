@@ -4,6 +4,7 @@
 package ovn
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -316,6 +317,7 @@ var _ = Describe("UDN Isolation", func() {
 		mutableNetInfo.SetPodNetworkAdvertisedVRFs(map[string][]string{nodeName: {"vrf"}})
 		Expect(util.ReconcileNetInfo(l3Controller.ReconcilableNetInfo, mutableNetInfo)).To(Succeed())
 		l3Controller.lastNADKeys = sets.New[string](ns + "/" + nadName)
+		Expect(fakeOVN.registerUDNNodeHandler(netInfoBefore.netName)).To(Succeed())
 
 		netInfoAfter := dummyPrimaryLayer3UserDefinedNetwork("192.168.0.0/16,192.169.0.0/16", "192.168.1.0/24")
 		nadAfter, err := newNetworkAttachmentDefinition(ns, nadName, *netInfoAfter.netconf())
@@ -327,7 +329,7 @@ var _ = Describe("UDN Isolation", func() {
 		mutableNetInfoAfter.SetPodNetworkAdvertisedVRFs(map[string][]string{nodeName: {"vrf"}})
 
 		reconciledNodes := sets.New[string]()
-		Expect(l3Controller.reconcile(mutableNetInfoAfter, func(node string) {
+		Expect(l3Controller.reconcile(context.Background(), mutableNetInfoAfter, func(node string) {
 			reconciledNodes.Insert(node)
 		})).To(Succeed())
 		Expect(reconciledNodes.Has(nodeName)).To(BeTrue())

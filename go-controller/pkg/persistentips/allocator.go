@@ -4,6 +4,7 @@
 package persistentips
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -30,17 +31,22 @@ var (
 )
 
 type IPReleaser interface {
-	ReleaseIPs(ips []*net.IPNet) error
+	ReleaseIPs(name, owner string, ips []*net.IPNet) error
 }
 
 type IPAllocator interface {
-	AllocateIPs(ips []*net.IPNet) error
+	AllocateIPs(name, owner string, ips []*net.IPNet) error
+}
+
+// IPAMClaimOwner identifies a reservation that survives the pod using it.
+func IPAMClaimOwner(claim *ipamclaimsapi.IPAMClaim) string {
+	return "ipamclaim/" + string(claim.UID)
 }
 
 type PersistentAllocations interface {
-	FindIPAMClaim(claimName string, namespace string) (*ipamclaimsapi.IPAMClaim, error)
+	FindIPAMClaim(claimName string, podNamespace string) (*ipamclaimsapi.IPAMClaim, error)
 
-	Reconcile(oldIPAMClaim *ipamclaimsapi.IPAMClaim, newIPAMClaim *ipamclaimsapi.IPAMClaim, ipReleaser IPReleaser) error
+	Reconcile(ctx context.Context, oldIPAMClaim *ipamclaimsapi.IPAMClaim, newIPAMClaim *ipamclaimsapi.IPAMClaim, ipReleaser IPReleaser) error
 
 	UpdateIPAMClaimStatus(ipamClaim *ipamclaimsapi.IPAMClaim, podAnnotation *util.PodAnnotation, podName string, allocationErr error) *ipamclaimsapi.IPAMClaim
 }
@@ -72,6 +78,7 @@ func NewIPAMClaimReconciler(kube kube.InterfaceOVN, netConfig util.NetInfo, list
 // Reconcile updates an IPAMClaim with the IP addresses allocated to the pod's
 // interface
 func (icr *IPAMClaimReconciler) Reconcile(
+	ctx context.Context,
 	oldIPAMClaim *ipamclaimsapi.IPAMClaim,
 	newIPAMClaim *ipamclaimsapi.IPAMClaim,
 	ipReleaser IPReleaser,
@@ -100,7 +107,7 @@ func (icr *IPAMClaimReconciler) Reconcile(
 		newIPAMClaim != nil
 
 	if mustUpdateIPAMClaim {
-		if err := icr.kube.UpdateIPAMClaimIPs(newIPAMClaim); err != nil {
+		if err := icr.kube.UpdateIPAMClaimIPs(ctx, newIPAMClaim); err != nil {
 			return fmt.Errorf(
 				"failed to update the allocation %q with allocations %q: %w",
 				newIPAMClaim.Name,
@@ -140,23 +147,44 @@ func (icr *IPAMClaimReconciler) Reconcile(
 	return nil
 }
 
-func (icr *IPAMClaimReconciler) FindIPAMClaim(claimName string, namespace string) (*ipamclaimsapi.IPAMClaim, error) {
+// FindIPAMClaim returns the IPAMClaim named claimName, provided it belongs to
+// the network this reconciler acts upon. It returns
+// ErrPersistentIPsNotAvailableOnNetwork if the network does not honor
+// IPAMClaims, and ErrIgnoredIPAMClaim if the claim belongs to another network.
+//
+// podNamespace must be the namespace of the pod referencing the claim, never a
+// namespace taken from the pod's network selection elements: those are
+// attacker-controlled and would let a pod claim the persistent IPs of a
+// workload in another namespace.
+func (icr *IPAMClaimReconciler) FindIPAMClaim(claimName string, podNamespace string) (*ipamclaimsapi.IPAMClaim, error) {
 	if icr.lister == nil ||
 		!util.DoesNetworkRequireIPAM(icr.netInfo) ||
 		icr.netInfo.TopologyType() == ovnktypes.Layer3Topology ||
 		claimName == "" {
 		return nil, ErrPersistentIPsNotAvailableOnNetwork
 	}
-	claim, err := icr.lister.IPAMClaims(namespace).Get(claimName)
+	claim, err := icr.lister.IPAMClaims(podNamespace).Get(claimName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get IPAMClaim %q: %w", claimName, err)
+	}
+	if claim.Spec.Network != icr.netInfo.GetNetworkName() {
+		klog.Errorf(
+			"IPAMClaim %s/%s belongs to network %q but was referenced on network %q",
+			claim.Namespace,
+			claim.Name,
+			claim.Spec.Network,
+			icr.netInfo.GetNetworkName(),
+		)
+		// avoid leaking the network names, this error may surface as a pod
+		// event, which is visible to non-admins.
+		return nil, fmt.Errorf("IPAMClaim %s/%s: %w", claim.Namespace, claim.Name, ErrIgnoredIPAMClaim)
 	}
 	return claim, nil
 }
 
 // Sync initializes the IPs allocator with the IPAMClaims already existing on
-// the cluster. For live pods, therse are already allocated, so no error will
-// be thrown (e.g. we ignore the `ipam.IsErrAllocated` error
+// the cluster. Replaying a claim's own reservations succeeds; conflicts with
+// another owner are returned to the caller.
 func (icr *IPAMClaimReconciler) Sync(objs []interface{}, ipAllocator IPAllocator) error {
 	for _, obj := range objs {
 		ipamClaim, ok := obj.(*ipamclaimsapi.IPAMClaim)
@@ -178,7 +206,8 @@ func (icr *IPAMClaimReconciler) Sync(objs []interface{}, ipAllocator IPAllocator
 		}
 
 		if len(ipnets) != 0 {
-			if err := ipAllocator.AllocateIPs(ipnets); err != nil && !ipam.IsErrAllocated(err) {
+			if err := ipAllocator.AllocateIPs(icr.netInfo.GetNetworkName(), IPAMClaimOwner(ipamClaim), ipnets); err != nil &&
+				(!ipam.IsErrAllocated(err) || errors.Is(err, ipam.ErrAllocatedByOther)) {
 				return fmt.Errorf("failed syncing persistent ips: %w", err)
 			}
 		}
@@ -199,7 +228,7 @@ func (icr *IPAMClaimReconciler) releaseIPs(ipamClaim *ipamclaimsapi.IPAMClaim, i
 		)
 		return nil
 	}
-	if err := ipReleaser.ReleaseIPs(ips); err != nil {
+	if err := ipReleaser.ReleaseIPs(icr.netInfo.GetNetworkName(), IPAMClaimOwner(ipamClaim), ips); err != nil {
 		return fmt.Errorf("failed releasing persistent IPs: %v", err)
 	}
 	klog.V(5).Infof("Released IPs: %+v", ips)

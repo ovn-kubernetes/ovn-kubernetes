@@ -4,33 +4,37 @@
 package kind
 
 import (
+	"context"
+	"fmt"
 	"os"
+	"time"
 
 	imageutils "k8s.io/kubernetes/test/utils/image"
 
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig/api"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 )
 
 var (
 	agnHost = imageutils.GetE2EImage(imageutils.Agnhost)
+	nginx   = imageutils.GetE2EImage(imageutils.NginxNew)
 	// We limit the set of images used by e2e to reduce duplication and to allow us to provide offline mirroring of images
 	// for customers and restricted test environments.
 	// Ideally, every image used in e2e must be part of this package.
 	// New test images should ideally be sourced from the upstream k8s.io/kubernetes/test/utils/image package.
 	// Failing to find an image from upstream k8s, please get community approval because downstream consumers must
 	// pre-approve new images.
-	// FIXME: iperf3 image should not be retrieved from a users repo and should not have latest tag
-	iperf3                = "quay.io/sronanrh/iperf:latest"
-	netshoot              = "ghcr.io/nicolaka/netshoot:v0.13"
-	nginx                 = "nginx:1"
-	metallbLBService      = "quay.io/itssurya/dev-images:metallb-lbservice"
-	udpServerSrcIPPrinter = "quay.io/itssurya/dev-images:udp-server-srcip-printer"
-	frr                   = "quay.io/frrouting/frr:10.5.3"
+	netshoot = "ghcr.io/nicolaka/netshoot:v0.16"
+	frr      = "quay.io/frrouting/frr:10.5.3"
 	// dnsmasq 2.83; pinned by digest for CI reproducibility.
 	// TODO: mirror to a project-controlled registry (ghcr/quay) — docker.io
 	// pulls are rate-limited in CI and this is a personal repository.
-	dnsmasq = "docker.io/andyshinn/dnsmasq:2.83@sha256:e937327fede666e55ba4c2ab8e715a2ce561945363016d42f9d698d1b18ff1be"
+	dnsmasq                     = "docker.io/andyshinn/dnsmasq:2.83@sha256:e937327fede666e55ba4c2ab8e715a2ce561945363016d42f9d698d1b18ff1be"
+	fedoraKubevirtContainerDisk = "quay.io/kubevirtci/fedora-with-test-tooling:v20250416-e37573e"
 
 	imageConfigs map[api.ImageID]string
 )
@@ -39,46 +43,40 @@ func init() {
 	if agnHostOverride := os.Getenv("AGNHOST_IMAGE"); agnHostOverride != "" {
 		agnHost = agnHostOverride
 	}
-	if iperf3Override := os.Getenv("IPERF3_IMAGE"); iperf3Override != "" {
-		iperf3 = iperf3Override
-	}
 	if netshootOverride := os.Getenv("NETSHOOT_IMAGE"); netshootOverride != "" {
 		netshoot = netshootOverride
 	}
 	if nginxOverride := os.Getenv("NGINX_IMAGE"); nginxOverride != "" {
 		nginx = nginxOverride
 	}
-	if metallbLBServiceOverride := os.Getenv("METALLB_LB_SERVICE_IMAGE"); metallbLBServiceOverride != "" {
-		metallbLBService = metallbLBServiceOverride
-	}
-	if udpServerOverride := os.Getenv("UDP_SERVER_SRCIP_PRINTER_IMAGE"); udpServerOverride != "" {
-		udpServerSrcIPPrinter = udpServerOverride
-	}
 	if frrOverride := os.Getenv("FRR_IMAGE"); frrOverride != "" {
 		frr = frrOverride
 	}
+	if fedoraKubevirtContainerDiskOverride := os.Getenv("FEDORA_KUBEVIRT_CONTAINER_DISK_IMAGE"); fedoraKubevirtContainerDiskOverride != "" {
+		fedoraKubevirtContainerDisk = fedoraKubevirtContainerDiskOverride
+	}
 
 	imageConfigs = map[api.ImageID]string{
-		api.Agnhost:               agnHost,
-		api.IPerf3:                iperf3,
-		api.Netshoot:              netshoot,
-		api.Nginx:                 nginx,
-		api.MetalLBLBService:      metallbLBService,
-		api.UDPServerSrcIPPrinter: udpServerSrcIPPrinter,
-		api.FRR:                   frr,
-		api.DNSMasq:               dnsmasq,
+		api.Agnhost:                     agnHost,
+		api.Netshoot:                    netshoot,
+		api.Nginx:                       nginx,
+		api.FRR:                         frr,
+		api.DNSMasq:                     dnsmasq,
+		api.FedoraKubevirtContainerDisk: fedoraKubevirtContainerDisk,
 	}
 }
 
 type kind struct {
+	kubeConfig     *rest.Config
 	requiredImages map[api.ImageID]struct{}
 }
 
-func New() api.DeploymentConfig {
+func New(config *rest.Config) api.DeploymentConfig {
 	if !infraprovider.IsKind() {
 		panic("Cluster provider must be KinD type")
 	}
 	return &kind{
+		kubeConfig:     config,
 		requiredImages: make(map[api.ImageID]struct{}),
 	}
 }
@@ -105,6 +103,10 @@ func (k *kind) IsConfigurationEnabled(config api.Config) bool {
 		// Currently enabled by default for Kind cluster. Could use
 		// an ENV variable check instead if we need variability later.
 		return true
+	case api.UDNARPNDPFloodDisabled:
+		val, present := os.LookupEnv("DISABLE_UDN_ARP_NDP_FLOOD")
+		udnARPNDPFloodDisabled := present && val == "true"
+		return udnARPNDPFloodDisabled
 	default:
 		return false
 	}
@@ -134,4 +136,41 @@ func (k *kind) GetRequiredImages() []api.ImageConfig {
 		imageConfigs = append(imageConfigs, k.GetImage(imageID))
 	}
 	return imageConfigs
+}
+
+func (k *kind) GetNodeMachineNetworks() (map[string][]string, error) {
+	if k.kubeConfig == nil {
+		return make(map[string][]string), nil
+	}
+	kubeClient, err := kubernetes.NewForConfig(k.kubeConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create kubernetes client: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	nodes, err := kubeClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list nodes: %w", err)
+	}
+	result := make(map[string][]string, len(nodes.Items))
+	for i := range nodes.Items {
+		node := &nodes.Items[i]
+		parsed, err := util.ParseNodePrimaryIfAddr(node)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse node %s primary address: %w", node.Name, err)
+		}
+		var subnets []string
+		if parsed.V4.Net != nil {
+			subnets = append(subnets, parsed.V4.Net.String())
+		}
+		if parsed.V6.Net != nil {
+			subnets = append(subnets, parsed.V6.Net.String())
+		}
+		result[node.Name] = subnets
+	}
+	return result, nil
+}
+
+func (k *kind) OVNControllerLogPath() string {
+	return "/var/log/openvswitch/ovn-controller.log"
 }

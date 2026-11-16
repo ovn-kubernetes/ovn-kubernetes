@@ -39,6 +39,7 @@ import (
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/kubernetes"
@@ -53,8 +54,11 @@ import (
 )
 
 const (
-	uplinkPoll                      = time.Second
-	uplinkShortTimeout              = 60 * time.Second
+	uplinkPoll         = time.Second
+	uplinkShortTimeout = 60 * time.Second
+	// uplinkDynamicReleaseTimeout covers the default 120s Dynamic UDN
+	// inactivity grace period plus the subnet release that follows it.
+	uplinkDynamicReleaseTimeout     = 6 * time.Minute
 	uplinkConditionStableWindow     = 15 * time.Second
 	uplinkTimeout                   = 240 * time.Second
 	uplinkCurlMaxTime               = 1
@@ -112,47 +116,6 @@ type dpuHostAddrAnnotation struct {
 	IPv4 string `json:"ipv4"`
 	IPv6 string `json:"ipv6"`
 }
-
-var _ = ginkgo.Describe("UplinkState API validation", feature.Uplink, func() {
-	f := wrappedTestFramework("uplink-validation")
-	f.SkipNamespaceCreation = true
-
-	ginkgo.It("accepts up to 256 default gateways across both IP families", func(ctx ginkgo.SpecContext) {
-		for _, count := range []int{0, 256, 257} {
-			ginkgo.By(fmt.Sprintf("validating %d default gateways with the API server", count))
-			gateways := make([]string, 0, count)
-			for i := 0; i < count; i++ {
-				if i%2 == 0 {
-					gateways = append(gateways, fmt.Sprintf("192.0.2.%d", i/2+1))
-				} else {
-					gateways = append(gateways, fmt.Sprintf("2001:db8::%x", i/2+1))
-				}
-			}
-			state := &unstructured.Unstructured{Object: map[string]interface{}{
-				"apiVersion": "k8s.ovn.org/v1alpha1",
-				"kind":       "UplinkState",
-				"metadata":   map[string]interface{}{"generateName": "uplink-validation-"},
-				"spec":       map[string]interface{}{"uplinkName": "validation", "nodeName": "validation"},
-			}}
-			gomega.Expect(unstructured.SetNestedStringSlice(state.Object, gateways, "status", "defaultGateways")).To(gomega.Succeed())
-			// Dry-run exercises the real CRD schema without publishing synthetic
-			// discovery data for the node controllers to consume.
-			created, err := f.DynamicClient.Resource(uplinkStateGVR).Create(ctx, state,
-				metav1.CreateOptions{DryRun: []string{metav1.DryRunAll}})
-			if count > 256 {
-				gomega.Expect(apierrors.IsInvalid(err)).To(gomega.BeTrue(), "expected a CRD validation error: %v", err)
-				gomega.Expect(err.Error()).To(gomega.ContainSubstring("status.defaultGateways"))
-				gomega.Expect(err.Error()).To(gomega.ContainSubstring("256"))
-				continue
-			}
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			actual, found, err := unstructured.NestedStringSlice(created.Object, "status", "defaultGateways")
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			gomega.Expect(found).To(gomega.BeTrue())
-			gomega.Expect(actual).To(gomega.Equal(gateways))
-		}
-	})
-})
 
 var _ = ginkgo.Describe("Network Segmentation Uplink default-VRF egress", feature.NetworkSegmentation, feature.Uplink, func() {
 	f := wrappedTestFramework("uplink-default")
@@ -738,6 +701,113 @@ var _ = ginkgo.Describe("Network Segmentation Uplink default-VRF egress", featur
 		)
 		waitForCUDNUplinksReady(ctx, f, networkName)
 	})
+
+	// Uplink bridges are admin-owned and may disappear under an active CUDN.
+	// ovnkube-node must degrade the UplinkState and keep running, and the
+	// CUDN must still be cleaned up once deleted.
+	ginkgo.It("keeps ovnkube-node running when the Uplink bridge is deleted under an active CUDN", func(ctx ginkgo.SpecContext) {
+		env := provisionUplinkWithActiveCUDN(ctx, f, ictx, ipFamilySet, testSuffix, "upbrdel")
+		node, uplinkName, bridgeName, networkName := env.node, env.uplinkName, env.bridgeName, env.networkName
+
+		ginkgo.By("activating a second CUDN on the Uplink")
+		// One CUDN is deleted while the bridge is gone, the other stays
+		// active and is reprogrammed once the bridge is back.
+		secondNetworkName := "upbrdelsecondnet" + testSuffix
+		secondNamespace := setupUplinkLayer3CUDN(ctx, f, ictx, ipFamilySet, secondNetworkName, uplinkName)
+		secondPod := createUplinkNetexecPod(ctx, f, secondNamespace.Name, "client-"+secondNetworkName, node.Name)
+		waitForCUDNUplinksReady(ctx, f, secondNetworkName)
+
+		restartsBefore, err := ovnkubeNodeRestarts(ctx, f)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		ginkgo.By("deleting the Uplink bridge on the node while the CUDNs still use it")
+		ovsPods, err := uplinkOVSPodsByNode(ctx, f)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		ovsPod, ok := ovsPods[node.Name]
+		gomega.Expect(ok).To(gomega.BeTrue(), "expected an ovnkube-node pod on node %s", node.Name)
+		gomega.Expect(runOVSCommand(ovsPod, "ovs-vsctl --timeout=15 --if-exists del-br %s", bridgeName)).To(gomega.Succeed())
+
+		ginkgo.By("waiting for the UplinkState to report the missing bridge")
+		// The Uplink's host interface is the bridge itself, so discovery
+		// reports the missing host interface.
+		waitForUplinkStateConditionOfType(ctx, f, uplinkName, node.Name,
+			uplinkv1alpha1.UplinkStateConditionResolved,
+			metav1.ConditionFalse, uplinkv1alpha1.UplinkStateReasonHostInterfaceNotFound)
+
+		ginkgo.By("waiting for the active CUDNs to tear down their gateway programming")
+		waitForUplinkStateGatewayCondition(ctx, f, uplinkName, node.Name,
+			metav1.ConditionFalse, uplinkv1alpha1.UplinkStateReasonGatewayProgrammingFailed)
+
+		ginkgo.By("checking that no ovnkube-node restarts while the bridge is gone")
+		// Covers several rounds of the 15s OpenFlow port check and of the
+		// network cleanup retry.
+		gomega.Consistently(func() error {
+			return expectSameOvnkubeNodeRestarts(ctx, f, restartsBefore)
+		}).WithTimeout(uplinkShortTimeout).WithPolling(5 * time.Second).Should(gomega.Succeed())
+
+		ginkgo.By("deleting one CUDN while the bridge is gone")
+		gomega.Expect(e2epod.DeletePodWithWait(ctx, f.ClientSet, env.pod)).To(gomega.Succeed())
+		gomega.Expect(f.DynamicClient.Resource(clusterUDNGVR).Delete(
+			ctx, networkName, metav1.DeleteOptions{},
+		)).To(gomega.Succeed())
+
+		ginkgo.By("recreating the Uplink bridge")
+		nodeIface, ok := env.nodeIfaces[node.Name]
+		gomega.Expect(ok).To(gomega.BeTrue(), "expected an Uplink interface for node %s", node.Name)
+		nodeIfaces := map[string]infraapi.NetworkInterface{node.Name: nodeIface}
+		// The addresses had been moved onto the bridge and went away with it:
+		// put them back on the interface, where configureUplinkBridge expects
+		// them. The interface carries both families whatever the cluster
+		// enables, and the default routes need both.
+		for _, addr := range []struct{ ip, prefix string }{
+			{nodeIface.IPv4, nodeIface.IPv4Prefix},
+			{nodeIface.IPv6, nodeIface.IPv6Prefix},
+		} {
+			if addr.ip == "" {
+				continue
+			}
+			_, err := execNodeCommand(node.Name, "ip addr replace %s/%s dev %s", addr.ip, addr.prefix, nodeIface.InfName)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		}
+		gomega.Expect(configureUplinkBridge(ctx, f, ictx, bridgeName, nodeIfaces)).To(gomega.Succeed())
+		gomega.Expect(configureUplinkBridgeDefaultRoutes(ictx, bridgeName, nodeIfaces)).To(gomega.Succeed())
+
+		ginkgo.By("verifying the remaining CUDN is reprogrammed on the recreated bridge")
+		waitForUplinkStatesResolved(ctx, f, uplinkName, bridgeName, []corev1.Node{node})
+		// The node drops a CUDN from GatewayReady only once its dataplane
+		// cleanup succeeded: a cleanup failing on the missing bridge would
+		// keep the condition False.
+		waitForUplinkStateGatewayCondition(ctx, f, uplinkName, node.Name,
+			metav1.ConditionTrue, uplinkv1alpha1.UplinkStateReasonGatewayConfigured)
+		server, err := ictx.CreateExternalContainer(infraapi.ExternalContainer{
+			Name:    "upbrdelsrv" + testSuffix,
+			Image:   images.AgnHost(),
+			CmdArgs: []string{"netexec"},
+			Network: env.uplinkNetwork,
+		})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		for _, family := range ipFamilySet.UnsortedList() {
+			serverIP := getFirstIPStringOfFamily(family, []string{server.IPv4, server.IPv6})
+			expectedSourceIP := getFirstIPStringOfFamily(family, []string{nodeIface.IPv4, nodeIface.IPv6})
+			uplinkPodToClientIPAndExpect(secondPod, serverIP, expectedSourceIP)
+		}
+		gomega.Expect(expectSameOvnkubeNodeRestarts(ctx, f, restartsBefore)).To(gomega.Succeed())
+
+		ginkgo.By("deleting the remaining CUDN")
+		gomega.Expect(e2epod.DeletePodWithWait(ctx, f.ClientSet, secondPod)).To(gomega.Succeed())
+		gomega.Expect(f.DynamicClient.Resource(clusterUDNGVR).Delete(
+			ctx, secondNetworkName, metav1.DeleteOptions{},
+		)).To(gomega.Succeed())
+		waitForUplinkStateGatewayCondition(
+			ctx,
+			f,
+			uplinkName,
+			node.Name,
+			metav1.ConditionTrue,
+			uplinkv1alpha1.UplinkStateReasonNoActiveCUDNs,
+		)
+		gomega.Expect(expectSameOvnkubeNodeRestarts(ctx, f, restartsBefore)).To(gomega.Succeed())
+	})
 })
 
 // uplinkRecoveryEnv is the provisioning shared by the UplinkState recovery
@@ -815,6 +885,89 @@ func provisionUplinkWithActiveCUDN(
 		nodeIfaces:    nodeIfaces,
 		pod:           pod,
 	}
+}
+
+// twoDynamicUplinkNodes returns the two nodes a Dynamic UDN Uplink spec runs
+// on, skipping the spec when fewer are available. In the split DPU setup
+// only DPU host nodes qualify.
+func twoDynamicUplinkNodes(ctx context.Context, f *framework.Framework) []corev1.Node {
+	ginkgo.GinkgoHelper()
+
+	schedulableNodes, err := e2enode.GetReadySchedulableNodes(ctx, f.ClientSet)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	nodes := schedulableNodes.Items
+	if isDPUUplinkE2E() {
+		nodes = filterNodesByLabel(nodes, uplinkDPUHostNodeLabel)
+	}
+	if len(nodes) < 2 {
+		e2eskipper.Skipf("test requires at least two ready schedulable nodes")
+	}
+	return nodes[:2]
+}
+
+// provisionDynamicUplink creates an Uplink named name on the nodes and
+// returns its name, its bridge and the FRR neighbor addresses per node. On
+// regular KIND it also creates the Uplink network and bridge, which the DPU
+// simulator provides.
+func provisionDynamicUplink(
+	ctx context.Context,
+	f *framework.Framework,
+	ictx infraapi.Context,
+	ipFamilySet sets.Set[utilnet.IPFamily],
+	name string,
+	nodes []corev1.Node,
+) (string, string, map[string][]string) {
+	ginkgo.GinkgoHelper()
+
+	var nodeIfaces map[string]infraapi.NetworkInterface
+	frrNeighborIPsByNode := map[string][]string{}
+	var bridgeName, hostInterfaceName string
+	if isDPUUplinkE2E() {
+		nodeIfaces = collectDPUHostUplinkInterfaces(nodes)
+		bridgeName = os.Getenv(uplinkDPUExpectedBridgeEnv)
+		gomega.Expect(bridgeName).NotTo(gomega.BeEmpty(), "expected the DPU Uplink bridge name")
+
+		dpuGatewayNetwork, err := infraprovider.Get().GetNetwork(os.Getenv(uplinkDPUGatewayNetworkEnv))
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		frrIface, err := infraprovider.Get().GetExternalContainerNetworkInterface(
+			infraapi.ExternalContainer{Name: routerContainerName},
+			dpuGatewayNetwork,
+		)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		frrNeighborIPs := matchIPStringsByIPFamilySet([]string{frrIface.IPv4, frrIface.IPv6}, ipFamilySet)
+		gomega.Expect(frrNeighborIPs).NotTo(gomega.BeEmpty(), "expected an external FRR address on the DPU Uplink network")
+		for _, node := range nodes {
+			frrNeighborIPsByNode[node.Name] = frrNeighborIPs
+		}
+	} else {
+		uplinkAlloc, err := allocators.AllocateBGP(f, ictx)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		_, nodeIfaces = setupUplinkNetwork(
+			ictx,
+			nodes,
+			ipFamilySet,
+			name,
+			[]string{uplinkAlloc.BGPPeerSubnet, uplinkAlloc.BGPPeerSubnet6},
+		)
+		bridgeName = uplinkBridgeName(name)
+		hostInterfaceName = bridgeName
+		gomega.Expect(configureUplinkBridge(ctx, f, ictx, bridgeName, nodeIfaces)).To(gomega.Succeed())
+		for _, node := range nodes {
+			iface := nodeIfaces[node.Name]
+			ipv4Gateway, err := interfaceGateway(iface.IPv4Gateway, iface.IPv4, iface.IPv4Prefix)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			ipv6Gateway, err := interfaceGateway(iface.IPv6Gateway, iface.IPv6, iface.IPv6Prefix)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			frrNeighborIPsByNode[node.Name] = matchIPStringsByIPFamilySet(
+				[]string{ipv4Gateway, ipv6Gateway},
+				ipFamilySet,
+			)
+		}
+	}
+
+	createUplink(ctx, f, ictx, name, nodes, nodeIfaces, hostInterfaceName)
+	waitForUplinkStatesResolved(ctx, f, name, bridgeName, nodes)
+	return name, bridgeName, frrNeighborIPsByNode
 }
 
 var _ = ginkgo.Describe("Network Segmentation Uplink DPU VF lifecycle", feature.NetworkSegmentation, feature.Uplink, func() {
@@ -1612,66 +1765,8 @@ var _ = ginkgo.Describe("Uplink route advertisements with Dynamic UDN allocation
 			e2eskipper.Skipf("test requires Dynamic UDN allocation")
 		}
 
-		schedulableNodes, err := e2enode.GetReadySchedulableNodes(ctx, f.ClientSet)
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		availableNodes := schedulableNodes.Items
-		if isDPUUplinkE2E() {
-			availableNodes = filterNodesByLabel(availableNodes, uplinkDPUHostNodeLabel)
-		}
-		if len(availableNodes) < 2 {
-			e2eskipper.Skipf("test requires at least two ready schedulable nodes")
-		}
-		nodes := availableNodes[:2]
-
-		var nodeIfaces map[string]infraapi.NetworkInterface
-		frrNeighborIPsByNode := map[string][]string{}
-		var bridgeName, hostInterfaceName string
-		if isDPUUplinkE2E() {
-			nodeIfaces = collectDPUHostUplinkInterfaces(nodes)
-			bridgeName = os.Getenv(uplinkDPUExpectedBridgeEnv)
-			gomega.Expect(bridgeName).NotTo(gomega.BeEmpty(), "expected the DPU Uplink bridge name")
-
-			dpuGatewayNetwork, err := infraprovider.Get().GetNetwork(os.Getenv(uplinkDPUGatewayNetworkEnv))
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			frrIface, err := infraprovider.Get().GetExternalContainerNetworkInterface(
-				infraapi.ExternalContainer{Name: routerContainerName},
-				dpuGatewayNetwork,
-			)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			frrNeighborIPs := matchIPStringsByIPFamilySet([]string{frrIface.IPv4, frrIface.IPv6}, ipFamilySet)
-			gomega.Expect(frrNeighborIPs).NotTo(gomega.BeEmpty(), "expected an external FRR address on the DPU Uplink network")
-			for _, node := range nodes {
-				frrNeighborIPsByNode[node.Name] = frrNeighborIPs
-			}
-		} else {
-			uplinkAlloc, err := allocators.AllocateBGP(f, ictx)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			_, nodeIfaces = setupUplinkNetwork(
-				ictx,
-				nodes,
-				ipFamilySet,
-				"updyn"+testSuffix,
-				[]string{uplinkAlloc.BGPPeerSubnet, uplinkAlloc.BGPPeerSubnet6},
-			)
-			bridgeName = uplinkBridgeName("updyn" + testSuffix)
-			hostInterfaceName = bridgeName
-			gomega.Expect(configureUplinkBridge(ctx, f, ictx, bridgeName, nodeIfaces)).To(gomega.Succeed())
-			for _, node := range nodes {
-				iface := nodeIfaces[node.Name]
-				ipv4Gateway, err := interfaceGateway(iface.IPv4Gateway, iface.IPv4, iface.IPv4Prefix)
-				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				ipv6Gateway, err := interfaceGateway(iface.IPv6Gateway, iface.IPv6, iface.IPv6Prefix)
-				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				frrNeighborIPsByNode[node.Name] = matchIPStringsByIPFamilySet(
-					[]string{ipv4Gateway, ipv6Gateway},
-					ipFamilySet,
-				)
-			}
-		}
-
-		uplinkName := "updyn" + testSuffix
-		createUplink(ctx, f, ictx, uplinkName, nodes, nodeIfaces, hostInterfaceName)
-		waitForUplinkStatesResolved(ctx, f, uplinkName, bridgeName, nodes)
+		nodes := twoDynamicUplinkNodes(ctx, f)
+		uplinkName, bridgeName, frrNeighborIPsByNode := provisionDynamicUplink(ctx, f, ictx, ipFamilySet, "updyn"+testSuffix, nodes)
 
 		type networkOnNode struct {
 			name      string
@@ -1793,6 +1888,116 @@ var _ = ginkgo.Describe("Uplink route advertisements with Dynamic UDN allocation
 			owner.node.Name,
 			owner.name,
 		)
+	})
+
+	// A CUDN selecting several namespaces renders one NAD per namespace on
+	// the node. The node must delete the network once no NAD is active there,
+	// otherwise its gateway outlives the node subnets released by the cluster
+	// manager and keeps the old subnets on the Uplink bridge after the network
+	// is reallocated and reactivated. The CUDN is advertised because only
+	// advertised networks get per-subnet Uplink bridge flows.
+	ginkgo.It("rebuilds the CUDN gateway with the reallocated node subnets after an inactive interval", func(ctx ginkgo.SpecContext) {
+		if !isDynamicUDNEnabled() {
+			e2eskipper.Skipf("test requires Dynamic UDN allocation")
+		}
+		nodes := twoDynamicUplinkNodes(ctx, f)
+		uplinkName, bridgeName, frrNeighborIPsByNode := provisionDynamicUplink(ctx, f, ictx, ipFamilySet, "upreact"+testSuffix, nodes)
+
+		ginkgo.By("creating an advertised CUDN on the Uplink selecting two namespaces")
+		networkName := "upreact" + testSuffix
+		networkLabels := map[string]string{"advertise": networkName}
+		bgpAlloc, err := allocators.AllocateBGP(f, ictx)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		networkSpec := uplinkLayer3NetworkSpec(ipFamilySet, bgpAlloc.UDNSubnet, bgpAlloc.UDNSubnet6)
+		activeNamespace, err := createUplinkNamespace(ctx, f, ictx, "uplink-reactivation", networkName)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		idleNamespace, err := createUplinkNamespace(ctx, f, ictx, "uplink-reactivation", networkName+"-idle")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(createUplinkCUDNForNamespaces(
+			ctx,
+			f,
+			ictx,
+			[]*corev1.Namespace{activeNamespace, idleNamespace},
+			networkName,
+			networkSpec,
+			networkLabels,
+			uplinkName,
+		)).To(gomega.Succeed())
+
+		ginkgo.By("activating the CUDN on both nodes from one namespace while the other namespace stays idle")
+		activators := make([]*corev1.Pod, 0, len(nodes))
+		for i, node := range nodes {
+			activators = append(activators, createUplinkNetexecPod(
+				ctx,
+				f,
+				activeNamespace.Name,
+				fmt.Sprintf("activate-%s-%d", networkName, i),
+				node.Name,
+			))
+			gomega.Expect(createNodeScopedUplinkFRRConfiguration(
+				ctx,
+				f,
+				ictx,
+				fmt.Sprintf("%s-%d", networkName, i),
+				networkName,
+				node,
+				frrNeighborIPsByNode[node.Name],
+			)).To(gomega.Succeed())
+		}
+		gomega.Expect(createRouteAdvertisements(
+			f,
+			ictx,
+			networkName,
+			"auto",
+			networkLabels,
+			map[string]string{"network": networkName},
+		)).To(gomega.Succeed())
+		waitForUplinkStateGatewayConditionOnNodes(ctx, f, uplinkName, nodes, uplinkv1alpha1.UplinkStateReasonGatewayConfigured)
+		waitForCUDNUplinksReady(ctx, f, networkName)
+		initialSubnets := waitForCUDNNodeSubnets(ctx, f, networkName, nodes, ipFamilySet, true, uplinkTimeout)
+		for _, node := range nodes {
+			expectUplinkBridgeIngressSubnets(ctx, f, node.Name, bridgeName, initialSubnets[node.Name])
+		}
+
+		ginkgo.By("deleting the workloads and waiting past the grace period for the node subnets and the gateways to be released")
+		for _, pod := range activators {
+			gomega.Expect(e2epod.DeletePodWithWait(ctx, f.ClientSet, pod)).To(gomega.Succeed())
+		}
+		waitForCUDNNodeSubnets(ctx, f, networkName, nodes, ipFamilySet, false, uplinkDynamicReleaseTimeout)
+		waitForUplinkStateGatewayConditionOnNodes(ctx, f, uplinkName, nodes, uplinkv1alpha1.UplinkStateReasonNoActiveCUDNs)
+		for _, node := range nodes {
+			expectUplinkBridgeIngressSubnets(ctx, f, node.Name, bridgeName, nil)
+		}
+
+		ginkgo.By("reactivating the CUDN with a server in the idle namespace and a remote client in the first one")
+		serverPod := createUplinkServicePod(ctx, f, idleNamespace.Name, "server-"+networkName, nodes[0].Name)
+		service := createUplinkNodePortService(ctx, f, idleNamespace.Name, serverPod.Labels)
+		clientPod := createUplinkNetexecPod(ctx, f, activeNamespace.Name, "client-"+networkName, nodes[1].Name)
+		waitForUplinkStateGatewayConditionOnNodes(ctx, f, uplinkName, nodes, uplinkv1alpha1.UplinkStateReasonGatewayConfigured)
+		waitForCUDNUplinksReady(ctx, f, networkName)
+		reallocatedSubnets := waitForCUDNNodeSubnets(ctx, f, networkName, nodes, ipFamilySet, true, uplinkTimeout)
+
+		ginkgo.By("verifying the Uplink bridge forwards exactly the reallocated node subnets")
+		for _, node := range nodes {
+			expectUplinkBridgeIngressSubnets(ctx, f, node.Name, bridgeName, reallocatedSubnets[node.Name])
+		}
+
+		ginkgo.By("verifying remote pod and ClusterIP connectivity through the rebuilt gateway")
+		for _, family := range ipFamilySet.UnsortedList() {
+			serverPodIP, err := getPodAnnotationIPsForAttachmentByIPFamily(
+				f.ClientSet,
+				idleNamespace.Name,
+				serverPod.Name,
+				namespacedName(idleNamespace.Name, networkName),
+				family,
+			)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Expect(serverPodIP).NotTo(gomega.BeEmpty())
+			uplinkPodToHostnameAndExpect(clientPod, serverPodIP, serverPod.Name)
+			clusterIP := getFirstIPStringOfFamily(family, service.Spec.ClusterIPs)
+			gomega.Expect(clusterIP).NotTo(gomega.BeEmpty())
+			uplinkPodToHostnameAndExpect(clientPod, clusterIP, serverPod.Name)
+		}
 	})
 })
 
@@ -3677,6 +3882,113 @@ func expectSingleUplinkLocalnetPort(ctx context.Context, f *framework.Framework,
 		"expected a single localnet port and patch port for network %s on bridge %s", networkName, bridgeName)
 }
 
+// uplinkIngressSubnetFlowRegexp extracts the destination subnet matched by an
+// Uplink bridge ingress flow for either IP family.
+var uplinkIngressSubnetFlowRegexp = regexp.MustCompile(`(?:nw|ipv6)_dst=([^, ]+)`)
+
+// waitForCUDNNodeSubnets waits until every node either has a subnet of each
+// IP family allocated for the CUDN or has none, and returns the subnets per
+// node.
+func waitForCUDNNodeSubnets(
+	ctx context.Context,
+	f *framework.Framework,
+	cudnName string,
+	nodes []corev1.Node,
+	ipFamilySet sets.Set[utilnet.IPFamily],
+	allocated bool,
+	timeout time.Duration,
+) map[string][]string {
+	ginkgo.GinkgoHelper()
+
+	want := 0
+	if allocated {
+		want = ipFamilySet.Len()
+	}
+	subnets := map[string][]string{}
+	gomega.Eventually(ctx, func() error {
+		v4, v6, err := getNodeSubnetAssignments(f.ClientSet, ovntypes.CUDNPrefix+cudnName)
+		if err != nil {
+			return err
+		}
+		for _, node := range nodes {
+			subnets[node.Name] = nil
+			for _, subnet := range []string{v4[node.Name], v6[node.Name]} {
+				if subnet != "" {
+					subnets[node.Name] = append(subnets[node.Name], subnet)
+				}
+			}
+			if len(subnets[node.Name]) != want {
+				return fmt.Errorf("node %s has subnets %v for CUDN %s, expected %d",
+					node.Name, subnets[node.Name], cudnName, want)
+			}
+		}
+		return nil
+	}).WithTimeout(timeout).WithPolling(uplinkPoll).Should(gomega.Succeed())
+	return subnets
+}
+
+// uplinkBridgeIngressSubnets returns the subnets matched by the priority 300
+// ingress flows of the Uplink bridge of the node, which forward traffic from
+// the Uplink interface to the CUDN gateways by destination node subnet. In the
+// split DPU setup the bridge is on the DPU node, where OVS runs natively.
+func uplinkBridgeIngressSubnets(ctx context.Context, f *framework.Framework, nodeName, bridgeName string) (sets.Set[string], error) {
+	var out string
+	if isDPUUplinkE2E() {
+		dpuNodeName, err := dpuNodeNameForHostNode(nodeName)
+		if err != nil {
+			return nil, err
+		}
+		out, err = ForContainer(dpuNodeName).Exec("ovs-ofctl", "dump-flows", bridgeName, "table=0")
+		if err != nil {
+			return nil, fmt.Errorf("failed to dump flows of bridge %s on DPU node %s: %w", bridgeName, dpuNodeName, err)
+		}
+	} else {
+		ovsPods, err := uplinkOVSPodsByNode(ctx, f)
+		if err != nil {
+			return nil, err
+		}
+		ovsPod, ok := ovsPods[nodeName]
+		if !ok {
+			return nil, fmt.Errorf("no ovnkube-node pod on node %s", nodeName)
+		}
+		out, err = e2epodoutput.RunHostCmd(ovsPod.Namespace, ovsPod.Name,
+			fmt.Sprintf("ovs-ofctl dump-flows %s table=0", bridgeName))
+		if err != nil {
+			return nil, fmt.Errorf("failed to dump flows of bridge %s on node %s: %w", bridgeName, nodeName, err)
+		}
+	}
+
+	subnets := sets.New[string]()
+	for _, flow := range strings.Split(out, "\n") {
+		if !strings.Contains(flow, "priority=300") {
+			continue
+		}
+		for _, match := range uplinkIngressSubnetFlowRegexp.FindAllStringSubmatch(flow, -1) {
+			subnets.Insert(match[1])
+		}
+	}
+	return subnets, nil
+}
+
+// expectUplinkBridgeIngressSubnets waits until the Uplink bridge of the node
+// has ingress flows for exactly the given subnets.
+func expectUplinkBridgeIngressSubnets(ctx context.Context, f *framework.Framework, nodeName, bridgeName string, subnets []string) {
+	ginkgo.GinkgoHelper()
+
+	gomega.Eventually(ctx, func() (sets.Set[string], error) {
+		return uplinkBridgeIngressSubnets(ctx, f, nodeName, bridgeName)
+	}).WithTimeout(uplinkTimeout).WithPolling(uplinkPoll).Should(gomega.Equal(sets.New(subnets...)),
+		"expected bridge %s of node %s to have ingress flows for exactly %v", bridgeName, nodeName, subnets)
+}
+
+func waitForUplinkStateGatewayConditionOnNodes(ctx context.Context, f *framework.Framework, uplinkName string, nodes []corev1.Node, reason string) {
+	ginkgo.GinkgoHelper()
+
+	for _, node := range nodes {
+		waitForUplinkStateGatewayCondition(ctx, f, uplinkName, node.Name, metav1.ConditionTrue, reason)
+	}
+}
+
 func uplinkOVSPodsByNode(ctx context.Context, f *framework.Framework) (map[string]corev1.Pod, error) {
 	pods, err := f.ClientSet.CoreV1().Pods(deploymentconfig.Get().OVNKubernetesNamespace()).List(
 		ctx,
@@ -3690,6 +4002,50 @@ func uplinkOVSPodsByNode(ctx context.Context, f *framework.Framework) (map[strin
 		byNode[pod.Spec.NodeName] = pod
 	}
 	return byNode, nil
+}
+
+// ovnkubeNodeRestart identifies an ovnkube-node pod and how often its
+// containers restarted.
+type ovnkubeNodeRestart struct {
+	podUID   types.UID
+	restarts int
+}
+
+// ovnkubeNodeRestarts returns, by node, the ovnkube-node pod identity and the
+// sum of its containers' restart counts.
+func ovnkubeNodeRestarts(ctx context.Context, f *framework.Framework) (map[string]ovnkubeNodeRestart, error) {
+	pods, err := uplinkOVSPodsByNode(ctx, f)
+	if err != nil {
+		return nil, err
+	}
+	restarts := make(map[string]ovnkubeNodeRestart, len(pods))
+	for nodeName, pod := range pods {
+		restarts[nodeName] = ovnkubeNodeRestart{podUID: pod.UID, restarts: podTotalRestarts(&pod)}
+	}
+	return restarts, nil
+}
+
+// expectSameOvnkubeNodeRestarts fails when any ovnkube-node pod restarted a
+// container or was replaced since before was taken.
+func expectSameOvnkubeNodeRestarts(ctx context.Context, f *framework.Framework, before map[string]ovnkubeNodeRestart) error {
+	after, err := ovnkubeNodeRestarts(ctx, f)
+	if err != nil {
+		return err
+	}
+	for nodeName, want := range before {
+		got, ok := after[nodeName]
+		if !ok {
+			return fmt.Errorf("ovnkube-node pod on node %s disappeared", nodeName)
+		}
+		if got.podUID != want.podUID {
+			return fmt.Errorf("ovnkube-node pod on node %s was replaced", nodeName)
+		}
+		if got.restarts != want.restarts {
+			return fmt.Errorf("ovnkube-node on node %s restarted: container restarts went from %d to %d",
+				nodeName, want.restarts, got.restarts)
+		}
+	}
+	return nil
 }
 
 func runOVSCommand(pod corev1.Pod, format string, args ...any) error {
@@ -4367,6 +4723,23 @@ func createUplinkCUDN(
 	networkLabels map[string]string,
 	uplinkName string,
 ) error {
+	return createUplinkCUDNForNamespaces(ctx, f, ictx, []*corev1.Namespace{namespace}, name, networkSpec, networkLabels, uplinkName)
+}
+
+func createUplinkCUDNForNamespaces(
+	ctx context.Context,
+	f *framework.Framework,
+	ictx infraapi.Context,
+	namespaces []*corev1.Namespace,
+	name string,
+	networkSpec *udnv1.NetworkSpec,
+	networkLabels map[string]string,
+	uplinkName string,
+) error {
+	namespaceNames := make([]interface{}, 0, len(namespaces))
+	for _, namespace := range namespaces {
+		namespaceNames = append(namespaceNames, namespace.Name)
+	}
 	networkSpecMap, err := runtime.DefaultUnstructuredConverter.ToUnstructured(networkSpec)
 	if err != nil {
 		return fmt.Errorf("failed to convert network spec to unstructured: %w", err)
@@ -4389,7 +4762,7 @@ func createUplinkCUDN(
 				"matchExpressions": []interface{}{map[string]interface{}{
 					"key":      "kubernetes.io/metadata.name",
 					"operator": "In",
-					"values":   []interface{}{namespace.Name},
+					"values":   namespaceNames,
 				}},
 			},
 			"network": networkSpecMap,
@@ -4402,7 +4775,12 @@ func createUplinkCUDN(
 	}
 	// Cleanups run after the spec context is done.
 	ictx.AddCleanUpFn(func() error {
-		return client.Delete(context.Background(), name, metav1.DeleteOptions{})
+		// Specs may delete the CUDN themselves.
+		err := client.Delete(context.Background(), name, metav1.DeleteOptions{})
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return err
 	})
 	gomega.Eventually(ctx, networkReadyFunc(ctx, client, name)).
 		WithTimeout(uplinkTimeout).

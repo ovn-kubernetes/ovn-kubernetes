@@ -4,6 +4,7 @@
 package util
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -77,9 +78,9 @@ type PodAnnotation struct {
 	// fewer Gateways than IPs.
 	Gateways []net.IP
 
-	// GatewayIPv6LLA is the IPv6 Link Local Address for the pod's gateway, that is the address
-	// that will be set as gateway with router advertisements
-	// generated from the gateway router from the node where the pod is running.
+	// GatewayIPv6LLA is the IPv6 link-local address of the pod's gateway.
+	// DEPRECATED: retained only to preserve values on already annotated pods.
+	// New allocations omit it, and current CNI versions do not use it for filtering.
 	GatewayIPv6LLA net.IP
 
 	// Routes are additional routes to add to the pod's network namespace
@@ -606,7 +607,7 @@ func GetK8sPodNetworkSelection(pod *corev1.Pod, nadKey string) (*nadapi.NetworkS
 
 // UpdatePodAnnotationWithRetry updates the pod annotation on the pod retrying
 // on conflict
-func UpdatePodAnnotationWithRetry(podLister listers.PodLister, kube kube.Interface, pod *corev1.Pod, podAnnotation *PodAnnotation, nadKey string) error {
+func UpdatePodAnnotationWithRetry(ctx context.Context, podLister listers.PodLister, kube kube.Interface, pod *corev1.Pod, podAnnotation *PodAnnotation, nadKey string) error {
 	updatePodAnnotationNoRollback := func(pod *corev1.Pod) (*corev1.Pod, func(), error) {
 		var err error
 		pod.Annotations, err = MarshalPodAnnotation(pod.Annotations, podAnnotation, nadKey)
@@ -617,6 +618,7 @@ func UpdatePodAnnotationWithRetry(podLister listers.PodLister, kube kube.Interfa
 	}
 
 	return UpdatePodWithRetryOrRollback(
+		ctx,
 		podLister,
 		kube,
 		pod,

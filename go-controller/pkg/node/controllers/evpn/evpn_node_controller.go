@@ -4,6 +4,7 @@
 package evpn
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -11,6 +12,7 @@ import (
 	"reflect"
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
@@ -34,6 +36,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/netlinkdevicemanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
@@ -58,13 +61,12 @@ const (
 	reconcileNodeAddressChange = "//node-address-change"
 
 	// reconcileVTEPAnnotationChange is a synthetic key enqueued when the
-	// node's VTEP annotation is externally modified or removed. It
+	// node's VTEP annotation is modified or removed. It
 	// invalidates the annotation cache and triggers reconciliation to
 	// restore the expected state.
 	reconcileVTEPAnnotationChange = "//vtep-annotation-change"
 
-	// vtepAnnotationFieldManager identifies this controller as the owner of
-	// the VTEP annotation on the node, used to detect external modifications.
+	// vtepAnnotationFieldManager names this controller's annotation patches.
 	vtepAnnotationFieldManager = "node-vtep-controller"
 )
 
@@ -152,7 +154,7 @@ func NewController(nodeName string, wf factory.NodeWatchFactory, kube kube.Inter
 	c.podController = controller.NewController("evpn-pod-neighbor-controller",
 		&controller.ControllerConfig[corev1.Pod]{
 			RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
-			Reconcile:      c.reconcilePod,
+			Reconcile:      func(_ context.Context, key string) error { return c.reconcilePod(key) },
 			ObjNeedsUpdate: c.podNeedsUpdate,
 			Threadiness:    1,
 			Informer:       podInformer.Informer(),
@@ -261,6 +263,8 @@ func (c *Controller) vtepNeedsUpdate(oldObj, newObj *vtepv1.VTEP) bool {
 	return !reflect.DeepEqual(oldObj.Spec, newObj.Spec)
 }
 
+// onNodeUpdate enqueues local VTEP annotation repair regardless of the
+// client-supplied field-manager identity.
 func (c *Controller) onNodeUpdate(oldObj, newObj interface{}) {
 	oldNode, ok := oldObj.(*corev1.Node)
 	if !ok {
@@ -276,18 +280,16 @@ func (c *Controller) onNodeUpdate(oldObj, newObj interface{}) {
 	if !util.NodeVTEPsAnnotationChanged(oldNode, newNode) {
 		return
 	}
-	// don't reconcile on our own updates
-	if util.IsLastUpdatedByManager(vtepAnnotationFieldManager, newNode.ManagedFields) {
-		return
-	}
-
+	// Field-manager names are client supplied. Reconcile every changed value;
+	// a valid annotation is a noop and does not create an update loop.
 	c.vtepController.Reconcile(reconcileVTEPAnnotationChange)
 }
 
 // reconcileNodeAddressChange triggers reconciliation for unmanaged VTEPs whose
 // annotated IPs are no longer valid or missing. Called when the node's
-// addresses change via the address manager callback.
-func (c *Controller) reconcileNodeAddressChange() error {
+// addresses change via the address manager callback. Annotation changes force
+// reconciliation of every unmanaged VTEP to validate the complete entries.
+func (c *Controller) reconcileNodeAddressChange(annotationChanged bool) error {
 	vtepsAnnotation, err := c.getVTEPsAnnotation()
 	if err != nil {
 		return fmt.Errorf("failed to get VTEP annotation for address change reconciliation: %w", err)
@@ -310,7 +312,7 @@ func (c *Controller) reconcileNodeAddressChange() error {
 		v6AnnotatedIP := matchFirstIPStringFamily(true, vtepsAnnotation[vtep.Name].IPs)
 		missesIPv4 := needsIPv4 && !nodeIPSet.Has(v4AnnotatedIP)
 		missesIPv6 := needsIPv6 && !nodeIPSet.Has(v6AnnotatedIP)
-		if missesIPv4 || missesIPv6 {
+		if annotationChanged || missesIPv4 || missesIPv6 {
 			klog.V(5).Infof("Node addresses changed on %s, reconciling unmanaged VTEP %s", c.nodeName, vtep.Name)
 			c.vtepController.Reconcile(vtep.Name)
 		}
@@ -327,33 +329,61 @@ func (c *Controller) reconcileNodeAddressChange() error {
 // The synthetic keys reconcileVTEPAnnotationChange and
 // reconcileNodeAddressChange trigger reconciliation of unmanaged VTEPs
 // whose annotated IPs are stale or missing.
-func (c *Controller) reconcile(key string) error {
+func (c *Controller) reconcile(_ context.Context, key string) (err error) {
 	switch key {
 	case reconcileVTEPAnnotationChange:
 		// node annotation changed, reset the cached annotation to re-read
 		c.vtepsAnnotation = nil
 		fallthrough
 	case reconcileNodeAddressChange:
-		return c.reconcileNodeAddressChange()
+		return c.reconcileNodeAddressChange(key == reconcileVTEPAnnotationChange)
 	}
+
+	start := time.Now()
+	deleted := false
+	defer func() {
+		if deleted {
+			// drop the per-VTEP timeseries last: observing the duration here
+			// would recreate the series we just removed
+			metrics.DeleteEVPNVTEPMetrics(key)
+			return
+		}
+		result := "success"
+		if err != nil {
+			result = "error"
+		}
+		metrics.RecordEVPNVTEPReconcile(key, result, time.Since(start))
+	}()
 
 	vtep, err := c.watchFactory.VTEPInformer().Lister().Get(key)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			klog.V(4).Infof("VTEP %s not found, cleaning up", key)
 			if err := c.deleteVTEPDevices(key); err != nil {
-				return err
+				return fmt.Errorf("failed to clean up deleted VTEP %s devices: %w", key, err)
 			}
-			return c.setVTEPAnnotation(key, nil, nil)
+			if err := c.setVTEPAnnotation(key, nil, nil); err != nil {
+				return fmt.Errorf("failed to clear VTEP %s annotation: %w", key, err)
+			}
+			// only once the annotation is cleared too: a failed update is
+			// retried and must show as an error, not as a completed deletion
+			deleted = true
+			return nil
 		}
 		return err
 	}
 	if vtep.Spec.Mode == vtepv1.VTEPModeManaged {
 		klog.Warningf("VTEP %s uses unsupported %s mode, cleaning up", vtep.Name, vtepv1.VTEPModeManaged)
 		if err := c.deleteVTEPDevices(key); err != nil {
-			return err
+			return fmt.Errorf("failed to clean up unsupported VTEP %s devices: %w", key, err)
 		}
-		return c.setVTEPAnnotation(key, nil, nil)
+		if err := c.setVTEPAnnotation(key, nil, nil); err != nil {
+			return fmt.Errorf("failed to clear VTEP %s annotation: %w", key, err)
+		}
+		// nothing is programmed for an unsupported VTEP and nothing will be
+		// until its mode changes, so drop its series as for a deleted one
+		deleted = true
+		return nil
 	}
 
 	if config.HybridOverlay.Enabled && config.HybridOverlay.VXLANPort == config.DefaultVXLANPort {
@@ -367,7 +397,14 @@ func (c *Controller) reconcile(key string) error {
 	}
 	if vtepIPv4 == nil && vtepIPv6 == nil {
 		klog.Infof("VTEP %s IPs not yet available for node %s", vtep.Name, c.nodeName)
-		return c.deleteVTEPDevices(key)
+		if err := c.deleteVTEPDevices(key); err != nil {
+			return fmt.Errorf("failed to clean up VTEP %s devices while its IPs are unavailable: %w", key, err)
+		}
+		// unlike the branches above the VTEP is still live and will be
+		// programmed again once an address appears, so report no usage rather
+		// than dropping the series or leaving a stale count behind
+		metrics.RecordEVPNVTEPUsage(key, 0, 0)
+		return nil
 	}
 
 	networks, err := c.ensureDevices(vtep, vtepIPv4, vtepIPv6)
@@ -413,6 +450,14 @@ func (c *Controller) ensureDevices(vtep *vtepv1.VTEP, vtepIPv4, vtepIPv6 net.IP)
 	}
 
 	mappings := c.getVIDVNIMappings(networks)
+	// One VLAN per MAC-VRF and per IP-VRF, bounded at 4094 by the single VXLAN
+	// device. Recorded here, before programming, deliberately: this is a
+	// distance-to-ceiling gauge, and the case it exists to catch is the one
+	// where the mappings are rejected for exceeding the limit. Recording only
+	// on success would leave the gauge stuck below the threshold in exactly
+	// that case, so an alert on it would never fire. A failed reconcile is
+	// visible separately through the reconcile duration metric's result label.
+	metrics.RecordEVPNVTEPUsage(vtep.Name, len(networks), len(mappings))
 	if vtepIPv4 != nil {
 		vxlan4Name := GetEVPNVXLANName(vtep.Name, utilnet.IPv4)
 		if err := c.ensureVXLAN(vxlan4Name, bridgeName, vtepIPv4, mappings); err != nil {
@@ -444,7 +489,7 @@ func (c *Controller) ensureDevices(vtep *vtepv1.VTEP, vtepIPv4, vtepIPv6 net.IP)
 	return networks, nil
 }
 
-func (c *Controller) reconcileNAD(key string) error {
+func (c *Controller) reconcileNAD(_ context.Context, key string) error {
 	netInfo := c.networkMgr.GetNetInfoForNADKey(key)
 	c.nadVTEPInfoLock.Lock()
 	defer c.nadVTEPInfoLock.Unlock()
@@ -786,11 +831,10 @@ func (c *Controller) discoverUnmanagedVTEPIPs(vtep *vtepv1.VTEP) (net.IP, net.IP
 		return nil, nil, err
 	}
 
-	changed := !v4AnnotatedIP.Equal(v4SelectedIP) || !v6AnnotatedIP.Equal(v6SelectedIP)
-	if changed {
-		if err := c.setVTEPAnnotation(vtep.Name, v4SelectedIP, v6SelectedIP); err != nil {
-			return nil, nil, fmt.Errorf("failed to annotate VTEP %s IPs: %w", vtep.Name, err)
-		}
+	// Compare the entire entry, including extra or unsupported-family addresses.
+	// setVTEPAnnotation suppresses the API request when the value is unchanged.
+	if err := c.setVTEPAnnotation(vtep.Name, v4SelectedIP, v6SelectedIP); err != nil {
+		return nil, nil, fmt.Errorf("failed to annotate VTEP %s IPs: %w", vtep.Name, err)
 	}
 	return v4SelectedIP, v6SelectedIP, nil
 }

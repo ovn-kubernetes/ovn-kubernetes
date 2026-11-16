@@ -20,12 +20,12 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/allocators"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/feature"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/images"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider"
 	infraapi "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/api"
-	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/ipalloc"
 	e2eendpointslice "k8s.io/kubernetes/test/e2e/framework/endpointslice"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -565,19 +565,7 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 									// flush this on all 3 nodes else we will run into the
 									// bug: https://issues.redhat.com/browse/OCPBUGS-7609.
 									// TODO: Revisit this once https://bugzilla.redhat.com/show_bug.cgi?id=2169839 is fixed.
-									ovnKubernetesNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
-									ovnKubeNodePods, err := f.ClientSet.CoreV1().Pods(ovnKubernetesNamespace).List(context.TODO(), metav1.ListOptions{
-										LabelSelector: "app=ovnkube-node",
-									})
-									if err != nil {
-										framework.Failf("could not get ovnkube-node pods: %v", err)
-									}
-									for _, ovnKubeNodePod := range ovnKubeNodePods.Items {
-										framework.Logf("Flushing the ip route cache on %s", ovnKubeNodePod.Name)
-										_, err := e2ekubectl.RunKubectl(ovnKubernetesNamespace, "exec", ovnKubeNodePod.Name, "--container", getNodeContainerName(), "--",
-											"ip", "route", "flush", "cache")
-										framework.ExpectNoError(err, "Flushing the ip route cache failed")
-									}
+									flushRouteCacheOnAllNodes(f.ClientSet)
 								}
 							}
 						})
@@ -1053,12 +1041,12 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 					nodeIPs[node.Name] = make(map[int]string)
 				}
 				if IsIPv6Cluster(f.ClientSet) {
-					newIPIP, err := ipalloc.NewPrimaryIPv6()
-					framework.ExpectNoError(err, "must get new primary provider IPv4")
+					newIPIP, err := allocators.NewPrimaryIPv6(node.Name)
+					framework.ExpectNoError(err, "must get new primary provider IPv6")
 					newIP = newIPIP.String()
 					nodeIPs[node.Name][6] = newIP
 				} else {
-					newIPIP, err := ipalloc.NewPrimaryIPv4()
+					newIPIP, err := allocators.NewPrimaryIPv4(node.Name)
 					framework.ExpectNoError(err, "must get new primary provider IPv4")
 					nodeIPs[node.Name][4] = newIPIP.String()
 				}
@@ -2695,7 +2683,7 @@ spec:
            claimName: dynamic-claim
       initContainers:
       - name: get-big-file
-        image: ` + images.MetalLBLBService() + `
+        image: ` + images.AgnHost() + `
         command: ['sh', '-c', "dd if=/dev/zero of=/usr/share/nginx/html/big.iso  bs=1024 count=0 seek=102400"]
         volumeMounts:
         - name: data
@@ -2711,17 +2699,13 @@ spec:
           containerPort: 80
       - name: agnhost
         image: ` + images.AgnHost() + `
-        command: ["/agnhost", "netexec", "--http-port=10000"]
+        command: ["/agnhost", "netexec", "--http-port=10000", "--udp-port=10001"]
         ports:
         - name: agnhost
           containerPort: 10000
-      - name: udp-server
-        image: ` + images.UDPServerSrcIPPrinter() + `
-        imagePullPolicy: Always
-        ports:
-        - containerPort: 10001
+        - name: udp
+          containerPort: 10001
           protocol: UDP
-          name: udp
       nodeSelector:
         kubernetes.io/hostname: ` + backendNodeName + `
 
@@ -3197,7 +3181,9 @@ spec:
 		}, 60*time.Second).Should(gomega.BeTrue())
 
 		ginkgo.By("by sending a UDP packet to service " + svcName + " with type=LoadBalancer in namespace " + namespaceName + " with backend pod " + backendName)
-		netcatCmd := fmt.Sprintf("echo hostname | nc -uv -w2 %s %d",
+		// agnhost netexec replies to "clientip" with the observed UDP source address and
+		// also logs it, so either the response or backend logs can verify preservation.
+		netcatCmd := fmt.Sprintf("echo clientip | nc -uv -w2 %s %d",
 			svcLoadBalancerIP,
 			endpointUDPPort,
 		)
@@ -3215,18 +3201,18 @@ spec:
 
 		ginkgo.By("ensure the sourceIP of the external container is preserved!")
 		// Check that sourceIP of the LBService is preserved
-		targetPodLogs, err := e2ekubectl.RunKubectl("default", "logs", "-l", "app=nginx", "--container", "udp-server")
+		targetPodLogs, err := e2ekubectl.RunKubectl("default", "logs", "-l", "app=nginx", "--container", "agnhost")
 		framework.ExpectNoError(err, "failed to inspect logs in backend pods")
-		framework.Logf("Target pod logs (nginx): %q", targetPodLogs)
+		framework.Logf("Target pod logs (agnhost): %q", targetPodLogs)
 		lbClientInf, err := infraprovider.Get().GetExternalContainerNetworkInterface(lbClientExternalContainer, clientNetNetwork)
 		framework.ExpectNoError(err, "failed to get network interface info for network %s within lbclient external container %s", clientNetNetwork.Name(), frrExternalContainer.GetName())
 		framework.Logf("found external container IPv4: %q, IPv6: %q", lbClientInf.IPv4, lbClientInf.IPv6)
-		if strings.Contains(targetPodLogs, lbClientInf.IPv4) {
+		if strings.Contains(targetPodLogs, lbClientInf.IPv4) || strings.Contains(output, lbClientInf.IPv4) {
 			framework.Logf("found the expected srcIP %s!", lbClientInf.IPv4)
-		} else if strings.Contains(targetPodLogs, lbClientInf.IPv6) {
+		} else if strings.Contains(targetPodLogs, lbClientInf.IPv6) || strings.Contains(output, lbClientInf.IPv6) {
 			framework.Logf("found the expected srcIP %s!", lbClientInf.IPv6)
 		} else {
-			framework.Failf("could not get expected srcIP!, target pod logs:\n%q", targetPodLogs)
+			framework.Failf("could not get expected srcIP!, target pod logs:\n%q\nnetcat output:\n%q", targetPodLogs, output)
 		}
 
 		ginkgo.By("patching service " + svcName + " to sessionAffinity=ClientIP at default timeout of 10800")
@@ -3253,7 +3239,7 @@ spec:
 
 		// Check that sourceIP of the LBService is preserved
 		ginkgo.By("ensure the sourceIP of the external container is preserved!")
-		targetPodLogs, err = e2ekubectl.RunKubectl("default", "logs", "-l", "app=nginx", "--container", "udp-server")
+		targetPodLogs, err = e2ekubectl.RunKubectl("default", "logs", "-l", "app=nginx", "--container", "agnhost")
 		framework.ExpectNoError(err, "failed to inspect logs in backend pods")
 		framework.Logf("%v", targetPodLogs)
 		if strings.Count(targetPodLogs, lbClientInf.IPv4) >= 2 {
@@ -3264,7 +3250,7 @@ spec:
 			framework.Failf("could not get expected srcIP!, target pod logs:\n%q", targetPodLogs)
 		}
 	})
-	ginkgo.It("Should ensure load balancer service works when ETP=local and backend pods are also egressIP served pods", func() {
+	ginkgo.It("Should ensure load balancer service works when ETP=local and backend pods are also egressIP served pods", func(ctx ginkgo.SpecContext) {
 		// TEST LOGIC: This test uses metaLB BGP for advertising routes towards 1 KIND ovnk cluster node
 		// (node where the service backend pods live) as potential candidate to reach the load balancer service (192.168.10.0 service VIP).
 		// There is also a FRR router that sits in front of the KIND cluster through which traffic flows to the service VIP.
@@ -3331,7 +3317,7 @@ spec:
 		}, 60*time.Second).Should(gomega.BeTrue())
 
 		ginkgo.By("by sending a UDP packet to service " + svcName + " with type=LoadBalancer in namespace " + namespaceName + " with backend pod " + backendName)
-		netcatCmd := fmt.Sprintf("echo hostname | nc -uv -w2 %s %d",
+		netcatCmd := fmt.Sprintf("echo clientip | nc -uv -w2 %s %d",
 			svcLoadBalancerIP,
 			endpointUDPPort,
 		)
@@ -3349,19 +3335,19 @@ spec:
 
 		ginkgo.By("ensure the sourceIP of the external container is preserved!")
 		// Check that sourceIP of the LBService is preserved
-		targetPodLogs, err := e2ekubectl.RunKubectl("default", "logs", "-l", "app=nginx", "--container", "udp-server")
+		targetPodLogs, err := e2ekubectl.RunKubectl("default", "logs", "-l", "app=nginx", "--container", "agnhost")
 		framework.ExpectNoError(err, "failed to inspect logs in backend pods")
 		framework.Logf("Target pod logs:\n%q", targetPodLogs)
 		lbClientNetworkInterface, err := infraprovider.Get().GetExternalContainerNetworkInterface(lbClientExternalContainer, clientNetNetwork)
 		framework.ExpectNoError(err, "failed to get network interface info for external container %s connected to network %s", frrExternalContainer.Name, clientNetNetwork.Name())
 		lbClientIPv4, lbClientIPv6 := lbClientNetworkInterface.IPv4, lbClientNetworkInterface.IPv6
 		framework.Logf("found external container lbclient IPs: IPv4 %q, IPv6: %q", lbClientIPv4, lbClientIPv6)
-		if strings.Contains(targetPodLogs, lbClientIPv4) {
+		if strings.Contains(targetPodLogs, lbClientIPv4) || strings.Contains(output, lbClientIPv4) {
 			framework.Logf("found the expected srcIP %s!", lbClientIPv4)
-		} else if strings.Contains(targetPodLogs, lbClientIPv6) {
+		} else if strings.Contains(targetPodLogs, lbClientIPv6) || strings.Contains(output, lbClientIPv6) {
 			framework.Logf("found the expected srcIP %s!", lbClientIPv6)
 		} else {
-			framework.Failf("could not get expected srcIP!, target pod logs:\n%q", targetPodLogs)
+			framework.Failf("could not get expected srcIP!, target pod logs:\n%q\nnetcat output:\n%q", targetPodLogs, output)
 		}
 
 		ginkgo.By("label " + nonBackendNodeName + " as egressIP assignable")
@@ -3370,11 +3356,13 @@ spec:
 		ginkgo.By("Create an EgressIP object with one egress IP defined")
 		// Assign the egress IP without conflicting with any node IP,
 		// the kind subnet is /16 or /64 so the following should be fine.
+		nonBackendNode, err := f.ClientSet.CoreV1().Nodes().Get(ctx, nonBackendNodeName, metav1.GetOptions{})
+		framework.ExpectNoError(err, "must get non-backend node object")
 		var egressIP1 net.IP
 		if utilnet.IsIPv6String(svcLoadBalancerIP) {
-			egressIP1, err = ipalloc.NewPrimaryIPv6()
+			egressIP1, err = allocators.NewPrimaryIPv6(nonBackendNode.Name)
 		} else {
-			egressIP1, err = ipalloc.NewPrimaryIPv4()
+			egressIP1, err = allocators.NewPrimaryIPv4(nonBackendNode.Name)
 		}
 		framework.ExpectNoError(err, "must allocate new Node IP for EgressIP IP")
 		var egressIPConfig = `apiVersion: k8s.ovn.org/v1
@@ -3434,7 +3422,7 @@ spec:
 
 		// Check that sourceIP of the LBService is preserved
 		ginkgo.By("ensure the sourceIP of the external container is preserved!")
-		targetPodLogs, err = e2ekubectl.RunKubectl("default", "logs", "-l", "app=nginx", "--container", "udp-server")
+		targetPodLogs, err = e2ekubectl.RunKubectl("default", "logs", "-l", "app=nginx", "--container", "agnhost")
 		framework.ExpectNoError(err, "failed to inspect logs in backend pods")
 		framework.Logf("%v", targetPodLogs)
 		if strings.Count(targetPodLogs, lbClientIPv4) >= 2 {

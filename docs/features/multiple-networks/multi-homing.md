@@ -283,7 +283,7 @@ The user can specify attachment parameters via
 [network-selection-elements](https://github.com/k8snetworkplumbingwg/network-attachment-definition-client/blob/63033d5c63d1cf56f924a5454c8f2ac444b6736d/pkg/apis/k8s.cni.cncf.io/v1/types.go#L137),
 namely IP, MAC, and interface name.
 
-Refer to the following yaml for an example on how to request a static IP for a
+Refer to the following YAML for an example on how to request a static IP for a
 pod, a MAC address, and specify the pod interface name.
 
 ```yaml
@@ -368,6 +368,14 @@ responsible for creating the `ipamclaims.k8s.cni.cncf.io` object, and point to
 it in the network selection element upon pod creation;
 OVN-Kubernetes will then persist the IP addresses it has allocated the pod in the `IPAMClaim`. This flow
 is portrayed in the sequence diagram below.
+
+The referenced `IPAMClaim` must be in the pod's namespace, even when the
+network selection element references a NAD in another namespace. Its
+`spec.network` must match the network name in the NAD configuration, not
+the NAD's Kubernetes resource name.
+
+These checks do not restrict claim reuse between pods in the same namespace
+on the same network.
 
 ```mermaid
 sequenceDiagram
