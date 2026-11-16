@@ -234,6 +234,36 @@ jobs:
           fi
         done
 
+    - name: Analyze BGP lanes
+      # The BGP lanes differ from each other in one variable at a time, so
+      # their RouteAdvertisements figures are only meaningful compared across
+      # lanes. Add one cross-lane report next to the per-lane CPU and memory
+      # reports so it is posted with them.
+      if: steps.get_prs.outputs.pr_numbers != '[]'
+      run: |
+        # analyze-bgp-lanes.py names each lane after its directory: link the
+        # extracted artifacts under their lane names
+        mkdir -p bgp-lanes
+        for dir in bgp-ra-*-performance-test-data-*/; do
+          if [ -d "$dir" ]; then
+            lane=$(basename "$dir" | sed 's/-performance-test-data-.*//')
+            ln -s "$PWD/$dir" "bgp-lanes/$lane"
+          fi
+        done
+
+        if [ -z "$(ls -A bgp-lanes)" ]; then
+          echo "No BGP lane data in this run, skipping"
+          exit 0
+        fi
+
+        mkdir -p enhanced-reports/bgp-ra-lanes-analysis
+        # Reason: a broken analysis must not stop the per-lane reports from
+        # being posted
+        contrib/perf/analyze-bgp-lanes.py bgp-lanes \
+          --run-id "${{ github.event.workflow_run.id }}" \
+          -o enhanced-reports/bgp-ra-lanes-analysis/performance_report.md \
+          || echo "::warning::BGP lane analysis failed"
+
     - name: Post performance report to PRs
       if: steps.get_prs.outputs.pr_numbers != '[]'
       run: |
