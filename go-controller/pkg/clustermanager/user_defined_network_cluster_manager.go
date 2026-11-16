@@ -34,6 +34,9 @@ type userDefinedNetworkClusterManager struct {
 
 	errorReporter  NetworkStatusReporter
 	nodeReconciler *nodecontroller.NodeController
+	// allocationControllers reconcile the pods and the IPAMClaims of the
+	// networks that allocate to pods
+	allocationControllers *allocationControllers
 }
 
 func newUserDefinedNetworkClusterManager(
@@ -42,14 +45,16 @@ func newUserDefinedNetworkClusterManager(
 	networkManager networkmanager.Interface,
 	recorder record.EventRecorder,
 	nodeReconciler *nodecontroller.NodeController,
+	allocationControllers *allocationControllers,
 ) (*userDefinedNetworkClusterManager, error) {
 	klog.Infof("Creating user-defined network cluster manager")
 	sncm := &userDefinedNetworkClusterManager{
-		ovnClient:      ovnClient,
-		watchFactory:   wf,
-		networkManager: networkManager,
-		recorder:       recorder,
-		nodeReconciler: nodeReconciler,
+		ovnClient:             ovnClient,
+		watchFactory:          wf,
+		networkManager:        networkManager,
+		recorder:              recorder,
+		nodeReconciler:        nodeReconciler,
+		allocationControllers: allocationControllers,
 	}
 	return sncm, nil
 }
@@ -79,6 +84,7 @@ func (sncm *userDefinedNetworkClusterManager) NewNetworkController(nInfo util.Ne
 		sncm.networkManager,
 		sncm.errorReporter,
 		sncm.nodeReconciler,
+		sncm.allocationControllers,
 	)
 	return sncc, nil
 }
@@ -187,6 +193,7 @@ func (sncm *userDefinedNetworkClusterManager) newDummyNetworkController(topoType
 		sncm.networkManager,
 		nil,
 		sncm.nodeReconciler,
+		sncm.allocationControllers,
 	)
 	if nc.hasNodeAllocation() {
 		nc.nodeAllocator = node.NewNodeAllocator(ovntypes.InvalidID, nc.GetNetInfo(), nc.watchFactory.NodeCoreInformer().Lister(), nc.kube, nc.nodeClient, nil)

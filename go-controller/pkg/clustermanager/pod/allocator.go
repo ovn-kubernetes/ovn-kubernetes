@@ -139,6 +139,56 @@ func (a *PodAllocator) getActiveNetworkForPod(pod *corev1.Pod) (util.NetInfo, er
 
 }
 
+// PodOnNetwork tells if a pod may be attached to the network of the
+// allocator. It is a cheap way to skip the pods of other networks: a pod it
+// can't tell for is reported as attached, and Reconcile says why.
+func (a *PodAllocator) PodOnNetwork(pod *corev1.Pod) bool {
+	var activeNetwork util.NetInfo
+	if a.netInfo.IsPrimaryNetwork() {
+		var err error
+		activeNetwork, err = a.networkManager.GetActiveNetworkForNamespace(pod.Namespace)
+		if err != nil || activeNetwork == nil {
+			return true
+		}
+	}
+	onNetwork, _, err := util.GetPodNADToNetworkMappingWithActiveNetwork(
+		pod,
+		a.netInfo,
+		activeNetwork,
+		a.networkManager.GetNetworkNameForNADKey,
+		a.networkManager.GetPrimaryNADForNamespace,
+	)
+	return err != nil || onNetwork
+}
+
+// DeletedPodOnNetwork tells if a deleted pod may have had something allocated
+// on the network of the allocator. As PodOnNetwork, it is a cheap way to skip
+// the pods of other networks, and reports as attached a pod it can't tell
+// for. The network of the namespace may be gone by then: what the pod was
+// allocated tells for a primary network.
+func (a *PodAllocator) DeletedPodOnNetwork(pod *corev1.Pod) bool {
+	if a.netInfo.IsPrimaryNetwork() {
+		podNetworks, err := util.UnmarshalPodAnnotationAllNetworks(pod.Annotations)
+		if err != nil {
+			return true
+		}
+		for nadKey := range podNetworks {
+			if a.networkManager.GetNetworkNameForNADKey(nadKey) == a.netInfo.GetNetworkName() {
+				return true
+			}
+		}
+		return false
+	}
+	onNetwork, _, err := util.GetPodNADToNetworkMappingWithActiveNetwork(
+		pod,
+		a.netInfo,
+		nil,
+		a.networkManager.GetNetworkNameForNADKey,
+		a.networkManager.GetPrimaryNADForNamespace,
+	)
+	return err != nil || onNetwork
+}
+
 // GetNetworkRole returns the role of this controller's network for the given pod
 func (a *PodAllocator) GetNetworkRole(pod *corev1.Pod) (string, error) {
 	role, err := util.GetNetworkRole(

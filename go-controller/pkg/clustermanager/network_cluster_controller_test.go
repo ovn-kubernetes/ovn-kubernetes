@@ -160,6 +160,9 @@ func TestHandleNetworkRefChangeCleanupWithZeroGraceOnStart(t *testing.T) {
 	nodeController := nodecontroller.NewController(wf, "clustermanager-node", nm)
 	g.Expect(nodeController.Start()).To(gomega.Succeed())
 	defer nodeController.Stop()
+	allocControllers := newAllocationControllers(wf)
+	g.Expect(allocControllers.Start()).To(gomega.Succeed())
+	defer allocControllers.Stop()
 
 	ncc := newNetworkClusterController(
 		netInfo,
@@ -169,6 +172,7 @@ func TestHandleNetworkRefChangeCleanupWithZeroGraceOnStart(t *testing.T) {
 		nm,
 		nil,
 		nodeController,
+		allocControllers,
 	)
 	g.Expect(ncc.init(ctx)).To(gomega.Succeed())
 	g.Expect(ncc.Start(ctx)).To(gomega.Succeed())
@@ -236,6 +240,9 @@ func TestHandleNetworkRefChangeCleanupWithZeroGraceAfterStart(t *testing.T) {
 	nodeController := nodecontroller.NewController(wf, "clustermanager-node", nm)
 	g.Expect(nodeController.Start()).To(gomega.Succeed())
 	defer nodeController.Stop()
+	allocControllers := newAllocationControllers(wf)
+	g.Expect(allocControllers.Start()).To(gomega.Succeed())
+	defer allocControllers.Stop()
 
 	ncc := newNetworkClusterController(
 		netInfo,
@@ -245,6 +252,7 @@ func TestHandleNetworkRefChangeCleanupWithZeroGraceAfterStart(t *testing.T) {
 		nm,
 		nil,
 		nodeController,
+		allocControllers,
 	)
 	g.Expect(ncc.init(ctx)).To(gomega.Succeed())
 	g.Expect(ncc.Start(ctx)).To(gomega.Succeed())
@@ -311,6 +319,9 @@ func TestHandleNetworkRefChangeAllocatesOnActivation(t *testing.T) {
 	nodeController := nodecontroller.NewController(wf, "clustermanager-node", nm)
 	g.Expect(nodeController.Start()).To(gomega.Succeed())
 	defer nodeController.Stop()
+	allocControllers := newAllocationControllers(wf)
+	g.Expect(allocControllers.Start()).To(gomega.Succeed())
+	defer allocControllers.Stop()
 
 	ncc := newNetworkClusterController(
 		netInfo,
@@ -320,6 +331,7 @@ func TestHandleNetworkRefChangeAllocatesOnActivation(t *testing.T) {
 		nm,
 		nil,
 		nodeController,
+		allocControllers,
 	)
 	g.Expect(ncc.init(ctx)).To(gomega.Succeed())
 	g.Expect(ncc.Start(ctx)).To(gomega.Succeed())
@@ -405,6 +417,9 @@ func TestReconcileNodeCleansUpOnNoHostSubnetTransition(t *testing.T) {
 	nodeController := nodecontroller.NewController(wf, "clustermanager-node", nm)
 	g.Expect(nodeController.Start()).To(gomega.Succeed())
 	defer nodeController.Stop()
+	allocControllers := newAllocationControllers(wf)
+	g.Expect(allocControllers.Start()).To(gomega.Succeed())
+	defer allocControllers.Stop()
 
 	ncc := newNetworkClusterController(
 		netInfo,
@@ -414,6 +429,7 @@ func TestReconcileNodeCleansUpOnNoHostSubnetTransition(t *testing.T) {
 		nm,
 		nil,
 		nodeController,
+		allocControllers,
 	)
 	g.Expect(ncc.init(ctx)).To(gomega.Succeed())
 
@@ -469,6 +485,9 @@ func TestReconcileNodeMarksNodeSyncFailedOnCleanupError(t *testing.T) {
 	nodeController := nodecontroller.NewController(wf, "clustermanager-node", nm)
 	g.Expect(nodeController.Start()).To(gomega.Succeed())
 	defer nodeController.Stop()
+	allocControllers := newAllocationControllers(wf)
+	g.Expect(allocControllers.Start()).To(gomega.Succeed())
+	defer allocControllers.Stop()
 
 	ncc := newNetworkClusterController(
 		netInfo,
@@ -478,6 +497,7 @@ func TestReconcileNodeMarksNodeSyncFailedOnCleanupError(t *testing.T) {
 		nm,
 		nil,
 		nodeController,
+		allocControllers,
 	)
 	g.Expect(ncc.init(ctx)).To(gomega.Succeed())
 
