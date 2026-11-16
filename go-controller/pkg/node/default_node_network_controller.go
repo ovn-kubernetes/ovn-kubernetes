@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"maps"
 	"net"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -55,7 +56,6 @@ import (
 	nodeutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/controller/apbroute"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/healthcheck"
-	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/retry"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	utilerrors "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
@@ -131,8 +131,12 @@ type DefaultNodeNetworkController struct {
 	// before, and that can't be read back from anywhere else.
 	conntrackEndpoints *conntrackEndpointTracker
 
-	// retry framework for nodes, used for updating routes/nftables rules for node PMTUD guarding
-	retryNodes *retry.RetryFramework
+	// controller for nodes, used for updating routes/nftables rules for node PMTUD guarding
+	nodeController controller.Controller
+	// remoteNodeIPs holds, per remote node name, the IPs last programmed in the
+	// PMTUD nftables sets, so that they can be removed once the node drops them
+	// or is deleted.
+	remoteNodeIPs sync.Map // map[string][]net.IP
 
 	dpuNodeLeaseManager *dpulease.Manager
 
@@ -145,6 +149,8 @@ type DefaultNodeNetworkController struct {
 	masqReconciler *masqueradeReconciler
 
 	nodeAddress net.IP
+
+	primaryDPUHostAddr string
 }
 
 func newDefaultNodeNetworkController(cnnci *CommonNodeNetworkControllerInfo, stopChan chan struct{},
@@ -189,6 +195,16 @@ func newDefaultNodeNetworkController(cnnci *CommonNodeNetworkControllerInfo, sto
 		MaxAttempts:    controller.InfiniteAttempts,
 		Threadiness:    1,
 	})
+	c.nodeController = controller.NewController("node-reconciler", &controller.ControllerConfig[corev1.Node]{
+		Informer:       c.watchFactory.NodeInformer(),
+		ObjNeedsUpdate: nodeNeedsUpdate,
+		OnDelete:       c.onNodeDelete,
+		Reconcile:      c.reconcileNode,
+		MaxAttempts:    controller.InfiniteAttempts,
+		// remoteNodeIPs and primaryDPUHostAddr are read and then written without
+		// holding a lock.
+		Threadiness: 1,
+	})
 	return c
 }
 
@@ -216,8 +232,6 @@ func NewDefaultNodeNetworkController(cnnci *CommonNodeNetworkControllerInfo, net
 	if err != nil {
 		return nil, err
 	}
-
-	nc.initRetryFrameworkForNode()
 
 	if config.IsModeDPUHost() || config.IsModeFull() {
 		err = setupRemoteNodeNFTSets()
@@ -248,10 +262,6 @@ func NewDefaultNodeNetworkController(cnnci *CommonNodeNetworkControllerInfo, net
 	}
 
 	return nc, nil
-}
-
-func (nc *DefaultNodeNetworkController) initRetryFrameworkForNode() {
-	nc.retryNodes = nc.newRetryFrameworkNode(factory.NodeType)
 }
 
 func (oc *DefaultNodeNetworkController) shouldReconcileNetworkChange(old, new util.NetInfo) bool {
@@ -933,6 +943,9 @@ func (nc *DefaultNodeNetworkController) Init(ctx context.Context) error {
 			return err
 		}
 		nc.Gateway = gw
+		if config.IsModeDPU() {
+			nc.primaryDPUHostAddr = node.Annotations[util.OVNNodePrimaryDPUHostAddr]
+		}
 	} else {
 		err = nc.initGatewayDPUHostPreStart(nc.nodeAddress, nodeAnnotator)
 		if err != nil {
@@ -1168,7 +1181,7 @@ func (nc *DefaultNodeNetworkController) Stop() {
 	}
 	close(nc.stopChan)
 	nc.stopChan = nil
-	controller.Stop(nc.conntrackEndpointSliceController)
+	controller.Stop(nc.conntrackEndpointSliceController, nc.nodeController)
 	nc.wg.Wait()
 }
 
@@ -1460,9 +1473,166 @@ func (nc *DefaultNodeNetworkController) WatchEndpointSlices() error {
 	return controller.Start(nc.conntrackEndpointSliceController)
 }
 
+func nodeNeedsUpdate(oldNode, newNode *corev1.Node) bool {
+	return oldNode == nil ||
+		!reflect.DeepEqual(oldNode.Status.Addresses, newNode.Status.Addresses) ||
+		!reflect.DeepEqual(oldNode.Annotations, newNode.Annotations)
+}
+
+// onNodeDelete runs for every deleted node, before it is reconciled. A node
+// deleted and created again with the same name may be reconciled only once, as
+// existing, so this is the only place where the deletion is always seen.
+func (nc *DefaultNodeNetworkController) onNodeDelete(node *corev1.Node) {
+	if config.IsModeDPU() && node.Name == nc.name {
+		// In DPU mode the process does not run on the deleted node, so nothing
+		// else stops it, and what it wrote to the Node object is only written at
+		// startup: exit and let the container restart against the new node.
+		ownNodeDeletedExit(nc.name)
+	}
+}
+
+// WatchNodes starts the controller maintaining the PMTUD flows and nftables
+// rules of the nodes.
 func (nc *DefaultNodeNetworkController) WatchNodes() error {
-	_, err := nc.retryNodes.WatchResource()
-	return err
+	return controller.StartWithInitialSync(func() error {
+		nodes, err := nc.watchFactory.GetNodes()
+		if err != nil {
+			return fmt.Errorf("failed to get nodes for initial sync: %w", err)
+		}
+		nodeObjs := make([]interface{}, len(nodes))
+		for i, n := range nodes {
+			nodeObjs[i] = n
+		}
+		return nc.syncNodes(nodeObjs)
+	}, nc.nodeController)
+}
+
+func (nc *DefaultNodeNetworkController) reconcileNode(_ context.Context, nodeName string) error {
+	node, err := nc.watchFactory.GetNode(nodeName)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nc.deleteNode(nodeName)
+		}
+		return fmt.Errorf("failed to get node %s from informer: %w", nodeName, err)
+	}
+
+	if node.Name == nc.name {
+		return nc.reconcileLocalNode(node)
+	}
+	return nc.reconcileRemoteNode(node)
+}
+
+func (nc *DefaultNodeNetworkController) reconcileLocalNode(node *corev1.Node) error {
+	if config.IsModeDPUHost() || config.IsModeFull() {
+		err := managementport.UpdateNoSNATSubnetsSets(node, util.ParseNodeDontSNATSubnetsList)
+		if err != nil {
+			return fmt.Errorf("error updating no snat subnets sets: %w", err)
+		}
+
+		// Sync nftables sets for no-overlay SNAT exemption in LGW mode.
+		// In SGW mode, OVN address sets are used instead.
+		if config.Default.Transport == types.NetworkTransportNoOverlay && config.NoOverlay.OutboundSNAT == types.NoOverlaySNATEnabled && config.Gateway.Mode == config.GatewayModeLocal {
+			hostAddrs, err := util.GetNodeHostAddrs(node)
+			if err != nil {
+				return fmt.Errorf("failed to get host addresses for node %s: %w", node.Name, err)
+			}
+			if err := syncNoOverlaySNATExemptNFTSets(hostAddrs); err != nil {
+				return fmt.Errorf("failed to sync no-overlay SNAT exemption nftables sets: %w", err)
+			}
+		}
+	}
+
+	// On the DPU, the host (DPUHost) publishes its primary interface address via the
+	// primary-dpu-host-addr annotation. When it changes we must rebuild
+	// node-primary-ifaddr and l3-gateway-config from it: only the DPU holds the
+	// OVS/OVN state (chassis, bridge, MAC, ofport) required to author l3-gateway-config,
+	// so the host cannot do it. We piggyback on this existing local-node watch rather
+	// than registering a separate node informer handler.
+	if config.OvnKubeNode.Mode == types.NodeModeDPU {
+		dpuHostAddr := node.Annotations[util.OVNNodePrimaryDPUHostAddr]
+		if dpuHostAddr != nc.primaryDPUHostAddr {
+			if dpuHostAddr != "" {
+				if gw, ok := nc.Gateway.(*gateway); ok && gw.nodeIPManager != nil {
+					if err := gw.nodeIPManager.updateGatewayAddressAnnotations(); err != nil {
+						return fmt.Errorf("failed to update gateway annotations after primary-dpu-host-addr change for node %s: %w", node.Name, err)
+					}
+				}
+			}
+			nc.primaryDPUHostAddr = dpuHostAddr
+		}
+	}
+	return nil
+}
+
+func (nc *DefaultNodeNetworkController) reconcileRemoteNode(node *corev1.Node) error {
+	newIPsv4, newIPsv6, err := util.GetNodeAddresses(config.IPv4Mode, config.IPv6Mode, node)
+	if err != nil {
+		return fmt.Errorf("failed to get addresses for node %q: %w", node.Name, err)
+	}
+
+	newIPs := make([]net.IP, 0, len(newIPsv4)+len(newIPsv6))
+	newIPs = append(newIPs, newIPsv4...)
+	newIPs = append(newIPs, newIPsv6...)
+
+	ipsToKeep := map[string]bool{}
+	for _, ip := range newIPs {
+		ipsToKeep[ip.String()] = true
+	}
+
+	if config.IsModeDPUHost() || config.IsModeFull() {
+		if oldIPsVal, ok := nc.remoteNodeIPs.Load(node.Name); ok {
+			oldIPs := oldIPsVal.([]net.IP)
+			ipsToRemove := make([]net.IP, 0)
+			for _, oldIP := range oldIPs {
+				if !ipsToKeep[oldIP.String()] {
+					ipsToRemove = append(ipsToRemove, oldIP)
+				}
+			}
+			if len(ipsToRemove) > 0 {
+				if err := removePMTUDNodeNFTRules(ipsToRemove); err != nil {
+					return fmt.Errorf("error removing node %q stale NFT rules during update: %w", node.Name, err)
+				}
+			}
+		}
+	}
+
+	if err := nc.addOrUpdateNode(node); err != nil {
+		return fmt.Errorf("failed to add or update node %q: %w", node.Name, err)
+	}
+
+	nc.remoteNodeIPs.Store(node.Name, newIPs)
+	return nil
+}
+
+func (nc *DefaultNodeNetworkController) deleteNode(nodeName string) error {
+	if config.IsModeDPU() && nodeName == nc.name {
+		// onNodeDelete exits the process, there is nothing to clean up
+		return nil
+	}
+
+	gw := nc.Gateway.(*gateway)
+	gw.openflowManager.deleteFlowsByKey(getPMTUDKey(nodeName))
+
+	if oldIPsVal, ok := nc.remoteNodeIPs.Load(nodeName); ok {
+		if config.IsModeDPUHost() || config.IsModeFull() {
+			ipsToRemove := oldIPsVal.([]net.IP)
+			klog.Infof("Deleting NFT elements for node: %s", nodeName)
+			if err := removePMTUDNodeNFTRules(ipsToRemove); err != nil {
+				return fmt.Errorf("failed to delete nftables rules for PMTUD blocking for node %q: %w", nodeName, err)
+			}
+		}
+		nc.remoteNodeIPs.Delete(nodeName)
+	}
+
+	if nodeName == nc.name && (config.IsModeDPUHost() || config.IsModeFull()) {
+		if err := managementport.UpdateNoSNATSubnetsSets(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: nodeName}}, func(_ *corev1.Node) ([]string, error) {
+			return []string{}, nil
+		}); err != nil {
+			return fmt.Errorf("failed to reset no-SNAT subnets for node %q: %w", nodeName, err)
+		}
+	}
+
+	return nil
 }
 
 // addOrUpdateNode handles creating flows or nftables rules for each node to handle PMTUD
@@ -1545,35 +1715,6 @@ var ownNodeDeletedExit = func(nodeName string) {
 	klog.FlushAndExit(klog.ExitFlushTimeout, 1)
 }
 
-func (nc *DefaultNodeNetworkController) deleteNode(node *corev1.Node) {
-	if config.IsModeDPU() && node.Name == nc.name {
-		// In DPU mode the process does not run on the deleted node, so nothing
-		// else stops it, and what it wrote to the Node object is only written at
-		// startup: exit and let the container restart against the new node.
-		ownNodeDeletedExit(nc.name)
-		return
-	}
-
-	gw := nc.Gateway.(*gateway)
-	gw.openflowManager.deleteFlowsByKey(getPMTUDKey(node.Name))
-
-	// Use GetNodeAddresses to get node IPs
-	ipsv4, ipsv6, err := util.GetNodeAddresses(config.IPv4Mode, config.IPv6Mode, node)
-	if err != nil {
-		klog.Errorf("Failed to get node addresses for node %q: %v", node.Name, err)
-		return
-	}
-
-	ipsToRemove := make([]net.IP, 0, len(ipsv4)+len(ipsv6))
-	ipsToRemove = append(ipsToRemove, ipsv4...)
-	ipsToRemove = append(ipsToRemove, ipsv6...)
-
-	klog.Infof("Deleting NFT elements for node: %s", node.Name)
-	if err := removePMTUDNodeNFTRules(ipsToRemove); err != nil {
-		klog.Errorf("Failed to delete nftables rules for PMTUD blocking for node %q: %v", node.Name, err)
-	}
-}
-
 var nodeIPSets = []knftables.Object{
 	&knftables.Set{
 		Name: types.NFTRemoteNodeIPsv4,
@@ -1610,6 +1751,11 @@ func (nc *DefaultNodeNetworkController) syncNodes(objs []interface{}) error {
 		}
 
 		// Process IPv4 addresses
+		nodeIPs := make([]net.IP, 0, len(ipsv4)+len(ipsv6))
+		nodeIPs = append(nodeIPs, ipsv4...)
+		nodeIPs = append(nodeIPs, ipsv6...)
+		nc.remoteNodeIPs.Store(node.Name, nodeIPs)
+
 		for _, nodeIP := range ipsv4 {
 			keepNFTSetElems = append(keepNFTSetElems, &knftables.Element{
 				Set: types.NFTRemoteNodeIPsv4,
