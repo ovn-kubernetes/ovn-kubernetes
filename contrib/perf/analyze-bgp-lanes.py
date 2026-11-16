@@ -8,7 +8,7 @@ differs in one variable, so the interesting numbers are ratios rather than
 absolutes. Reading those out by hand took long enough, and got miscounted
 often enough, to be worth automating.
 
-Two classes of mistake it exists to prevent, both of which produced wrong
+Three classes of mistake it exists to prevent, all of which produced wrong
 conclusions before:
 
   - A histogram quantile pinned at its last finite bucket is a floor, not a
@@ -16,6 +16,11 @@ conclusions before:
   - A snapshot taken while frr-k8s is still reloading reads low. The hook
     records whether the nodes had converged; readings that had not are
     excluded from the derived figures rather than averaged in.
+  - A quantile interpolated inside a bucket only locates the value within
+    that bucket. The buckets double in width, so a lane twice the size of
+    another reads as exactly twice the quantile whatever really changed.
+    Lanes are compared on means, from the histograms' _sum and _count, and
+    quantiles are shown as the bucket they fall in.
 
 Usage:
     analyze-bgp-lanes.py <artifact-dir> [-o report.md]
@@ -37,6 +42,11 @@ RA_QUEUE = "clustermanager routeadvertisements controller"
 # histogram. These mirror the definitions in pkg/metrics.
 WORKQUEUE_BUCKETS = [0.001 * 2**k for k in range(20)]
 RECONCILE_BUCKETS = [0.005 * 2**k for k in range(14)]
+
+# Reconcile workers per lane, as set by ra-threadiness in the performance-test
+# workflow matrix. Lanes not listed run the binary default of 1. Only lanes
+# with the same worker count share a scaling fit.
+WORKERS = {"bgp-ra-density-threads": 4}
 
 
 def load(lane_dir, name):
@@ -68,6 +78,27 @@ def peak(docs, **labels):
     return max(vals) if vals else None
 
 
+def last(docs, **labels):
+    """The latest sample: the final value of a cumulative series."""
+    hits = [
+        d for d in docs
+        if all(d.get("labels", {}).get(k) == v for k, v in labels.items())
+    ]
+    return max(hits, key=lambda d: d.get("timestamp", ""))["value"] if hits else None
+
+
+def bucket_range(value, buckets, unit="s"):
+    """The bucket a quantile was interpolated in, which is all it can tell."""
+    if value is None:
+        return "n/a"
+    lo = 0.0
+    for b in buckets:
+        if value <= b + 1e-9:
+            return f"{lo:g}-{b:g}{unit}"
+        lo = b
+    return f">{lo:g}{unit}"
+
+
 def saturated(value, buckets):
     """A quantile sitting exactly on a bucket edge is at the instrument's limit."""
     return value is not None and any(abs(value - b) < 1e-9 for b in buckets)
@@ -87,6 +118,7 @@ def collect(lane_dir):
     """Everything one lane contributes, keyed so the report can stay dumb."""
     h = hook(lane_dir)
     lane = {"name": pathlib.Path(lane_dir).name, "hook": h}
+    lane["workers"] = WORKERS.get(lane["name"], 1)
 
     if h:
         nodes = h.get("frrNodeStates") or []
@@ -128,6 +160,8 @@ def collect(lane_dir):
         depth=peak(load(lane_dir, "ovnkubeWorkqueueDepth"), name=RA_QUEUE),
         adds=peak(load(lane_dir, "ovnkubeWorkqueueAddRate"), name=RA_QUEUE),
         retries=peak(load(lane_dir, "ovnkubeWorkqueueRetryRate"), name=RA_QUEUE),
+        wait_mean=last(load(lane_dir, "ovnkubeWorkqueueQueueDurationMean"), name=RA_QUEUE),
+        work_mean=last(load(lane_dir, "ovnkubeWorkqueueWorkDurationMean"), name=RA_QUEUE),
     )
 
     rec = peak(load(lane_dir, "raReconcileDuration99th"))
@@ -135,6 +169,7 @@ def collect(lane_dir):
         reconcile_p99=rec,
         reconcile_saturated=saturated(rec, RECONCILE_BUCKETS),
         reconciles=peak(load(lane_dir, "raReconcileCount")),
+        reconcile_mean=last(load(lane_dir, "raReconcileDurationMean")),
         nad_updates=peak(load(lane_dir, "raNADUpdates")),
     )
 
@@ -205,23 +240,30 @@ def shape_table(lanes):
 
 def queue_table(lanes):
     out = ["## RouteAdvertisements workqueue", "",
-           "| Lane | Wait p99 | Work p99 | Wait/work | Depth | Adds/s | Reconciles | Reconcile p99 |",
-           "|---|---|---|---|---|---|---|---|"]
+           "Means are exact. A p99 is shown as the histogram bucket it was interpolated in, "
+           "because that is all it can tell: the buckets double in width.", "",
+           "| Lane | Workers | Wait mean | Work mean | Wait/work | Wait p99 | Work p99 "
+           "| Depth | Adds/s | Reconciles | Reconcile mean |",
+           "|---|---|---|---|---|---|---|---|---|---|---|"]
     for l in lanes:
         out.append(
-            f"| `{l['name']}` "
-            f"| {fmt(l['wait'], 's', 3, l['wait_saturated'])} "
-            f"| {fmt(l['work'], 's', 3, l['work_saturated'])} "
-            f"| {fmt(ratio(l['wait'], l['work']), 'x', 1)} "
+            f"| `{l['name']}` | {l['workers']} "
+            f"| {fmt(l['wait_mean'], 's', 3)} "
+            f"| {fmt(l['work_mean'], 's', 3)} "
+            f"| {fmt(ratio(l['wait_mean'], l['work_mean']), 'x', 1)} "
+            f"| {bucket_range(l['wait'], WORKQUEUE_BUCKETS)} "
+            f"| {bucket_range(l['work'], WORKQUEUE_BUCKETS)} "
             f"| {fmt(l['depth'], '', 0)} "
             f"| {fmt(l['adds'], '', 2)} "
             f"| {fmt(l['reconciles'], '', 0)} "
-            f"| {fmt(l['reconcile_p99'], 's', 3, l['reconcile_saturated'])} |"
+            f"| {fmt(l['reconcile_mean'], 's', 3)} |"
         )
     if any(l["wait_saturated"] or l["work_saturated"] or l["reconcile_saturated"] for l in lanes):
         out += ["", "> **Saturated** means the quantile landed exactly on the histogram's last "
                 "finite bucket. The true value is at least that and cannot be read; widen the "
                 "buckets before trusting any comparison involving it."]
+    if not any(l.get("wait_mean") for l in lanes):
+        out += ["", "> No lane recorded the mean queries: these artifacts predate them."]
     return out
 
 
@@ -257,51 +299,45 @@ def support_table(lanes):
 
 
 def model_table(lanes):
-    """wait should scale with nodes x RAs, work with nodes alone.
+    """Work should scale with nodes alone, wait with RAs x work.
 
-    Only valid at a fixed worker count, so lanes are grouped by their measured
-    work-per-node rather than by name: a lane running more reconcile workers
-    has a different per-item cost and does not belong in the same fit.
+    Only valid at a fixed worker count, so only single-worker lanes are fitted:
+    a lane running more reconcile workers is compared in the axis table.
     """
-    usable = [l for l in lanes if l.get("wait") and l.get("work") and l.get("nodes")
-              and l.get("ras") and not l["wait_saturated"] and not l["work_saturated"]]
     out = ["## Scaling model", "",
-           "Work duration is one apiserver write per node, so it should track node count "
-           "alone. Queue wait is every object queueing behind every other through one worker, "
-           "so it should track the product. Saturated lanes are omitted.", ""]
+           "Work is one apiserver write per node, so work per node should be constant. Wait "
+           "is each item queueing behind the others through the workers, so wait divided by "
+           "RAs x work should be constant too. Fitted on the single-worker lanes' means.", ""]
+    usable = [l for l in lanes if l.get("wait_mean") and l.get("work_mean")
+              and l.get("nodes") and l.get("ras")]
     if not usable:
-        return out + ["No lane produced an unsaturated pair."]
+        return out + ["No lane recorded the mean queries. The p99s only locate a bucket, "
+                      "so they are not fitted."]
 
-    groups = defaultdict(list)
+    def per_node(l):
+        return l["work_mean"] / l["nodes"]
+
+    def queue_factor(l):
+        return l["wait_mean"] / (l["ras"] * l["work_mean"])
+
+    out += ["| Lane | Workers | Nodes | RAs | Work mean / node | Wait / (RAs x work) |",
+            "|---|---|---|---|---|---|"]
     for l in usable:
-        groups[round(l["work"] / l["nodes"], 3)].append(l)
-    baseline = max(groups, key=lambda k: len(groups[k]))
+        out.append(f"| `{l['name']}` | {l['workers']} | {l['nodes']} | {l['ras']} "
+                   f"| {per_node(l):.4f} s | {queue_factor(l):.3f} |")
 
-    out += ["| Lane | Nodes x RAs | Wait / object | Work / node | Group |",
-            "|---|---|---|---|---|"]
-    for key in sorted(groups, key=lambda k: (k != baseline, k)):
-        for l in groups[key]:
-            tag = "baseline" if key == baseline else "**differs**"
-            out.append(f"| `{l['name']}` | {l['nodes'] * l['ras']} "
-                       f"| {l['wait'] / (l['nodes'] * l['ras']):.4f} s "
-                       f"| {l['work'] / l['nodes']:.4f} s | {tag} |")
+    fit = [l for l in usable if l["workers"] == 1]
 
-    fit = groups[baseline]
+    def spread(vals):
+        return (max(vals) - min(vals)) / (sum(vals) / len(vals)) * 100
+
     if len(fit) >= 2:
-        po = [l["wait"] / (l["nodes"] * l["ras"]) for l in fit]
-        pn = [l["work"] / l["nodes"] for l in fit]
+        pn = [per_node(l) for l in fit]
+        qf = [queue_factor(l) for l in fit]
         out += ["",
-                f"Across the {len(fit)} baseline lanes: wait/object {min(po):.4f} to {max(po):.4f} "
-                f"({(max(po) - min(po)) / (sum(po) / len(po)) * 100:.1f}%), "
-                f"work/node {min(pn):.4f} to {max(pn):.4f} "
-                f"({(max(pn) - min(pn)) / (sum(pn) / len(pn)) * 100:.1f}%)."]
-    outliers = [l for k, g in groups.items() if k != baseline for l in g]
-    if outliers:
-        verb = "sits" if len(outliers) == 1 else "sit"
-        out += ["",
-                "> " + ", ".join(f"`{l['name']}`" for l in outliers) +
-                f" {verb} outside the fit: a different per-item cost means a different "
-                "configuration, so it is compared in the axis table instead."]
+                f"Across the {len(fit)} single-worker lanes: work/node {min(pn):.4f} to "
+                f"{max(pn):.4f} s ({spread(pn):.1f}%), wait/(RAs x work) {min(qf):.3f} to "
+                f"{max(qf):.3f} ({spread(qf):.1f}%)."]
     return out
 
 
@@ -315,21 +351,19 @@ def axes_table(lanes):
         ("threadiness", "bgp-ra-density-deep", "bgp-ra-density-threads", "1 to 4 reconcile workers"),
     ]
     out = ["## Axis isolation", "",
-           "Each row compares two lanes differing in exactly one variable.", "",
-           "| Variable | From | To | Wait p99 | Work p99 | Reconciles | What changed |",
+           "Each row compares two lanes differing in exactly one variable, on means.", "",
+           "| Variable | From | To | Wait mean | Work mean | Reconciles | What changed |",
            "|---|---|---|---|---|---|---|"]
     for label, a, b, note in pairs:
         la, lb = by.get(a), by.get(b)
         if not la or not lb:
             continue
+
         def rr(key):
-            if la.get(key) and lb.get(key):
-                sat = la.get(key + "_saturated") or lb.get(key + "_saturated")
-                return f"{lb[key]/la[key]:.2f}x" + (" (saturated)" if sat else "")
-            return "n/a"
-        recs = (f"{lb['reconciles']/la['reconciles']:.2f}x"
-                if la.get("reconciles") and lb.get("reconciles") else "n/a")
-        out.append(f"| {label} | `{a}` | `{b}` | {rr('wait')} | {rr('work')} | {recs} | {note} |")
+            return f"{lb[key] / la[key]:.2f}x" if la.get(key) and lb.get(key) else "n/a"
+
+        out.append(f"| {label} | `{a}` | `{b}` | {rr('wait_mean')} | {rr('work_mean')} "
+                   f"| {rr('reconciles')} | {note} |")
     return out
 
 

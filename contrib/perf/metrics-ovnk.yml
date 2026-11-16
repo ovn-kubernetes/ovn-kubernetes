@@ -44,6 +44,19 @@
 - query: sum(rate(ovnkube_clustermanager_workqueue_retries_total[2m])) by (name) > 0
   metricName: ovnkubeWorkqueueRetryRate
 
+# Means, from the histograms' _sum and _count. The 99th percentiles above are
+# interpolated inside buckets that double in width, so when most items land in
+# one bucket the quantile reads as 99% of the way through it whatever the true
+# values are, and a lane twice the size of another reads as exactly twice the
+# value. Means are exact, so they are what lanes are compared on. Cumulative
+# rather than rate() for the same reason as the RouteAdvertisements queries
+# below: the cluster is new, so the totals are the workload's.
+- query: sum(ovnkube_clustermanager_workqueue_queue_duration_seconds_sum) by (name) / sum(ovnkube_clustermanager_workqueue_queue_duration_seconds_count) by (name) > 0
+  metricName: ovnkubeWorkqueueQueueDurationMean
+
+- query: sum(ovnkube_clustermanager_workqueue_work_duration_seconds_sum) by (name) / sum(ovnkube_clustermanager_workqueue_work_duration_seconds_count) by (name) > 0
+  metricName: ovnkubeWorkqueueWorkDurationMean
+
 # ---------------------------------------------------------------------------
 # RouteAdvertisements controller
 # ---------------------------------------------------------------------------
@@ -59,6 +72,9 @@
 
 - query: sum(ovnkube_clustermanager_route_advertisement_reconcile_duration_seconds_count) by (result)
   metricName: raReconcileCount
+
+- query: sum(ovnkube_clustermanager_route_advertisement_reconcile_duration_seconds_sum) / sum(ovnkube_clustermanager_route_advertisement_reconcile_duration_seconds_count) > 0
+  metricName: raReconcileDurationMean
 
 - query: sum(ovnkube_clustermanager_route_advertisement_frr_configurations) by (name)
   metricName: raGeneratedFRRConfigurations
