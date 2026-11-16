@@ -101,6 +101,14 @@ and one row per adjacent pair isolating a variable. A quantile sitting on the
 last finite histogram bucket is reported as saturated rather than as a value,
 and snapshots that had not converged are excluded from the derived figures.
 
+On pull requests the `performance-report` workflow runs it once the
+performance lanes finish, and posts the result in the performance results
+comment as the `bgp-ra-lanes-analysis` section, next to each lane's CPU and
+memory report. Like the rest of that workflow it runs from the default branch,
+so a change to the analysis only reaches pull request comments once it merges.
+
+To run it by hand, for instance on a branch that changes it:
+
 ```bash
 for lane in bgp-ra-density bgp-ra-density-wide bgp-ra-density-deep bgp-ra-churn bgp-ra-density-threads; do
   gh run download <run-id> -n "${lane}-performance-test-data-<run-id>" -D "${lane}"
