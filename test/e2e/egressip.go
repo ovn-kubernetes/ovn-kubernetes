@@ -4197,6 +4197,75 @@ spec:
 				"Both EgressIPs should have been assigned despite orphan node %s", orphanNodeName)
 		})
 
+		// Runs across every network-type entry of this subtree, covering both the default
+		// network and primary UDNs.
+		ginkgo.It("Should keep EgressIP functional after the egress node is rebooted", func() {
+			ginkgo.By("0. Labeling egress1Node as egress-assignable")
+			e2enode.AddOrUpdateLabelOnNode(f.ClientSet, egress1Node.name, "k8s.ovn.org/egress-assignable", "")
+			defer e2enode.RemoveLabelOffNode(f.ClientSet, egress1Node.name, "k8s.ovn.org/egress-assignable")
+
+			ginkgo.By("1. Creating an EgressIP object assigned to egress1Node")
+			podNamespace := f.Namespace
+			labels := map[string]string{"name": f.Namespace.Name}
+			updateNamespaceLabels(f, podNamespace, labels)
+			var egressIP net.IP
+			var err error
+			if isIPv6TestRun {
+				egressIP, err = allocators.NewPrimaryIPv6(egress1Node.name)
+			} else {
+				egressIP, err = allocators.NewPrimaryIPv4(egress1Node.name)
+			}
+			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "must allocate egress IP")
+			egressIPConfig := createEIPManifest(egressIPName, podEgressLabel, labels, egressIP.String())
+			if err := os.WriteFile(egressIPYaml, []byte(egressIPConfig), 0644); err != nil {
+				framework.Failf("Unable to write EgressIP config: %v", err)
+			}
+			defer os.Remove(egressIPYaml)
+			e2ekubectl.RunKubectlOrDie("default", "create", "-f", egressIPYaml)
+
+			ginkgo.By("2. Verifying the EgressIP is assigned to egress1Node and creating a matching pod on a non-egress node")
+			verifyEgressIPStatusLengthEquals(1, func(statuses []egressIPStatus) bool {
+				return statuses[0].Node == egress1Node.name
+			})
+			// Place the pod on pod1Node (not the egress node) so it survives the egress node reboot.
+			_, err = createGenericPodWithLabel(f, pod1Name, pod1Node.name, f.Namespace.Name, getAgnHostHTTPPortBindFullCMD(clusterNetworkHTTPPort), podEgressLabel)
+			framework.ExpectNoError(err, "failed to create pod matching EgressIP selector")
+			_, err = getPodIPWithRetry(f.ClientSet, isIPv6TestRun, f.Namespace.Name, pod1Name)
+			framework.ExpectNoError(err, "failed to get pod IP")
+
+			ginkgo.By("3. Verifying egress traffic uses the EgressIP before reboot")
+			err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(primaryTargetExternalContainer, f.Namespace.Name, pod1Name, true, []string{egressIP.String()}))
+			framework.ExpectNoError(err, "Step 3. egress traffic should use the EgressIP before reboot, failed: %v", err)
+
+			ginkgo.By("4. Rebooting egress1Node (shutdown then start)")
+			err = infraprovider.Get().ShutdownNode(egress1Node.name)
+			framework.ExpectNoError(err, "failed to shut down egress node %s", egress1Node.name)
+			nodeBackUp := false
+			defer func() {
+				if nodeBackUp {
+					return
+				}
+				if startErr := infraprovider.Get().StartNode(egress1Node.name); startErr != nil {
+					framework.Logf("cleanup: failed to start node %s: %v", egress1Node.name, startErr)
+					return
+				}
+				waitForNodeReadyState(f, egress1Node.name, 10*time.Minute, true)
+			}()
+			waitForNodeReadyState(f, egress1Node.name, 5*time.Minute, false)
+			err = infraprovider.Get().StartNode(egress1Node.name)
+			framework.ExpectNoError(err, "failed to start egress node %s", egress1Node.name)
+			waitForNodeReadyState(f, egress1Node.name, 10*time.Minute, true)
+			nodeBackUp = true
+			framework.ExpectNoError(waitOVNKubernetesHealthy(f), "OVN-Kubernetes should be healthy after the egress node reboot")
+
+			ginkgo.By("5. Verifying the EgressIP is re-assigned to egress1Node and egress traffic still uses it after reboot")
+			verifyEgressIPStatusLengthEquals(1, func(statuses []egressIPStatus) bool {
+				return statuses[0].Node == egress1Node.name
+			})
+			err = wait.PollImmediate(retryInterval, retryTimeout, targetExternalContainerAndTest(primaryTargetExternalContainer, f.Namespace.Name, pod1Name, true, []string{egressIP.String()}))
+			framework.ExpectNoError(err, "Step 5. egress traffic should use the EgressIP after reboot, failed: %v", err)
+		})
+
 		ginkgo.It("should prevent duplicate MAC responses when egress node is rebooted", func() {
 			if !isNetworkSegmentationEnabled() {
 				ginkgo.Skip("network segmentation is disabled")
