@@ -18,6 +18,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 
@@ -345,6 +346,50 @@ var _ = Describe("Node IP Handler DPUHost event filtering", func() {
 		Consistently(func() bool {
 			return nodeHasAddress(tc.fakeClient, nodeName, ovntest.MustParseIPNet(someAddr))
 		}, 3).Should(BeFalse())
+	})
+})
+
+var _ = Describe("Node IP Handler address annotation updates", func() {
+	var tc *testCtx
+
+	const nodeName = "node1"
+
+	BeforeEach(func() {
+		Expect(config.PrepareTestConfig()).To(Succeed())
+		config.OvnKubeNode.Mode = ovntypes.NodeModeDPUHost
+		fexec := ovntest.NewFakeExec()
+		Expect(util.SetExec(fexec)).ShouldNot(HaveOccurred())
+		tc = configureKubeOVNContext(nodeName, false)
+	})
+
+	AfterEach(func() {
+		tc.watchFactory.Shutdown()
+		tc.ovsCleanup.Cleanup()
+		util.ResetRunner()
+	})
+
+	It("restores a missing primary-dpu-host-addr annotation when the host CIDRs did not change", func() {
+		Expect(tc.ipManager.assignCIDRs(sets.New[string]("10.1.1.10/24", "2001:db8::10/64"))).To(BeTrue())
+		Expect(tc.ipManager.doNodeHostCIDRsMatch()).To(BeTrue())
+		Expect(tc.ipManager.shouldUpdateNodeAddressAnnotations(false)).To(BeTrue())
+
+		node, err := tc.fakeClient.CoreV1().Nodes().Get(context.TODO(), nodeName, metav1.GetOptions{})
+		Expect(err).NotTo(HaveOccurred())
+		node.Annotations[util.OVNNodePrimaryDPUHostAddr] = `{"ipv4":"10.1.1.10/24","ipv6":"2001:db8::10/64"}`
+		_, err = tc.fakeClient.CoreV1().Nodes().Update(context.TODO(), node, metav1.UpdateOptions{})
+		Expect(err).NotTo(HaveOccurred())
+
+		Eventually(func() bool {
+			return tc.ipManager.shouldUpdateNodeAddressAnnotations(false)
+		}, 5).Should(BeFalse())
+	})
+
+	It("does not restore primary-dpu-host-addr outside DPUHost mode", func() {
+		config.OvnKubeNode.Mode = ovntypes.NodeModeFull
+		Expect(tc.ipManager.assignCIDRs(sets.New[string]("10.1.1.10/24", "2001:db8::10/64"))).To(BeTrue())
+
+		Expect(tc.ipManager.doNodeHostCIDRsMatch()).To(BeTrue())
+		Expect(tc.ipManager.shouldUpdateNodeAddressAnnotations(false)).To(BeFalse())
 	})
 })
 
