@@ -5,6 +5,7 @@ package evpn
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"sync"
@@ -25,6 +26,7 @@ import (
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
 	adminpolicybasedroutefake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1/apis/clientset/versioned/fake"
 	egressipfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/clientset/versioned/fake"
 	egressservicefake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1/apis/clientset/versioned/fake"
@@ -151,6 +153,72 @@ var _ = Describe("EVPN node controller", func() {
 
 			Expect(ctrl.reconcile(context.Background(), vtepName)).To(Succeed())
 			ndm.AssertExpectations(GinkgoT())
+		})
+
+		It("returns missing OVS link errors until the link becomes available", func() {
+			vtep := &vtepv1.VTEP{
+				ObjectMeta: metav1.ObjectMeta{Name: vtepName},
+				Spec: vtepv1.VTEPSpec{
+					CIDRs: []vtepv1.CIDR{"100.64.0.0/24"},
+					Mode:  vtepv1.VTEPModeUnmanaged,
+				},
+			}
+			node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: nodeName}}
+			kubeMock := &kubemocks.Interface{}
+			kubeMock.On("SetAnnotationsOnNodeWithFieldManager", nodeName, mock.Anything, vtepAnnotationFieldManager).Return(nil)
+			lister := &vteplistmocks.VTEPLister{}
+			lister.On("Get", vtepName).Return(vtep, nil)
+			informer := &vtepinfmocks.VTEPInformer{}
+			informer.On("Lister").Return(lister)
+			wf := &factorymocks.NodeWatchFactory{}
+			wf.On("VTEPInformer").Return(informer)
+			wf.On("GetNode", nodeName).Return(node, nil)
+			ndm := &ndmmocks.Interface{}
+			ndm.On("EnsureLink", mock.Anything).Return(nil)
+			ndm.On("DeleteLink", mock.Anything).Return(nil)
+			netInfo := &multinetworkmocks.NetInfo{}
+			netInfo.On("EVPNVTEPName").Return(vtepName)
+			netInfo.On("EVPNMACVRFVID").Return(100)
+			netInfo.On("EVPNMACVRFVNI").Return(int32(10100))
+			netInfo.On("EVPNIPVRFVID").Return(0)
+			netInfo.On("EVPNIPVRFVNI").Return(int32(0))
+			netInfo.On("GetNetworkName").Return("mynet")
+			netInfo.On("GetNetworkID").Return(5)
+			netInfo.On("GetNetworkScopedSwitchName", mock.Anything).Return("mynet_ovn_layer2_switch")
+			ctrl := &Controller{
+				nodeName: nodeName, watchFactory: wf, kube: kubeMock, ndm: ndm,
+				networkMgr: &networkmanager.FakeNetworkManager{
+					PrimaryNetworks: map[string]util.NetInfo{"test-ns": netInfo},
+				},
+				ovsClient: ovsClient, vtepController: &controller.FakeController{},
+				nadVTEPInfo: make(map[string]string), svisByBridge: make(map[string]sets.Set[string]),
+				addressManager: &fakeAddressManager{ips: []net.IP{net.ParseIP("100.64.0.1")}},
+			}
+			nlMock := &mocks.NetLinkOps{}
+			util.SetNetLinkOpMockInst(nlMock)
+			DeferCleanup(util.ResetNetLinkOpMockInst)
+			portName := GetEVPNOVSPortName(netInfo)
+			bridgeName := GetEVPNBridgeName(vtepName)
+			port := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: portName}}
+			bridge := &netlink.Bridge{LinkAttrs: netlink.LinkAttrs{Name: bridgeName}}
+			nlMock.On("LinkByName", portName).Return(nil, netlink.LinkNotFoundError{}).Once()
+			nlMock.On("LinkByName", portName).Return(port, nil)
+			nlMock.On("LinkByName", bridgeName).Return(nil, netlink.LinkNotFoundError{}).Once()
+			nlMock.On("LinkByName", bridgeName).Return(bridge, nil)
+			nlMock.On("LinkSetMaster", port, bridge).Return(nil)
+			nlMock.On("LinkSetUp", port).Return(nil)
+			nlMock.On("BridgeVlanAdd", port, uint16(100), true, true, false, true).Return(nil)
+
+			By("returning an error while either the OVS port or its bridge is missing")
+			for range 2 {
+				err := ctrl.reconcile(context.Background(), vtepName)
+				var linkNotFound netlink.LinkNotFoundError
+				Expect(errors.As(err, &linkNotFound)).To(BeTrue())
+			}
+			By("completing setup once both links are available")
+			Expect(ctrl.reconcile(context.Background(), vtepName)).To(Succeed())
+			Expect(ctrl.vtepController.(*controller.FakeController).Reconciles).To(BeEmpty())
+			nlMock.AssertExpectations(GinkgoT())
 		})
 
 		It("cleans up devices for a managed VTEP", func() {
