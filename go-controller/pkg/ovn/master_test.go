@@ -715,12 +715,6 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 
 			subnet := ovntest.MustParseIPNet(node1.NodeSubnet)
 
-			// Get node with the latest annotations set
-			testNode, err := fakeClient.KubeClient.CoreV1().Nodes().Get(context.TODO(), testNode.Name, metav1.GetOptions{})
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			err = oc.syncNodeGateway(testNode)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
 			skipSnat := false
 			expectedNBDatabaseState = addNodeLogicalFlowsWithServiceController(nil, expectedOVNClusterRouter, expectedNodeSwitch,
 				expectedClusterRouterPortGroup, expectedClusterPortGroup, &node1, oc.svcTemplateSupport)
@@ -749,6 +743,8 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 			_, err := config.InitConfig(ctx, nil, nil)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			clusterSubnets := startFakeController(oc, wg)
+			// wait for the controller to finish adding the node, the transit resources are created last
+			gomega.Eventually(oc.nbClient).Should(libovsdbtest.HaveDataSubset(expectedLocalTransitResources(expectedOVNClusterRouter.DeepCopy())...))
 
 			subnet := ovntest.MustParseIPNet(node1.NodeSubnet)
 			// add stale route
@@ -801,11 +797,6 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 			clusterSubnets := startFakeController(oc, wg)
 
 			subnet := ovntest.MustParseIPNet(node1.NodeSubnet)
-			// Get node with the latest annotations set
-			testNode, err := fakeClient.KubeClient.CoreV1().Nodes().Get(context.TODO(), testNode.Name, metav1.GetOptions{})
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			err = oc.syncNodeGateway(testNode)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 			skipSnat := false
 			expectedNBDatabaseState = addNodeLogicalFlowsWithServiceController(nil, expectedOVNClusterRouter, expectedNodeSwitch,
@@ -927,12 +918,8 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 					gomega.Expect(ConfigureAdvertisedNetworkIsolation(nbClient)).To(gomega.Succeed())
 				}
 				startDefaultNodeController(oc)
-				gomega.Eventually(func() error {
-					_, err := libovsdbops.GetLogicalRouter(nbClient, &nbdb.LogicalRouter{
-						Name: types.GWRouterPrefix + node1.Name,
-					})
-					return err
-				}).Should(gomega.Succeed())
+				// wait for the controller to finish adding the node, the transit resources are created last
+				gomega.Eventually(oc.nbClient).Should(libovsdbtest.HaveDataSubset(expectedLocalTransitResources(expectedOVNClusterRouter.DeepCopy())...))
 
 				// add stale SNATs from pods to nodes on wrong node
 				GR := &nbdb.LogicalRouter{
@@ -1096,12 +1083,8 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 			_, err := config.InitConfig(ctx, nil, nil)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			startFakeController(oc, wg)
-
-			// Get node with the latest annotations set
-			testNode, err := fakeClient.KubeClient.CoreV1().Nodes().Get(context.TODO(), testNode.Name, metav1.GetOptions{})
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			err = oc.syncNodeGateway(testNode)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			// wait for the controller to finish adding the node, the transit resources are created last
+			gomega.Eventually(oc.nbClient).Should(libovsdbtest.HaveDataSubset(expectedLocalTransitResources(expectedOVNClusterRouter.DeepCopy())...))
 
 			// inject transient problem, nbdb is down
 			oc.nbClient.Close()
@@ -1204,11 +1187,8 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 			_, err := config.InitConfig(ctx, nil, nil)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			startFakeController(oc, wg)
-
-			testNode, err := fakeClient.KubeClient.CoreV1().Nodes().Get(context.TODO(), testNode.Name, metav1.GetOptions{})
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			err = oc.syncNodeGateway(testNode)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			// wait for the controller to finish adding the node, the transit resources are created last
+			gomega.Eventually(oc.nbClient).Should(libovsdbtest.HaveDataSubset(expectedLocalTransitResources(expectedOVNClusterRouter.DeepCopy())...))
 
 			// Delete the node's gateway Logical Router Port to force node delete to handle a
 			// partially removed OVN DB
