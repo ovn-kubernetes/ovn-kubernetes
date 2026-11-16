@@ -974,10 +974,12 @@ var _ = Describe("Node Operations", func() {
 				service := *newService("service1", "namespace1", "10.129.0.2",
 					[]corev1.ServicePort{
 						{
+							Name:     "tcp",
 							Protocol: corev1.ProtocolTCP,
 							Port:     int32(40000),
 						},
 						{
+							Name:     "udp",
 							Protocol: corev1.ProtocolUDP,
 							Port:     int32(40000),
 						},
