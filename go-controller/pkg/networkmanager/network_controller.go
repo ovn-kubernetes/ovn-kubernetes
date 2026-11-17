@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	nadtypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	nadlisters "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/listers/k8s.cni.cncf.io/v1"
 
 	corev1 "k8s.io/api/core/v1"
@@ -27,6 +28,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
 	ratypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
 	ralisters "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/listers/routeadvertisements/v1"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -64,9 +66,12 @@ func newNetworkController(name, node string, cm ControllerManager, wf watchFacto
 		networkConfig,
 	)
 
-	// we don't care about route advertisements in cluster manager
 	if nc.hasRouteAdvertisements() {
 		nc.nadLister = wf.NADInformer().Lister()
+		nadIndexer := wf.NADInformer().Informer().GetIndexer()
+		nc.getNADsForRouteAdvertisement = func(raName string) ([]*nadtypes.NetworkAttachmentDefinition, error) {
+			return factory.GetNADsForRouteAdvertisement(nadIndexer, raName)
+		}
 		nc.raLister = wf.RouteAdvertisementsInformer().Lister()
 		nc.nodeLister = wf.NodeCoreInformer().Lister()
 
@@ -75,7 +80,7 @@ func newNetworkController(name, node string, cm ControllerManager, wf watchFacto
 			RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
 			Informer:       wf.RouteAdvertisementsInformer().Informer(),
 			Lister:         nc.raLister.List,
-			Reconcile:      func(string) error { return nc.syncRunningNetworks() },
+			Reconcile:      nc.syncRouteAdvertisements,
 			ObjNeedsUpdate: raNeedsUpdate,
 			Threadiness:    1,
 		}
@@ -117,9 +122,10 @@ type networkController struct {
 	name string
 	node string
 
-	nadLister  nadlisters.NetworkAttachmentDefinitionLister
-	raLister   ralisters.RouteAdvertisementsLister
-	nodeLister corelisters.NodeLister
+	nadLister                    nadlisters.NetworkAttachmentDefinitionLister
+	getNADsForRouteAdvertisement func(raName string) ([]*nadtypes.NetworkAttachmentDefinition, error)
+	raLister                     ralisters.RouteAdvertisementsLister
+	nodeLister                   corelisters.NodeLister
 
 	networkReconciler controller.Reconciler
 	raController      controller.Controller
@@ -404,6 +410,35 @@ func (c *networkController) syncRunningNetworks() error {
 		c.networkReconciler.Reconcile(network.controller.GetNetworkName())
 	}
 
+	return nil
+}
+
+// syncRouteAdvertisements queues only networks whose NADs reference raName.
+// NAD annotation changes independently queue their networks through EnsureNetwork,
+// so this lookup only needs the current references to the advertisement.
+func (c *networkController) syncRouteAdvertisements(raName string) error {
+	nads, err := c.getNADsForRouteAdvertisement(raName)
+	if err != nil {
+		return fmt.Errorf("failed to find NADs for route advertisement %s: %w", raName, err)
+	}
+	// Several NADs can belong to the same network, particularly for a CUDN
+	// spanning namespaces. Deduplicate before calling the network reconciler.
+	networks := sets.New[string]()
+	for _, nad := range nads {
+		network := util.GetAnnotatedNetworkName(nad)
+		// A NAD may not be annotated yet, or its network may be filtered
+		// locally. EnsureNetwork will gather the latest RA state when that
+		// network is created. The default controller is managed separately
+		// through ControllerManager and remains eligible even without an
+		// entry in c.networks.
+		if network == "" || (network != types.DefaultNetworkName && c.getNetwork(network) == nil) {
+			continue
+		}
+		networks.Insert(network)
+	}
+	for network := range networks {
+		c.networkReconciler.Reconcile(network)
+	}
 	return nil
 }
 
