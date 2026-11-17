@@ -5,6 +5,7 @@ package node
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -28,8 +29,12 @@ type NodeHandler interface {
 	// GetNetworkName returns the network this handler reconciles.
 	GetNetworkName() string
 	// ReconcileNode reconciles the network-specific state for a node. oldNode and
-	// oldState may be nil when the node is first seen for the network or becomes
-	// active again. For delete reconciliation, oldNode is the best available
+	// oldState describe the previous add/update attempt, even if it failed. They
+	// are nil on the first attempt for the network or after reactivation. Handlers
+	// must track unfinished work so it is retried even when the inputs do not
+	// change. Transition cleanup that still needs the original oldNode must
+	// return RetryWithPreviousNode before running add/update components.
+	// For delete reconciliation, oldNode is the best available
 	// prior object: a real cached node when available, otherwise a name-only
 	// stub node; oldState is nil when no cached prior annotations exist. newNode
 	// and newState describe the latest desired state; they are nil when
@@ -38,6 +43,21 @@ type NodeHandler interface {
 	// SyncNodes performs the initial full-network sync before per-node
 	// reconciliation is queued for the handler.
 	SyncNodes(nodes []*corev1.Node) error
+}
+
+type retryWithPreviousNodeError struct {
+	error
+}
+
+func (e *retryWithPreviousNodeError) Unwrap() error {
+	return e.error
+}
+
+// RetryWithPreviousNode preserves the previous node inputs when transition
+// cleanup fails before add/update reconciliation can begin. It lets a handler
+// retry cleanup that depends on annotations no longer present on the new node.
+func RetryWithPreviousNode(err error) error {
+	return &retryWithPreviousNodeError{error: err}
 }
 
 // NodeController reconciles node topology for all registered networks.
@@ -52,10 +72,9 @@ type NodeController struct {
 	// handlers maps network name to node handler.
 	handlers *syncmap.SyncMap[NodeHandler]
 
-	// stateMu protects nodeReconciliation, nodeActive, nodeNetworks, nodeCache,
-	// and latestInformerNodeCache.
+	// stateMu protects nodeReconciliation, nodeActive, nodeNetworks, and nodeCache.
 	stateMu sync.RWMutex
-	// nodeReconciliation tracks nodes that should be treated as "new" per network.
+	// nodeReconciliation tracks nodes that need an initial add attempt or a delete.
 	// keyed by network -> nodes
 	// bool is true when there was a previous reconciliation attempt with a delete event
 	nodeReconciliation map[string]map[string]bool
@@ -67,14 +86,11 @@ type NodeController struct {
 	// nodeNetworks is a reverse index of active networks per node.
 	// keyed by node -> networks
 	nodeNetworks map[string]map[string]struct{}
-	// nodeCache contains configured node state
+	// nodeCache contains the inputs to the latest add/update attempt, even if
+	// it failed. It drives update comparisons and supplies delete context.
+	// RetryWithPreviousNode keeps the prior inputs until transition cleanup succeeds.
 	// keyed by network -> nodeName
 	nodeCache map[string]map[string]*corev1.Node
-	// latestInformerNodeCache contains the latest informer object seen for a node
-	// even if reconciliation failed. It is only used as a delete fallback when
-	// no configured node state exists in nodeCache.
-	// keyed by network -> nodeName
-	latestInformerNodeCache map[string]map[string]*corev1.Node
 	// annotationCache stores parsed annotation maps keyed by node.
 	annotationCache *NodeAnnotationCache
 
@@ -91,16 +107,15 @@ func NewController(wf *factory.WatchFactory, name string, networkManager network
 	}
 	nodeInformer := wf.NodeCoreInformer()
 	c := &NodeController{
-		name:                    name,
-		networkManager:          networkManager,
-		nodeLister:              nodeInformer.Lister(),
-		handlers:                syncmap.NewSyncMap[NodeHandler](),
-		nodeReconciliation:      map[string]map[string]bool{},
-		nodeActive:              map[string]map[string]struct{}{},
-		nodeNetworks:            map[string]map[string]struct{}{},
-		nodeCache:               map[string]map[string]*corev1.Node{},
-		latestInformerNodeCache: map[string]map[string]*corev1.Node{},
-		annotationCache:         NewNodeAnnotationCache(),
+		name:               name,
+		networkManager:     networkManager,
+		nodeLister:         nodeInformer.Lister(),
+		handlers:           syncmap.NewSyncMap[NodeHandler](),
+		nodeReconciliation: map[string]map[string]bool{},
+		nodeActive:         map[string]map[string]struct{}{},
+		nodeNetworks:       map[string]map[string]struct{}{},
+		nodeCache:          map[string]map[string]*corev1.Node{},
+		annotationCache:    NewNodeAnnotationCache(),
 	}
 
 	nodeControllerConfig := &controller.ControllerConfig[corev1.Node]{
@@ -217,7 +232,6 @@ func (c *NodeController) DeregisterNetworkController(netName string) {
 		}
 		delete(c.nodeActive, key)
 		delete(c.nodeCache, key)
-		delete(c.latestInformerNodeCache, key)
 		c.stateMu.Unlock()
 		return nil
 	})
@@ -276,17 +290,17 @@ func (c *NodeController) reconcileNode(ctx context.Context, key string) error {
 				needsDelete = true
 				c.markNodeNeedsDeleteReconciliation(netName, nodeName)
 				c.deleteNodeActive(netName, nodeName)
-				// If we have no configured node in cache, retain the latest informer object
+				// If no previous attempt is cached, retain the latest informer object
 				// so delete reconciliation has the metadata needed for cleanup.
 				if newNode != nil && oldNode == nil {
 					oldNode = newNode
-					c.setLatestInformerNode(netName, oldNode)
+					c.setCachedNode(netName, oldNode)
 				}
 			} else if !nodeHadNetwork && nodeHasNetwork {
 				// node going active, but do not purge delete state (may need to retry previous failed delete)
 				needsAddUpdate = true
 				c.setNodeActive(netName, nodeName)
-				// set node for reconciliation in case we fail this add/update so we force a retry later
+				// Treat the first attempt after activation as an add.
 				c.markNodeNeedsReconciliation(netName, nodeName)
 			}
 		} else if nodeHasNetwork {
@@ -295,11 +309,12 @@ func (c *NodeController) reconcileNode(ctx context.Context, key string) error {
 			c.deleteNodeActive(netName, nodeName)
 		}
 
-		oldState := c.annotationCache.updateNodeAnnotationState(oldNode, updateAnnoCacheOnDelete)
 		if needsDelete {
+			oldState := c.annotationCache.updateNodeAnnotationState(oldNode, updateAnnoCacheOnDelete)
 			if delErr := c.reconcileDelete(ctx, handler, nodeName, netName, oldNode, oldState); delErr != nil {
 				return fmt.Errorf("%s: failed to delete node %s for network %s: %w", c.name, nodeName, netName, delErr)
 			}
+			oldNode = nil
 		}
 
 		if !needsAddUpdate || newNode == nil {
@@ -308,46 +323,47 @@ func (c *NodeController) reconcileNode(ctx context.Context, key string) error {
 			return nil
 		}
 
-		newState := c.annotationCache.updateNodeAnnotationState(newNode, true)
-
-		// if we are marked for reconciliation (first time going active/bootstrapping) treat as an add
+		// Reactivation after a pending delete starts a fresh attempt history.
+		if needsDelete && nodeHasNetwork {
+			c.setNodeActive(netName, nodeName)
+		}
 		if c.nodeNeedsReconciliation(netName, nodeName) {
 			oldNode = nil
-			oldState = nil
 		}
+		oldState := c.annotationCache.updateNodeAnnotationState(oldNode, false)
+		newState := c.annotationCache.updateNodeAnnotationState(newNode, true)
 
 		return c.reconcileUpdate(ctx, handler, oldNode, newNode, netName, oldState, newState)
 	})
 }
 
 // reconcileUpdate reconciles per-network node changes.
-// oldNode is derived from this controller's internal cache.
+// oldNode contains the inputs to the previous attempt, including failed attempts.
 // newNode is the latest state of the node from informer cache.
 // Reconciliation is level-driven.
 func (c *NodeController) reconcileUpdate(ctx context.Context, handler NodeHandler, oldNode, newNode *corev1.Node, netName string, oldState, newState *NodeAnnotationState) error {
 	err := handler.ReconcileNode(ctx, oldNode, newNode, oldState, newState)
-	// Preserve the latest informer object for delete cleanup without
-	// overwriting the last successfully applied node state.
-	c.setLatestInformerNode(netName, newNode)
-	if err != nil {
+	var retryPrevious *retryWithPreviousNodeError
+	if errors.As(err, &retryPrevious) {
+		if oldNode == nil {
+			// Preserve delete context without treating failed initial cleanup as
+			// an add/update attempt on the next retry.
+			c.setCachedNode(netName, newNode)
+			c.markNodeNeedsReconciliation(netName, newNode.Name)
+		}
 		return err
 	}
-
-	// successful update, now update caches
+	// A failed attempt may have applied some of these inputs. Compare the next
+	// attempt against them so changes and reversions still resync successful pieces.
 	c.setCachedNode(netName, newNode)
 	c.deleteNodeReconciliation(netName, newNode.Name)
-
-	return nil
+	return err
 }
 
 // reconcileDelete handles deletion using cached state.
 func (c *NodeController) reconcileDelete(ctx context.Context, handler NodeHandler, nodeName, netName string, oldNode *corev1.Node, oldState *NodeAnnotationState) error {
-	if oldNode == nil {
-		oldNode = c.getLatestInformerNode(netName, nodeName)
-		oldState = c.annotationCache.updateNodeAnnotationState(oldNode, false)
-	}
-	// if there is no cached node (previously configured) or no informer cached node
-	// then we create a dummy node to at least attempt some best-effort cleanup
+	// Cleanup must also work when no add/update attempt was cached, such as
+	// when a node disappears before its initial reconciliation.
 	if oldNode == nil {
 		oldNode = &corev1.Node{
 			ObjectMeta: metav1.ObjectMeta{
@@ -363,7 +379,6 @@ func (c *NodeController) reconcileDelete(ctx context.Context, handler NodeHandle
 	c.deleteNodeActive(netName, nodeName)
 	c.clearNodeDeleteReconciliation(netName, nodeName)
 	c.deleteCachedNode(netName, nodeName)
-	c.deleteLatestInformerNode(netName, nodeName)
 
 	// We delete nodes per network, so we need to clear global caches when no networks reference it anymore.
 	// A cheap trick to do this is to leverage a map that is referenced by network.
@@ -610,30 +625,6 @@ func (c *NodeController) setCachedNode(netName string, node *corev1.Node) {
 	c.nodeCache[netName][node.Name] = node
 }
 
-// getLatestInformerNode returns the latest informer node for read-only access.
-// WARNING: The returned node MUST NOT be modified. It is a shared reference.
-func (c *NodeController) getLatestInformerNode(netName, nodeName string) *corev1.Node {
-	c.stateMu.RLock()
-	defer c.stateMu.RUnlock()
-	return c.latestInformerNodeCache[netName][nodeName]
-}
-
-// setLatestInformerNode stores a reference to the latest informer node in cache.
-// The node is from the k8s informer cache (immutable), safe to cache by reference.
-func (c *NodeController) setLatestInformerNode(netName string, node *corev1.Node) {
-	c.stateMu.Lock()
-	defer c.stateMu.Unlock()
-
-	if c.latestInformerNodeCache == nil {
-		c.latestInformerNodeCache = make(map[string]map[string]*corev1.Node)
-	}
-	if c.latestInformerNodeCache[netName] == nil {
-		c.latestInformerNodeCache[netName] = make(map[string]*corev1.Node)
-	}
-
-	c.latestInformerNodeCache[netName][node.Name] = node
-}
-
 // Delete removes a node from the cache.
 func (c *NodeController) deleteCachedNode(netName, nodeName string) {
 	c.stateMu.Lock()
@@ -648,21 +639,5 @@ func (c *NodeController) deleteCachedNode(netName, nodeName string) {
 
 	if len(nodes) == 0 {
 		delete(c.nodeCache, netName)
-	}
-}
-
-func (c *NodeController) deleteLatestInformerNode(netName, nodeName string) {
-	c.stateMu.Lock()
-	defer c.stateMu.Unlock()
-
-	nodes := c.latestInformerNodeCache[netName]
-	if nodes == nil {
-		return
-	}
-
-	delete(nodes, nodeName)
-
-	if len(nodes) == 0 {
-		delete(c.latestInformerNodeCache, netName)
 	}
 }
