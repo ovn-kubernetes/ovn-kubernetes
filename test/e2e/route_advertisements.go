@@ -3495,21 +3495,31 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 
 									// A changed FRRNodeState resourceVersion confirms frr-k8s has
 									// finished reconciling the new FRRConfiguration on that node.
+									// Also require lastConversionResult and lastReloadResult success
+									// so a status write is not treated as done if reload failed.
 									// Wait for this on every node before checking the BGP session.
 									ginkgo.By("Waiting for frr-k8s to re-merge the new FRRConfiguration on all nodes")
 									for i := range nodeList.Items {
 										nodeName := nodeList.Items[i].Name
 										preRV := preConfigFRRNodeStateRVs[nodeName]
 										gomega.Eventually(func() error {
-											rv, _, rvErr := e2ekubectl.NewKubectlCommand(
+											out, _, rvErr := e2ekubectl.NewKubectlCommand(
 												"", "get", "frrnodestate", nodeName,
-												"-o", "jsonpath={.metadata.resourceVersion}",
+												"-o", "jsonpath={.metadata.resourceVersion}{'|'}{.status.lastConversionResult}{'|'}{.status.lastReloadResult}",
 											).WithTimeout(time.NewTimer(30 * time.Second).C).ExecWithFullOutput()
 											if rvErr != nil {
 												return fmt.Errorf("node %s: failed to get FRRNodeState: %w", nodeName, rvErr)
 											}
-											if strings.TrimSpace(rv) == preRV {
+											parts := strings.SplitN(strings.TrimSpace(out), "|", 3)
+											if len(parts) != 3 {
+												return fmt.Errorf("node %s: unexpected FRRNodeState output %q", nodeName, out)
+											}
+											rv, conversion, reload := parts[0], parts[1], parts[2]
+											if rv == preRV {
 												return fmt.Errorf("node %s: FRRNodeState not yet updated (resourceVersion still %s)", nodeName, preRV)
+											}
+											if !strings.EqualFold(conversion, "success") || !strings.EqualFold(reload, "success") {
+												return fmt.Errorf("node %s: FRRNodeState conversion=%q reload=%q", nodeName, conversion, reload)
 											}
 											return nil
 										}, 2*time.Minute, 2*time.Second).Should(gomega.Succeed(),
