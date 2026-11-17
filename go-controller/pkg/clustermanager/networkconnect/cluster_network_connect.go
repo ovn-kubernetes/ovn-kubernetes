@@ -140,31 +140,41 @@ func (c *Controller) reconcileClusterNetworkConnect(ctx context.Context, key str
 	return err
 }
 
+// cleanupClusterNetworkConnectState releases state belonging to a deleted CNC.
+// Caller must hold the controller lock.
+func (c *Controller) cleanupClusterNetworkConnectState(cncName string) {
+	if _, exists := c.cncCache[cncName]; exists {
+		c.tunnelKeysAllocator.ReleaseKeys(id.NetworkConnectTunnelKeyOwner(cncName))
+		klog.V(4).Infof("Released tunnel key for deleted CNC %s", cncName)
+	}
+
+	// The subnet allocator is self-contained per CNC, so dropping the cached
+	// state lets it be garbage collected without explicitly releasing subnets.
+	delete(c.cncCache, cncName)
+	klog.V(4).Infof("Cleaned up cache for deleted CNC %s", cncName)
+}
+
 func (c *Controller) syncClusterNetworkConnect(cncName string, cnc *networkconnectv1.ClusterNetworkConnect) error {
 	c.Lock()
 	defer c.Unlock()
 	cncState, cncExists := c.cncCache[cncName]
 	if cnc == nil {
-		// CNC is being deleted, clean up resources
-		// Clean up the cache
-		// Note: allocator cleanup is not needed - it will be garbage collected
-		// when the cache entry is deleted below since it's self-contained per-CNC
-		// Annotations also don't need to be removed since object is already deleted.
-		if cncExists {
-			// Release tunnel key
-			c.tunnelKeysAllocator.ReleaseKeys(id.NetworkConnectTunnelKeyOwner(cncName))
-			klog.V(4).Infof("Released tunnel key for deleted CNC %s", cncName)
-		}
-
-		// Clean up the cache
-		delete(c.cncCache, cncName)
-		klog.V(4).Infof("Cleaned up cache for deleted CNC %s", cncName)
+		c.cleanupClusterNetworkConnectState(cncName)
 		return nil
+	}
+	if cncExists && cncState.uid != cnc.UID {
+		// The CNC was deleted and recreated with the same name before the
+		// delete event was processed. The cached allocator and tunnel key
+		// belong to the deleted object, so release them and start over.
+		c.cleanupClusterNetworkConnectState(cncName)
+		cncExists = false
+		klog.V(4).Infof("CNC %s was recreated (uid %s -> %s), resetting cached state", cncName, cncState.uid, cnc.UID)
 	}
 	// If CNC state doesn't exist yet (means its a CNC creation), create entry in the cache
 	if !cncExists {
 		cncState = &clusterNetworkConnectState{
 			name:             cnc.Name,
+			uid:              cnc.UID,
 			selectedNADs:     sets.New[string](),
 			selectedNetworks: sets.New[string](),
 		}

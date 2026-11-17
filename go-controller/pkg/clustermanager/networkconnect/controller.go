@@ -18,6 +18,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	corelisters "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
@@ -69,6 +70,9 @@ type clusterNetworkConnectState struct {
 	selectedNetworks sets.Set[string]
 	// tunnelID for this CNC's connect router
 	tunnelID int
+	// uid of the CNC object this state was created for. It is used to detect
+	// a CNC that was deleted and recreated with the same name.
+	uid types.UID
 }
 
 type Controller struct {
@@ -205,6 +209,7 @@ func (c *Controller) initialSync() error {
 		// Initialize CNC state in cache
 		cncState := &clusterNetworkConnectState{
 			name: cnc.Name,
+			uid:  cnc.UID,
 			// NOTE: We intentionally don't restore selectedNADs as its not strictly needed.
 			// Why this is okay:
 			// selectedNADs tracks NAD keys (e.g., "namespace/name") which aren't stored in
