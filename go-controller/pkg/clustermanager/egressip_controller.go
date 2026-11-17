@@ -196,6 +196,7 @@ func (eIPC *egressIPClusterController) executeCloudPrivateIPConfigOps(ctx contex
 			if !cloudPrivateIPConfig.GetDeletionTimestamp().IsZero() {
 				return fmt.Errorf("cloud update request failed, CloudPrivateIPConfig: %s is being deleted", cloudPrivateIPConfigName)
 			}
+			cloudPrivateIPConfig = cloudPrivateIPConfig.DeepCopy()
 			cloudPrivateIPConfig.Spec.Node = op.toAdd
 			if _, err := eIPC.kube.UpdateCloudPrivateIPConfig(ctx, cloudPrivateIPConfig); err != nil {
 				eIPRef := corev1.ObjectReference{
