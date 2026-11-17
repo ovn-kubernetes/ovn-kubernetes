@@ -5,8 +5,10 @@ package e2e
 
 import (
 	"context"
+	"encoding/csv"
 	"fmt"
 	"net"
+	"regexp"
 	"strings"
 	"time"
 
@@ -29,10 +31,13 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/kubernetes/test/e2e/framework"
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
 	e2epodoutput "k8s.io/kubernetes/test/e2e/framework/pod/output"
 	utilnet "k8s.io/utils/net"
 )
+
+var ovnUUIDPattern = regexp.MustCompile(`(?i)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
 
 // This test is the upstream OVN-Kubernetes form of the reproducer from:
 // https://gist.github.com/frobware/3561697d5f602cdeee4767a7d86ccbd4
@@ -297,15 +302,7 @@ var _ = ginkgo.Describe("BGP: advertised Layer2 CUDN creation race", feature.Rou
 				// In interconnect deployments each zone has its own northbound
 				// database. Query the database on this node: an arbitrary zone's
 				// database does not contain this node's gateway router.
-				nats, stderr, err := ExecCommandInContainerWithFullOutput(
-					f,
-					ovnkNamespace,
-					ovnDBPodsByNode[nodeName],
-					"nb-ovsdb",
-					"ovn-nbctl",
-					"lr-nat-list",
-					routerName,
-				)
+				nats, stderr, err := listRouterNATs(f, ovnkNamespace, ovnDBPodsByNode[nodeName], routerName)
 				if err != nil {
 					diagnostics = append(diagnostics, fmt.Sprintf(
 						"INSPECTION_ERROR gateway-nat router=%s node=%s: %v, stderr=%s",
@@ -313,7 +310,14 @@ var _ = ginkgo.Describe("BGP: advertised Layer2 CUDN creation race", feature.Rou
 					continue
 				}
 				for _, subnet := range advertisedSubnets {
-					if !hasConditionalSNAT(nats, subnet) {
+					advertisedSNATFound, err := hasAdvertisedSNAT(nats, subnet)
+					if err != nil {
+						diagnostics = append(diagnostics, fmt.Sprintf(
+							"INSPECTION_ERROR gateway-nat router=%s node=%s subnet=%s: %v, nats=%q",
+							routerName, nodeName, subnet, err, strings.TrimSpace(nats)))
+						continue
+					}
+					if !advertisedSNATFound {
 						diagnostics = append(diagnostics, fmt.Sprintf(
 							"BUG3_STALE_SNAT router=%s node=%s subnet=%s nats=%q",
 							routerName, nodeName, subnet, strings.TrimSpace(nats)))
@@ -324,15 +328,7 @@ var _ = ginkgo.Describe("BGP: advertised Layer2 CUDN creation race", feature.Rou
 				// this zone's transit router. A healthy local gateway router can
 				// therefore hide stale transit-router state unless both routers
 				// are checked separately.
-				nats, stderr, err = ExecCommandInContainerWithFullOutput(
-					f,
-					ovnkNamespace,
-					ovnDBPodsByNode[nodeName],
-					"nb-ovsdb",
-					"ovn-nbctl",
-					"lr-nat-list",
-					transitRouterName,
-				)
+				nats, stderr, err = listRouterNATs(f, ovnkNamespace, ovnDBPodsByNode[nodeName], transitRouterName)
 				if err != nil {
 					diagnostics = append(diagnostics, fmt.Sprintf(
 						"INSPECTION_ERROR transit-router-nat router=%s node=%s: %v, stderr=%s",
@@ -340,7 +336,14 @@ var _ = ginkgo.Describe("BGP: advertised Layer2 CUDN creation race", feature.Rou
 					continue
 				}
 				for _, subnet := range advertisedSubnets {
-					if !hasConditionalSNAT(nats, subnet) {
+					advertisedSNATFound, err := hasAdvertisedSNAT(nats, subnet)
+					if err != nil {
+						diagnostics = append(diagnostics, fmt.Sprintf(
+							"INSPECTION_ERROR transit-router-nat router=%s node=%s subnet=%s: %v, nats=%q",
+							transitRouterName, nodeName, subnet, err, strings.TrimSpace(nats)))
+						continue
+					}
+					if !advertisedSNATFound {
 						diagnostics = append(diagnostics, fmt.Sprintf(
 							"BUG3_STALE_TRANSIT_ROUTER_SNAT router=%s node=%s subnet=%s nats=%q",
 							transitRouterName, nodeName, subnet, strings.TrimSpace(nats)))
@@ -421,13 +424,87 @@ func hasAdvertisedRouteFlow(flows, priority, subnet string, localGateway bool) b
 	return false
 }
 
-func hasConditionalSNAT(nats, subnet string) bool {
-	for _, nat := range strings.Split(nats, "\n") {
-		if strings.Contains(nat, "snat") &&
-			strings.Contains(nat, subnet) &&
-			strings.Contains(nat, "==") {
-			return true
+func listRouterNATs(f *framework.Framework, namespace, dbPod, routerName string) (string, string, error) {
+	natUUIDs, stderr, err := ExecCommandInContainerWithFullOutput(
+		f,
+		namespace,
+		dbPod,
+		"nb-ovsdb",
+		"ovn-nbctl",
+		"--data=bare",
+		"--no-heading",
+		"get",
+		"Logical_Router",
+		routerName,
+		"nat",
+	)
+	if err != nil {
+		return "", stderr, err
+	}
+
+	uuids := ovnUUIDPattern.FindAllString(natUUIDs, -1)
+	if len(uuids) == 0 {
+		return "", stderr, nil
+	}
+
+	args := []string{
+		"ovn-nbctl",
+		"--format=csv",
+		"--data=bare",
+		"--no-heading",
+		"--columns=logical_ip,match,allowed_ext_ips,exempted_ext_ips",
+		"list",
+		"NAT",
+	}
+	args = append(args, uuids...)
+	nats, listStderr, err := ExecCommandInContainerWithFullOutput(
+		f,
+		namespace,
+		dbPod,
+		"nb-ovsdb",
+		args...,
+	)
+	return nats, strings.TrimSpace(stderr + "\n" + listStderr), err
+}
+
+// hasAdvertisedSNAT verifies that every SNAT for subnet is destination
+// constrained. Depending on the gateway and transport configuration, current
+// OVN-Kubernetes represents that constraint in NAT.match, allowed_ext_ips, or
+// exempted_ext_ips. An empty value in all three fields is the stale,
+// unconditional state this regression is intended to catch.
+func hasAdvertisedSNAT(nats, subnet string) (bool, error) {
+	reader := csv.NewReader(strings.NewReader(nats))
+	reader.FieldsPerRecord = -1
+	records, err := reader.ReadAll()
+	if err != nil {
+		return false, fmt.Errorf("parse ovn-nbctl NAT output: %w", err)
+	}
+
+	found := false
+	for i, record := range records {
+		if len(record) == 1 && strings.TrimSpace(record[0]) == "" {
+			continue
+		}
+		if len(record) != 4 {
+			return false, fmt.Errorf("NAT record %d has %d fields, expected 4: %q", i+1, len(record), record)
+		}
+		if strings.TrimSpace(record[0]) != subnet {
+			continue
+		}
+
+		found = true
+		match := strings.TrimSpace(record[1])
+		allowedExtIPs := strings.TrimSpace(record[2])
+		exemptedExtIPs := strings.TrimSpace(record[3])
+		hasDestinationMatch := strings.Contains(match, "ip4.dst") || strings.Contains(match, "ip6.dst")
+		if !hasDestinationMatch && !ovnSetHasValues(allowedExtIPs) && !ovnSetHasValues(exemptedExtIPs) {
+			return false, nil
 		}
 	}
-	return false
+	return found, nil
+}
+
+func ovnSetHasValues(value string) bool {
+	value = strings.TrimSpace(value)
+	return value != "" && value != "[]" && value != "{}"
 }
