@@ -1,6 +1,7 @@
 ---
 title: API Reference Guide
 hide:
+  - navigation
   - toc
 ---
 
@@ -8,42 +9,116 @@ hide:
 
 Specifications for OVN-Kubernetes Custom Resource Definitions (CRDs).
 
-**[Introduction](introduction.md)**
+<div class="landing-grid" markdown>
+
+<div class="landing-card" markdown>
+
+## Introduction
 
 Overview of the OVN-Kubernetes API surface and CRD conventions.
 
-**[EgressIP](egress-ip-api-spec.md)**
+[Introduction](introduction.md){ .landing-btn }
+
+</div>
+
+<div class="landing-card" markdown>
+
+## EgressIP
 
 Assign stable source IPs to egress traffic from selected pods.
 
-**[EgressService](egress-service-api-spec.md)**
+[EgressIP](egress-ip-api-spec.md){ .landing-btn }
+
+</div>
+
+<div class="landing-card" markdown>
+
+## EgressService
 
 Route egress traffic through a Kubernetes Service's load balancer IP.
 
-**[EgressQoS](egress-qos-api-spec.md)**
+[EgressService](egress-service-api-spec.md){ .landing-btn }
+
+</div>
+
+<div class="landing-card" markdown>
+
+## EgressQoS
 
 Apply DSCP marking rules to egress traffic by namespace.
 
-**[EgressFirewall](egress-firewall-api-spec.md)**
+[EgressQoS](egress-qos-api-spec.md){ .landing-btn }
+
+</div>
+
+<div class="landing-card" markdown>
+
+## EgressFirewall
 
 Control which external destinations pods in a namespace can reach.
 
-**[AdminPolicyBasedExternalRoutes](admin-epbr-api-spec.md)**
+[EgressFirewall](egress-firewall-api-spec.md){ .landing-btn }
+
+</div>
+
+<div class="landing-card" markdown>
+
+## AdminPolicyBasedExternalRoutes
 
 Define cluster-wide external gateway routing policies.
 
-**[UserDefinedNetwork](userdefinednetwork-api-spec.md)**
+[AdminPolicyBasedExternalRoutes](admin-epbr-api-spec.md){ .landing-btn }
+
+</div>
+
+<div class="landing-card" markdown>
+
+## UserDefinedNetwork
 
 Create isolated or connected tenant networks with custom topologies.
 
-**[RouteAdvertisements](routeadvertisements-api-spec.md)**
+[UserDefinedNetwork](userdefinednetwork-api-spec.md){ .landing-btn }
+
+</div>
+
+<div class="landing-card" markdown>
+
+## RouteAdvertisements
 
 Advertise pod and service routes to external BGP peers.
 
-**[ClusterNetworkConnect](clusternetworkconnect-api-spec.md)**
+[RouteAdvertisements](routeadvertisements-api-spec.md){ .landing-btn }
+
+</div>
+
+<div class="landing-card" markdown>
+
+## ClusterNetworkConnect
 
 Enable controlled connectivity between isolated User Defined Networks.
 
-**[VTEP](vtep-api-spec.md)**
+[ClusterNetworkConnect](clusternetworkconnect-api-spec.md){ .landing-btn }
+
+</div>
+
+<div class="landing-card" markdown>
+
+## VTEP
 
 Configure Virtual Tunnel Endpoints for external network integration.
+
+[VTEP](vtep-api-spec.md){ .landing-btn }
+
+</div>
+
+<div class="landing-card" markdown>
+
+## Uplink and UplinkState
+
+Configure physical uplinks for UserDefinedNetworks across DPU, SmartNIC, and non-accelerated deployments.
+
+[Uplink and UplinkState](uplink-api-spec.md){ .landing-btn }
+
+</div>
+
+</div>

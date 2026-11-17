@@ -1,6 +1,7 @@
 ---
 title: Hardware Acceleration
 hide:
+  - navigation
   - toc
 ---
 
@@ -8,22 +9,56 @@ hide:
 
 Offload OVS datapath processing to SmartNICs and DPUs.
 
-**[OVS Acceleration with kernel datapath](ovs-kernel.md)**
+<div class="landing-grid" markdown>
+
+<div class="landing-card" markdown>
+
+## OVS Acceleration with kernel datapath
 
 Offload OVS flow processing to SmartNIC hardware using the kernel TC datapath.
 
-**[OVS Acceleration with DOCA datapath](ovs-doca.md)**
+[OVS Acceleration with kernel datapath](ovs-kernel.md){ .landing-btn }
+
+</div>
+
+<div class="landing-card" markdown>
+
+## OVS Acceleration with DOCA datapath
 
 Offload OVS to NVIDIA BlueField DPUs using the DOCA-based datapath.
 
-**[DPU Support](dpu-support.md)**
+[OVS Acceleration with DOCA datapath](ovs-doca.md){ .landing-btn }
 
-Running OVN-Kubernetes with DPU offload.
+</div>
 
-**[DPU Gateway Interface](dpu-gateway-interface.md)**
+<div class="landing-card" markdown>
 
-Gateway interface configuration on DPU-accelerated nodes.
+## DPU Support
 
-**[Derive From Management Port](derive-from-mgmt-port.md)**
+Run OVN-Kubernetes with DPU offload for enhanced acceleration and security.
 
-Deriving hardware-offload configuration from the management port.
+[DPU Support](dpu-support.md){ .landing-btn }
+
+</div>
+
+<div class="landing-card" markdown>
+
+## Derive from Management Port
+
+Auto-discover the gateway PF interface from the management port VF in DPU deployments.
+
+[Derive from Management Port](derive-from-mgmt-port.md){ .landing-btn }
+
+</div>
+
+<div class="landing-card" markdown>
+
+## DPU Gateway Interface
+
+Configure automatic gateway interface resolution from PCI address on DPU hosts.
+
+[DPU Gateway Interface](dpu-gateway-interface.md){ .landing-btn }
+
+</div>
+
+</div>
