@@ -5,12 +5,14 @@ package networkmanager
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"testing"
 	"time"
 
 	cnitypes "github.com/containernetworking/cni/pkg/types"
+	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	"github.com/onsi/gomega"
 
 	corev1 "k8s.io/api/core/v1"
@@ -19,6 +21,7 @@ import (
 
 	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
 	ratypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
@@ -972,4 +975,141 @@ func TestNetworkController_ConcurrentReconciliationMixed(t *testing.T) {
 			g.Expect(retrieved).ToNot(gomega.BeNil())
 		}
 	}).Should(gomega.Succeed())
+}
+
+// TestNetworkControllerSyncRouteAdvertisements verifies that an advertisement
+// update reconciles only the networks whose NADs reference it, and that a
+// network referenced by several NADs is reconciled once. The same behavior must
+// hold in every process that runs route advertisements reconciliation, so the
+// test covers the ovnkube-controller, node and cluster manager watch factories.
+func TestNetworkControllerSyncRouteAdvertisements(t *testing.T) {
+	// 1. For each of the ovnkube-controller, node and cluster manager factories,
+	//    create a watch factory with route advertisements enabled.
+	// 2. Create a fake network reconciler that records every network it is asked
+	//    to reconcile.
+	// 3. Register the secondary networks net-a, net-b and net-c with the
+	//    controller.
+	// 4. Add NADs covering a network referenced by multiple advertisements,
+	//    several NADs for the same network under one advertisement, the default
+	//    network NAD, an unannotated NAD and a NAD for a network the controller
+	//    does not know.
+	// 5. Sync each advertisement and assert exactly the expected networks were
+	//    reconciled, including that net-a is reconciled once even though two
+	//    NADs reference the advertisement.
+	// 6. Sync an advertisement no NAD references and assert nothing is
+	//    reconciled.
+	factories := []struct {
+		name string
+		new  func() (*factory.WatchFactory, error)
+	}{
+		{
+			name: "ovnkube-controller",
+			new: func() (*factory.WatchFactory, error) {
+				return factory.NewOVNKubeControllerWatchFactory(util.GetOVNClientset().GetOVNKubeControllerClientset(), "test-node")
+			},
+		},
+		{
+			name: "node",
+			new: func() (*factory.WatchFactory, error) {
+				return factory.NewNodeWatchFactory(util.GetOVNClientset().GetNodeClientset(), "test-node")
+			},
+		},
+		{
+			name: "cluster manager",
+			new: func() (*factory.WatchFactory, error) {
+				return factory.NewClusterManagerWatchFactory(util.GetOVNClientset().GetClusterManagerClientset())
+			},
+		},
+	}
+	for _, factoryConfig := range factories {
+		t.Run(factoryConfig.name, func(t *testing.T) {
+			runSyncRouteAdvertisementsTest(t, factoryConfig.new)
+		})
+	}
+}
+
+// runSyncRouteAdvertisementsTest exercises syncRouteAdvertisements against the
+// watch factory built by newFactory and asserts the exact reconcile requests,
+// including duplicate suppression.
+func runSyncRouteAdvertisementsTest(t *testing.T, newFactory func() (*factory.WatchFactory, error)) {
+	t.Helper()
+	g := gomega.NewWithT(t)
+	g.Expect(config.PrepareTestConfig()).To(gomega.Succeed(), "failed to prepare test config")
+	t.Cleanup(func() {
+		g.Expect(config.PrepareTestConfig()).To(gomega.Succeed(), "failed to restore test config")
+	})
+	config.OVNKubernetesFeature.EnableMultiNetwork = true
+	config.OVNKubernetesFeature.EnableRouteAdvertisements = true
+
+	wf, err := newFactory()
+	g.Expect(err).NotTo(gomega.HaveOccurred(), "failed to create watch factory")
+	t.Cleanup(wf.Shutdown)
+
+	nm := newNetworkController("test", "", &testControllerManager{controllers: map[string]NetworkController{}}, wf, false)
+	controller.Stop(nm.networkReconciler)
+	t.Cleanup(nm.Stop)
+
+	fakeReconciler := &controller.FakeController{}
+	nm.networkReconciler = fakeReconciler
+
+	for _, network := range []string{"net-a", "net-b", "net-c"} {
+		netInfo, err := util.NewNetInfo(&ovncnitypes.NetConf{
+			NetConf:  cnitypes.NetConf{Name: network, Type: "ovn-k8s-cni-overlay"},
+			Topology: types.Layer2Topology,
+			Role:     types.NetworkRoleSecondary,
+			MTU:      1400,
+		})
+		g.Expect(err).NotTo(gomega.HaveOccurred(), "failed to create network info for %q", network)
+		nm.setNetwork(network, util.NewMutableNetInfo(netInfo))
+	}
+
+	newNAD := func(namespace, name, network string, advertisements ...string) *nadapi.NetworkAttachmentDefinition {
+		annotations := map[string]string{}
+		if network != "" {
+			annotations[types.OvnNetworkNameAnnotation] = network
+		}
+		raAnnotation, err := json.Marshal(advertisements)
+		g.Expect(err).NotTo(gomega.HaveOccurred(), "failed to marshal route advertisements")
+		annotations[types.OvnRouteAdvertisementsKey] = string(raAnnotation)
+		return &nadapi.NetworkAttachmentDefinition{
+			ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name, Annotations: annotations},
+		}
+	}
+	nads := []*nadapi.NetworkAttachmentDefinition{
+		newNAD("ns", "nad-a1", "net-a", "ra-1"),
+		newNAD("ns", "nad-a2", "net-a", "ra-1", "ra-2", "ra-3"),
+		newNAD("ns", "nad-b", "net-b", "ra-1", "ra-2"),
+		newNAD("ns", "nad-c", "net-c", "ra-3"),
+		newNAD(config.Default.ClusterDefaultNetworkNAD.Namespace, config.Default.ClusterDefaultNetworkNAD.Name, "", "ra-1"),
+		newNAD("ns", "nad-unannotated", "", "ra-1"),
+		newNAD("ns", "nad-absent", "net-d", "ra-1"),
+	}
+	for _, nad := range nads {
+		g.Expect(wf.NADInformer().Informer().GetIndexer().Add(nad)).To(gomega.Succeed(), "failed to add NAD %s/%s to indexer", nad.Namespace, nad.Name)
+	}
+
+	tests := []struct {
+		raName   string
+		expected []string
+	}{
+		{raName: "ra-1", expected: []string{"net-a", "net-b", types.DefaultNetworkName}},
+		{raName: "ra-2", expected: []string{"net-a", "net-b"}},
+		{raName: "ra-3", expected: []string{"net-a", "net-c"}},
+		{raName: "ra-4", expected: nil},
+	}
+	for _, test := range tests {
+		t.Run(test.raName, func(t *testing.T) {
+			g := gomega.NewWithT(t)
+			fakeReconciler := &controller.FakeController{}
+			nm.networkReconciler = fakeReconciler
+
+			g.Expect(nm.syncRouteAdvertisements(context.Background(), test.raName)).To(gomega.Succeed(), "failed to sync route advertisements")
+
+			expected := make([]string, 0, len(test.expected))
+			for _, network := range test.expected {
+				expected = append(expected, "Reconcile:"+network)
+			}
+			g.Expect(fakeReconciler.Reconciles).To(gomega.ConsistOf(expected), "unexpected networks reconciled")
+		})
+	}
 }
