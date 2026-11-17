@@ -22,6 +22,11 @@ function gocmd {
 # See: https://github.com/kubernetes/kubernetes/issues/135895
 export KUBE_FEATURE_WatchListClient=false
 
+# client-go's cache mutation detector deep-copies objects observed by shared
+# informers and panics if they are mutated. It is enabled at package
+# initialization, so it must be set before each `go test` process starts.
+export KUBE_CACHE_MUTATION_DETECTOR=true
+
 cd "${OVN_KUBE_ROOT}"
 
 PKGS=$(gocmd list -mod vendor -f '{{if len .TestGoFiles}} {{.ImportPath}} {{end}}' ${PKGS:-./cmd/... ./pkg/... ./hybrid-overlay/...} | xargs)
