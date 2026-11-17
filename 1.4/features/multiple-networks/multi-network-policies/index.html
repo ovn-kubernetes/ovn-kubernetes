@@ -3121,6 +3121,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#validation-of-ipblock-peers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validation of ipBlock peers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#user-facing-api-changes" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4859,6 +4870,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#validation-of-ipblock-peers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validation of ipBlock peers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#user-facing-api-changes" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4977,6 +4999,26 @@ annotation without the subnet attribute defined are possible if the policy
 <strong>only features</strong> <code>ipBlock</code> peers. If the <code>net-attach-def</code> features the
 <code>subnet</code> attribute, it can also feature <code>namespaceSelectors</code> and <code>podSelectors</code>.</p>
 </blockquote>
+<h2 id="validation-of-ipblock-peers">Validation of <code>ipBlock</code> peers<a class="headerlink" href="#validation-of-ipblock-peers" title="Permanent link">¶</a></h2>
+<p>The <code>MultiNetworkPolicy</code> CRD does not validate the <code>cidr</code> and <code>except</code>
+fields of an <code>ipBlock</code> peer, so OVN-Kubernetes validates them when it
+translates the policy. The rules are:</p>
+<ul>
+<li><code>cidr</code> must be a CIDR (<code>10.10.0.0/16</code>) or a bare IP address (<code>10.10.1.42</code>).
+  A bare IP is treated as a single-host CIDR (<code>/32</code> or <code>/128</code>).</li>
+<li>Each entry in <code>except</code> must also be a CIDR or a bare IP address, must be
+  contained in <code>cidr</code>, and must be a strict subset of it.</li>
+<li>A CIDR with host bits set, such as <code>10.10.1.42/24</code>, is accepted and
+  canonicalized to its network address, <code>10.10.1.0/24</code>.</li>
+<li>IPv4-mapped IPv6 values, such as <code>::ffff:10.10.1.42</code>, are not allowed, as they are
+  for <code>NetworkPolicy</code> since Kubernetes 1.36.</li>
+</ul>
+<p>A peer that fails validation is <strong>ignored</strong>, not rejected: the policy is still
+applied without that peer, and a warning is logged by <code>ovnkube-controller</code>
+naming the policy and the reason. If every peer of a rule is invalid, the whole
+rule is ignored. Because <code>policyTypes</code> still selects the pods for isolation,
+dropping a rule never turns the policy into an allow-all: a rule with no valid
+peers simply allows nothing.</p>
 <h2 id="user-facing-api-changes">User facing API Changes<a class="headerlink" href="#user-facing-api-changes" title="Permanent link">¶</a></h2>
 <p>There are no user facing API Changes.</p>
 
