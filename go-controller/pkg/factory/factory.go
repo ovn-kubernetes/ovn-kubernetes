@@ -966,13 +966,13 @@ func NewNodeWatchFactory(ovnClientset *util.OVNNodeClientset, nodeName string) (
 	// need to configure OVS interfaces for Pods on secondary networks in the DPU mode
 	// need to know what is the primary network for a namespace on the CNI side, which
 	// needs the NAD factory whenever the UDN feature is used.
-	if config.OVNKubernetesFeature.EnableMultiNetwork && (config.OVNKubernetesFeature.EnableNetworkSegmentation || config.IsModeDPU()) {
+	if config.OVNKubernetesFeature.EnableMultiNetwork && (config.OVNKubernetesFeature.EnableNetworkSegmentation || config.IsModeDPU() || util.IsRouteAdvertisementsEnabled()) {
 		wf.nadFactory = nadinformerfactory.NewSharedInformerFactory(ovnClientset.NetworkAttchDefClient, resyncInterval)
 		wf.informers[NetworkAttachmentDefinitionType], err = newQueuedInformer(eventQueueSize,
 			NetworkAttachmentDefinitionType, wf.nadFactory.K8sCniCncfIo().V1().NetworkAttachmentDefinitions().Informer(),
 			wf.stopChan, minNumEventQueues)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to create NAD queued informer: %w", err)
 		}
 	}
 
