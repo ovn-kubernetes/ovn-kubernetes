@@ -167,6 +167,10 @@ spec:
           value: {{ default "" .Values.global.v4JoinSubnet | quote }}
         - name: OVN_V6_JOIN_SUBNET
           value: {{ default "" .Values.global.v6JoinSubnet | quote }}
+        - name: OVN_V4_MASQUERADE_SUBNET
+          value: {{ default "" .Values.global.v4MasqueradeSubnet | quote }}
+        - name: OVN_V6_MASQUERADE_SUBNET
+          value: {{ default "" .Values.global.v6MasqueradeSubnet | quote }}
         - name: OVN_SSL_ENABLE
           value: {{ include "isSslEnabled" . | quote }}
         - name: OVN_GATEWAY_MODE
