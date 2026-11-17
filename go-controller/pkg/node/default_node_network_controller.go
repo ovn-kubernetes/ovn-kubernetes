@@ -27,7 +27,6 @@ import (
 	"k8s.io/client-go/tools/record"
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
-	"sigs.k8s.io/knftables"
 
 	"github.com/ovn-kubernetes/libovsdb/client"
 
@@ -126,6 +125,8 @@ type DefaultNodeNetworkController struct {
 
 	// retry framework for nodes, used for updating routes/nftables rules for node PMTUD guarding
 	retryNodes *retry.RetryFramework
+
+	pmtudNodeIPs pmtudNodeIPSet
 
 	dpuNodeLeaseManager *dpulease.Manager
 
@@ -1275,73 +1276,24 @@ func (nc *DefaultNodeNetworkController) WatchNodes() error {
 
 // addOrUpdateNode handles creating flows or nftables rules for each node to handle PMTUD
 func (nc *DefaultNodeNetworkController) addOrUpdateNode(node *corev1.Node) error {
-	var nftElems []knftables.Object
-	var addrs []string
-
-	// Use GetNodeAddresses to get all node IPs (including current node for openflow)
 	ipsv4, ipsv6, err := util.GetNodeAddresses(config.IPv4Mode, config.IPv6Mode, node)
 	if err != nil {
 		return fmt.Errorf("failed to get node addresses for node %q: %w", node.Name, err)
 	}
+	nodeIPs := append(ipsv4, ipsv6...)
+	if (config.IsModeDPUHost() || config.IsModeFull()) && node.Name != nc.name {
+		if err := nc.pmtudNodeIPs.add(nodeIPs); err != nil {
+			return fmt.Errorf("unable to update NFT elements for node %q: %w", node.Name, err)
+		}
+	}
 
-	// Process IPv4 addresses
-	for _, nodeIP := range ipsv4 {
+	addrs := make([]string, 0, len(nodeIPs))
+	for _, nodeIP := range nodeIPs {
 		addrs = append(addrs, nodeIP.String())
-		klog.Infof("Adding remote node %q, IP: %s to PMTUD blocking rules", node.Name, nodeIP)
-		// Only add to nftables if this is remote node
-		if (config.IsModeDPUHost() || config.IsModeFull()) && node.Name != nc.name {
-			nftElems = append(nftElems, &knftables.Element{
-				Set: types.NFTRemoteNodeIPsv4,
-				Key: []string{nodeIP.String()},
-			})
-		}
 	}
-
-	// Process IPv6 addresses
-	for _, nodeIP := range ipsv6 {
-		addrs = append(addrs, nodeIP.String())
-		klog.Infof("Adding remote node %q, IP: %s to PMTUD blocking rules", node.Name, nodeIP)
-		// Only add to nftables if this is remote node
-		if (config.IsModeDPUHost() || config.IsModeFull()) && node.Name != nc.name {
-			nftElems = append(nftElems, &knftables.Element{
-				Set: types.NFTRemoteNodeIPsv6,
-				Key: []string{nodeIP.String()},
-			})
-		}
-	}
-	if (config.IsModeDPUHost() || config.IsModeFull()) && len(nftElems) > 0 {
-		if err := nodenft.AddObjects(nftElems); err != nil {
-			return fmt.Errorf("unable to update NFT elements for node %q, error: %w", node.Name, err)
-		}
-	}
-
 	gw := nc.Gateway.(*gateway)
 	gw.openflowManager.updateBridgePMTUDFlowCache(getPMTUDKey(node.Name), addrs)
 
-	return nil
-}
-
-func removePMTUDNodeNFTRules(nodeIPs []net.IP) error {
-	var nftElems []knftables.Object
-	for _, nodeIP := range nodeIPs {
-		// Remove IPs from NFT sets
-		if utilnet.IsIPv4(nodeIP) {
-			nftElems = append(nftElems, &knftables.Element{
-				Set: types.NFTRemoteNodeIPsv4,
-				Key: []string{nodeIP.String()},
-			})
-		} else {
-			nftElems = append(nftElems, &knftables.Element{
-				Set: types.NFTRemoteNodeIPsv6,
-				Key: []string{nodeIP.String()},
-			})
-		}
-	}
-	if len(nftElems) > 0 {
-		if err := nodenft.DeleteObjects(nftElems); err != nil {
-			return fmt.Errorf("unable to remove PMTUD rules for nodes: %w", err)
-		}
-	}
 	return nil
 }
 
@@ -1377,22 +1329,13 @@ func (nc *DefaultNodeNetworkController) deleteNode(node *corev1.Node) {
 	ipsToRemove = append(ipsToRemove, ipsv6...)
 
 	klog.Infof("Deleting NFT elements for node: %s", node.Name)
-	if err := removePMTUDNodeNFTRules(ipsToRemove); err != nil {
+	if err := nc.pmtudNodeIPs.remove(ipsToRemove); err != nil {
 		klog.Errorf("Failed to delete nftables rules for PMTUD blocking for node %q: %v", node.Name, err)
 	}
 }
 
-var nodeIPSets = []knftables.Object{
-	&knftables.Set{
-		Name: types.NFTRemoteNodeIPsv4,
-	},
-	&knftables.Set{
-		Name: types.NFTRemoteNodeIPsv6,
-	},
-}
-
 func (nc *DefaultNodeNetworkController) syncNodes(objs []interface{}) error {
-	var keepNFTSetElems []knftables.Object
+	var keepNodeIPs []net.IP
 
 	if config.IsModeDPU() {
 		return nil
@@ -1417,23 +1360,10 @@ func (nc *DefaultNodeNetworkController) syncNodes(objs []interface{}) error {
 			continue
 		}
 
-		// Process IPv4 addresses
-		for _, nodeIP := range ipsv4 {
-			keepNFTSetElems = append(keepNFTSetElems, &knftables.Element{
-				Set: types.NFTRemoteNodeIPsv4,
-				Key: []string{nodeIP.String()},
-			})
-		}
-
-		// Process IPv6 addresses
-		for _, nodeIP := range ipsv6 {
-			keepNFTSetElems = append(keepNFTSetElems, &knftables.Element{
-				Set: types.NFTRemoteNodeIPsv6,
-				Key: []string{nodeIP.String()},
-			})
-		}
+		keepNodeIPs = append(keepNodeIPs, ipsv4...)
+		keepNodeIPs = append(keepNodeIPs, ipsv6...)
 	}
-	err := nodenft.SyncObjects(nodeIPSets, keepNFTSetElems)
+	err := nc.pmtudNodeIPs.sync(keepNodeIPs)
 	if err != nil {
 		err = fmt.Errorf("unable to sync nftables rules for nodes: %w", err)
 	}
