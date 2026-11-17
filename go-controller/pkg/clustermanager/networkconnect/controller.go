@@ -237,7 +237,6 @@ func (c *Controller) initialSync() error {
 		}
 		cncState.connectSubnets = connectSubnets
 		cncState.allocator = connectSubnetAllocator
-		c.cncCache[cnc.Name] = cncState
 
 		// Restore tunnel key in allocator if present
 		if tunnelID > 0 {
@@ -250,8 +249,10 @@ func (c *Controller) initialSync() error {
 		// Restore subnets if present
 		if len(allocatedSubnets) > 0 {
 			if err := cncState.allocator.MarkAllocatedSubnets(allocatedSubnets); err != nil {
-				klog.Warningf("Failed to restore subnets for CNC %s: %v", cnc.Name, err)
-				continue
+				// Publishing an unrestored allocator would make the first
+				// reconcile allocate new subnets and rewrite the live
+				// annotation, so fail instead of reconciling with empty state.
+				return fmt.Errorf("failed to restore subnets for CNC %s: %w", cnc.Name, err)
 			}
 
 			// Populate selectedNetworks from the restored allocations
@@ -260,6 +261,9 @@ func (c *Controller) initialSync() error {
 			}
 			klog.V(4).Infof("Restored %d subnet allocations for CNC %s", len(allocatedSubnets), cnc.Name)
 		}
+
+		// Only publish the state once the allocations have been restored.
+		c.cncCache[cnc.Name] = cncState
 	}
 
 	klog.Infof("Initial sync completed: restored state for %d CNCs", len(cncs))

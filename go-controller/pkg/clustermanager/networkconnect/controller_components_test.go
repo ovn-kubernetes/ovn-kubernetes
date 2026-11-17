@@ -2505,8 +2505,24 @@ type expectedSubnetAllocation struct {
 // It verifies that tunnel keys and subnet allocations are restored, and that re-allocating the same owner
 // returns the exact same subnet (idempotency).
 func TestController_initialSync(t *testing.T) {
+	// Use persisted annotations and the normal informer harness so restoration is
+	// checked before any worker can reconcile and overwrite an allocation.
+	// 1. Seed the fake API with the allocations left by a previous controller.
+	// 2. Run initialSync after the informer has observed those objects.
+	// 3. On failure, require an error, no published state, and unchanged annotations.
+	// 4. On success, reallocate each owner and require its original subnets.
+	invalidCNC := func(subnetAnnotation string) *networkconnectv1.ClusterNetworkConnect {
+		cnc := (testCNC{Name: "cnc-invalid"}).ClusterNetworkConnect()
+		cnc.Annotations = map[string]string{
+			util.OvnConnectRouterTunnelKeyAnnotation: "16715779",
+			"k8s.ovn.org/network-connect-subnet":     subnetAnnotation,
+		}
+		return cnc
+	}
 	tests := []struct {
 		name string
+		// wantErr identifies allocations that parse but cannot be restored.
+		wantErr string
 		// existingCNCs are CNC objects that exist before initialSync (with annotations set)
 		existingCNCs []*networkconnectv1.ClusterNetworkConnect
 		// expectCacheEntries maps CNC name to expected cache state after initialSync
@@ -2659,6 +2675,36 @@ func TestController_initialSync(t *testing.T) {
 			},
 		},
 		{
+			name: "rejects a layer3 IPv4 allocation outside the connect range",
+			existingCNCs: []*networkconnectv1.ClusterNetworkConnect{
+				invalidCNC(`{"layer3_1":{"ipv4":"10.1.0.0/24"}}`),
+			},
+			wantErr: "failed to restore subnets for CNC cnc-invalid",
+		},
+		{
+			name: "rejects a layer3 IPv6 allocation outside the connect range",
+			existingCNCs: []*networkconnectv1.ClusterNetworkConnect{
+				invalidCNC(`{"layer3_1":{"ipv6":"fd00:20::/120"}}`),
+			},
+			wantErr: "failed to restore subnets for CNC cnc-invalid",
+		},
+		{
+			name: "rejects a dual-stack allocation when IPv6 restoration fails",
+			// IPv4 is processed first and is valid. A later IPv6 failure must
+			// still prevent publishing state for workers to reconcile.
+			existingCNCs: []*networkconnectv1.ClusterNetworkConnect{
+				invalidCNC(`{"layer3_1":{"ipv4":"192.168.7.0/24","ipv6":"fd00:20::/120"}}`),
+			},
+			wantErr: "failed to restore subnets for CNC cnc-invalid",
+		},
+		{
+			name: "rejects a layer2 allocation outside the connect range",
+			existingCNCs: []*networkconnectv1.ClusterNetworkConnect{
+				invalidCNC(`{"layer2_1":{"ipv4":"10.1.0.0/31"}}`),
+			},
+			wantErr: "failed to restore subnets for CNC cnc-invalid",
+		},
+		{
 			name: "handles CNC with empty annotations gracefully",
 			existingCNCs: []*networkconnectv1.ClusterNetworkConnect{
 				{
@@ -2696,14 +2742,14 @@ func TestController_initialSync(t *testing.T) {
 			for _, cnc := range tt.existingCNCs {
 				_, err := fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Create(
 					context.Background(), cnc, metav1.CreateOptions{})
-				g.Expect(err).ToNot(gomega.HaveOccurred())
+				g.Expect(err).ToNot(gomega.HaveOccurred(), "persisted CNC %s must be created before restoration", cnc.Name)
 			}
 
 			wf, err := factory.NewClusterManagerWatchFactory(fakeClientset)
-			g.Expect(err).ToNot(gomega.HaveOccurred())
+			g.Expect(err).ToNot(gomega.HaveOccurred(), "the watch factory must initialize for CNC restoration")
 
 			err = wf.Start()
-			g.Expect(err).ToNot(gomega.HaveOccurred())
+			g.Expect(err).ToNot(gomega.HaveOccurred(), "the watch factory must start before CNC restoration")
 			defer wf.Shutdown()
 
 			// Wait for informer caches to sync
@@ -2724,7 +2770,19 @@ func TestController_initialSync(t *testing.T) {
 
 			// Run initialSync
 			err = c.initialSync()
-			g.Expect(err).ToNot(gomega.HaveOccurred())
+			if tt.wantErr != "" {
+				g.Expect(err).To(gomega.MatchError(gomega.ContainSubstring(tt.wantErr)), "initial sync must report the subnet restoration failure")
+				g.Expect(c.cncCache).To(gomega.BeEmpty(), "failed restoration must not publish an allocator")
+				for _, cnc := range tt.existingCNCs {
+					persisted, getErr := fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Get(
+						context.Background(), cnc.Name, metav1.GetOptions{})
+					g.Expect(getErr).NotTo(gomega.HaveOccurred(), "CNC %s must remain readable after failed restoration", cnc.Name)
+					g.Expect(persisted.Annotations).To(gomega.Equal(cnc.Annotations),
+						"failed restoration must preserve CNC %s's persisted allocations", cnc.Name)
+				}
+				return
+			}
+			g.Expect(err).ToNot(gomega.HaveOccurred(), "initial sync must restore valid persisted allocations")
 
 			// Verify cache entries
 			for cncName, expected := range tt.expectCacheEntries {
