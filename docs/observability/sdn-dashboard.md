@@ -66,7 +66,9 @@ helm install sdn-dashboard helm/sdn-dashboard -n monitoring
 
 After installing kube-prometheus-stack, upgrade OVN-Kubernetes with
 `monitoring.enableServiceMonitor=true` to create the ServiceMonitors needed for
-metric scraping. The chart's default ServiceMonitor label,
+metric scraping. Preserve the installed release's values during the upgrade
+(for example, use `--reuse-values` with `helm upgrade`). The chart's default
+ServiceMonitor label,
 `release: kube-prometheus-stack`, matches the Prometheus release name used above.
 
 ## Port Forwarding to access Grafana and Prometheus UI

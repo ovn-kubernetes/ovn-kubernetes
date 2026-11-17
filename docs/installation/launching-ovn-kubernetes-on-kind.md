@@ -34,7 +34,7 @@ cd ovn-kubernetes
 ```
 The `kind.sh` script builds OVN-Kubernetes into a container image. On Linux,
 you can optionally build the Go binaries first to verify local changes. This
-requires Go 1.26.3 or later, as specified by `go-controller/go.mod`:
+requires Go 1.26.0 or later; `go-controller/go.mod` suggests Go 1.26.10:
 
 ```
 pushd go-controller
@@ -46,6 +46,10 @@ popd
 
 Run the script from the repository root. It builds the Fedora image as part of
 the deployment:
+
+Warning: If a KinD cluster named `ovn` already exists, this command deletes it
+without confirmation, including its workloads. To reuse the cluster, run
+`./kind.sh --deploy` instead.
 
 ```shell
 export KUBECONFIG="${HOME}/ovn.conf"
@@ -482,4 +486,9 @@ is deleted directly with KinD `kind delete cluster --name ovn`, it restarts the 
 The root cause is unknown, this also can not be reproduced in Ubuntu 20.04 or
 with Fedora32 Cloud, but it does not happen if we clean first the ovn-kubernetes resources.
 
-Use the matching teardown command in the Usage Notes above to delete the cluster.
+Before using the matching teardown command in the Usage Notes above, delete
+the namespace while the cluster is still running and its kubeconfig is available:
+
+```shell
+kubectl delete namespace ovn-kubernetes --wait=true
+```

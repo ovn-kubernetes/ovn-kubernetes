@@ -247,8 +247,8 @@ spec:
 * `ingress` has 5 rules:
     * rule0: always allow ingress traffic coming from ingress-nginx namespace
       to selected pods
-    * rule1: always allow TCP ingress traffic to destination port 7564 from
-      pods in monitoring namespace
+    * rule1: always allow TCP ingress traffic to destination port 7564 or
+      named port `scrape` from pods in monitoring namespace
     * rule2: always allow all ingress traffic from `open` tenant's namespaces
     * rule3: always pass all ingress traffic from `restricted` tenant's namespaces
       (please check the following sections to learn more about what `pass` is)
