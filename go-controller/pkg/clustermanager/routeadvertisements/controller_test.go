@@ -5079,6 +5079,10 @@ func TestUpdates(t *testing.T) {
 			config.OVNKubernetesFeature.EnableRouteAdvertisements = true
 			config.OVNKubernetesFeature.EnableEgressIP = true
 			config.OVNKubernetesFeature.EnableEVPN = true
+			// EVPN support requires local gateway mode
+			previousGatewayMode := config.Gateway.Mode
+			t.Cleanup(func() { config.Gateway.Mode = previousGatewayMode })
+			config.Gateway.Mode = config.GatewayModeLocal
 			config.OVNKubernetesFeature.EnableNetworkSegmentation = !tt.networkSegmentationDisabled
 
 			fakeClientset := util.GetOVNClientset().GetClusterManagerClientset()
