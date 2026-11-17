@@ -527,15 +527,16 @@ func (tr testRouter) Router() frrapi.Router {
 }
 
 type testFRRConfig struct {
-	Name         string
-	Namespace    string
-	Generation   int
-	Labels       map[string]string
-	Annotations  map[string]string
-	Routers      []*testRouter
-	NodeSelector map[string]string
-	OwnUpdate    bool
-	RawConfig    string
+	Name                    string
+	Namespace               string
+	Generation              int
+	Labels                  map[string]string
+	Annotations             map[string]string
+	Routers                 []*testRouter
+	NodeSelector            map[string]string
+	NodeSelectorExpressions []metav1.LabelSelectorRequirement
+	OwnUpdate               bool
+	RawConfig               string
 }
 
 func (tf testFRRConfig) FRRConfiguration() *frrapi.FRRConfiguration {
@@ -549,7 +550,8 @@ func (tf testFRRConfig) FRRConfiguration() *frrapi.FRRConfiguration {
 		},
 		Spec: frrapi.FRRConfigurationSpec{
 			NodeSelector: metav1.LabelSelector{
-				MatchLabels: tf.NodeSelector,
+				MatchLabels:      tf.NodeSelector,
+				MatchExpressions: tf.NodeSelectorExpressions,
 			},
 		},
 	}
@@ -3612,6 +3614,41 @@ exit
 			}
 			tests = append(tests, tt)
 		}
+	}
+
+	// Exercise the intersection of RA and FRR selectors, including Nodes
+	// outside the RA selection and expression-based FRR selectors.
+	for _, base := range tests {
+		if base.name != "(layer3) reconciles eip RouteAdvertisement for a single FRR config, node, non default network and non default target VRF" {
+			continue
+		}
+		for _, selector := range []struct {
+			name        string
+			expressions []metav1.LabelSelectorRequirement
+		}{
+			{name: "empty selector"},
+			{name: "In", expressions: []metav1.LabelSelectorRequirement{{Key: "rack", Operator: metav1.LabelSelectorOpIn, Values: []string{"blue"}}}},
+			{name: "NotIn", expressions: []metav1.LabelSelectorRequirement{{Key: "rack", Operator: metav1.LabelSelectorOpNotIn, Values: []string{"red"}}}},
+			{name: "Exists", expressions: []metav1.LabelSelectorRequirement{{Key: "rack", Operator: metav1.LabelSelectorOpExists}}},
+			{name: "DoesNotExist", expressions: []metav1.LabelSelectorRequirement{{Key: "excluded", Operator: metav1.LabelSelectorOpDoesNotExist}}},
+		} {
+			tt := base
+			tt.name = "intersects RA and FRR node selections/" + selector.name
+			ra := *base.ra
+			ra.NodeSelector = map[string]string{"advertise": "true"}
+			tt.ra = &ra
+			node := *base.nodes[0]
+			node.Labels = map[string]string{"advertise": "true", "rack": "blue"}
+			// This Node matches the FRR selector but not the RA selector.
+			// Its missing subnet annotations must not affect generation.
+			tt.nodes = []*testNode{&node, {Name: "node2", Labels: map[string]string{"rack": "blue"}}}
+			source := *base.frrConfigs[0]
+			source.NodeSelector = nil
+			source.NodeSelectorExpressions = selector.expressions
+			tt.frrConfigs = []*testFRRConfig{&source}
+			tests = append(tests, tt)
+		}
+		break
 	}
 
 	for _, tt := range tests {
