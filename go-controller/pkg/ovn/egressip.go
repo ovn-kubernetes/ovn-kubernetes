@@ -1822,6 +1822,24 @@ func (e *EgressIPController) syncStaleAddressSetIPs(egressIPCache egressIPCache,
 			}
 		}
 	}
+	// Existing sets must also be cleared when their last owner disappeared.
+	err := e.addressSetFactory.ProcessEachAddressSet(e.controllerName, libovsdbops.AddressSetEgressIP, func(ids *libovsdbops.DbObjectIDs) error {
+		networkName := ids.GetObjectID(libovsdbops.NetworkKey)
+		if ids.GetObjectID(libovsdbops.ObjectNameKey) != string(EgressIPServedPodsAddrSetName) {
+			return nil
+		}
+		if !include(networkName) || networks[networkName] != nil {
+			return nil
+		}
+		as, err := e.addressSetFactory.GetAddressSet(ids)
+		if err != nil {
+			return fmt.Errorf("network %s: cannot get served-pod address set: %v", networkName, err)
+		}
+		return as.SetAddresses(nil)
+	})
+	if err != nil {
+		return fmt.Errorf("cannot clear unowned served-pod address sets: %v", err)
+	}
 	for networkName, ips := range networks {
 		as, err := e.addressSetFactory.EnsureAddressSet(getEgressIPAddrSetDbIDs(EgressIPServedPodsAddrSetName, networkName, e.controllerName))
 		if err != nil {
