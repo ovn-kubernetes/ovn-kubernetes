@@ -112,7 +112,17 @@ func (h *nodeEventHandler) AreResourcesEqual(obj1, obj2 interface{}) (bool, erro
 		if !ok {
 			return false, fmt.Errorf("could not cast obj2 of type %T to *kapi.Node", obj2)
 		}
-		return reflect.DeepEqual(node1.Status.Addresses, node2.Status.Addresses) && reflect.DeepEqual(node1.Annotations, node2.Annotations), nil
+		if !reflect.DeepEqual(node1.Status.Addresses, node2.Status.Addresses) {
+			return false, nil
+		}
+		if node1.Name == h.nc.name || node2.Name == h.nc.name {
+			return reflect.DeepEqual(node1.Annotations, node2.Annotations), nil
+		}
+		// Remote-node PMTUD programming only consumes host-cidrs. Preserve
+		// presence changes so an empty annotation still reaches validation.
+		oldCIDRs, oldPresent := node1.Annotations[util.OVNNodeHostCIDRs]
+		newCIDRs, newPresent := node2.Annotations[util.OVNNodeHostCIDRs]
+		return oldPresent == newPresent && oldCIDRs == newCIDRs, nil
 
 	default:
 		return false, fmt.Errorf("no object comparison for type %s", h.objType)
