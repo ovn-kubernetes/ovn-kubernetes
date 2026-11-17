@@ -19,6 +19,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
+	"k8s.io/utils/ptr"
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
@@ -1070,11 +1071,69 @@ func (oc *Layer2UserDefinedNetworkController) addOrUpdateUDNClusterSubnetEgressS
 	router := &nbdb.LogicalRouter{
 		Name: routerName,
 	}
-	if err := libovsdbops.CreateOrUpdateNATs(oc.nbClient, router, nats...); err != nil {
+	if err := oc.reconcileUDNClusterSubnetEgressSNATs(router, nats); err != nil {
 		return fmt.Errorf("failed to update SNAT for cluster on router: %q for network %q, error: %w",
 			routerName, oc.GetNetworkName(), err)
 	}
 	return nil
+}
+
+// reconcileUDNClusterSubnetEgressSNATs replaces obsolete forms of the Layer2
+// cluster-subnet SNAT in the same transaction that creates the desired forms.
+// Advertisement changes can replace one match-based SNAT with two
+// allowed_ext_ips SNATs, or vice versa. CreateOrUpdateNATsOps intentionally
+// treats the allowed_ext_ips rows as distinct, so it cannot remove the rows
+// that belonged to the previous advertisement state by itself.
+func (oc *Layer2UserDefinedNetworkController) reconcileUDNClusterSubnetEgressSNATs(
+	router *nbdb.LogicalRouter, desiredNATs []*nbdb.NAT) error {
+	routerNATs, err := libovsdbops.GetRouterNATs(oc.nbClient, router)
+	if err != nil {
+		return fmt.Errorf("failed to list existing NATs on router %q: %w", router.Name, err)
+	}
+
+	ops, err := libovsdbops.CreateOrUpdateNATsOps(oc.nbClient, nil, router, desiredNATs...)
+	if err != nil {
+		return fmt.Errorf("failed to build desired SNAT operations on router %q: %w", router.Name, err)
+	}
+
+	desiredUUIDs := sets.New[string]()
+	for _, desiredNAT := range desiredNATs {
+		desiredUUIDs.Insert(desiredNAT.UUID)
+	}
+
+	staleNATs := []*nbdb.NAT{}
+	for _, routerNAT := range routerNATs {
+		if desiredUUIDs.Has(routerNAT.UUID) {
+			continue
+		}
+		for _, desiredNAT := range desiredNATs {
+			if sameUDNClusterSubnetEgressSNAT(routerNAT, desiredNAT) {
+				staleNATs = append(staleNATs, routerNAT)
+				break
+			}
+		}
+	}
+
+	if len(staleNATs) > 0 {
+		ops, err = libovsdbops.DeleteNATsOps(oc.nbClient, ops, router, staleNATs...)
+		if err != nil {
+			return fmt.Errorf("failed to build stale SNAT cleanup operations on router %q: %w", router.Name, err)
+		}
+	}
+
+	if _, err := libovsdbops.TransactAndCheck(oc.nbClient, ops); err != nil {
+		return fmt.Errorf("failed to reconcile SNATs on router %q: %w", router.Name, err)
+	}
+	return nil
+}
+
+func sameUDNClusterSubnetEgressSNAT(existing, desired *nbdb.NAT) bool {
+	return existing.Type == nbdb.NATTypeSNAT &&
+		existing.LogicalIP == desired.LogicalIP &&
+		existing.ExternalIP == desired.ExternalIP &&
+		ptr.Equal(existing.LogicalPort, desired.LogicalPort) &&
+		existing.ExternalIDs[types.NetworkExternalID] == desired.ExternalIDs[types.NetworkExternalID] &&
+		existing.ExternalIDs[types.TopologyExternalID] == desired.ExternalIDs[types.TopologyExternalID]
 }
 
 func (oc *Layer2UserDefinedNetworkController) nodeGatewayConfig(node *corev1.Node, isPodNetworkAdvertised bool) (*GatewayConfig, error) {
