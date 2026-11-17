@@ -1168,6 +1168,92 @@ func TestAdvertisedLocalGatewaySNATUsesDestinationMatch(t *gotesting.T) {
 	expectAdvertisedSNATUsesDestinationMatch(t, bsnc, asf, localPodSubnets)
 }
 
+func TestLayer2UDNClusterSubnetSNATReplacesPreviousAdvertisementState(t *gotesting.T) {
+	bsnc, _, localPodSubnets := newAdvertisedSNATTestControllerForTopology(
+		t,
+		types.Layer2Topology,
+		"100.128.0.0/16,ae70::/64",
+		types.NoOverlaySNATDisabled,
+		config.GatewayModeShared,
+		ovntest.MustParseIPNets("100.128.0.0/16", "ae70::/64"),
+	)
+	nbClient := bsnc.nbClient
+	config.Layer2UsesTransitRouter = true
+	asf := addressset.NewOvnAddressSetFactory(nbClient, config.IPv4Mode, config.IPv6Mode)
+	bsnc.addressSetFactory = asf
+	seedAdvertisedSNATAddressSets(t, asf)
+
+	oc := &Layer2UserDefinedNetworkController{
+		BaseLayer2UserDefinedNetworkController: BaseLayer2UserDefinedNetworkController{
+			BaseUserDefinedNetworkController: BaseUserDefinedNetworkController{
+				BaseNetworkController: BaseNetworkController{
+					CommonNetworkControllerInfo: CommonNetworkControllerInfo{nbClient: nbClient},
+					controllerName:              bsnc.controllerName,
+					ReconcilableNetInfo:         bsnc.ReconcilableNetInfo,
+					addressSetFactory:           bsnc.addressSetFactory,
+					addressSetManager:           bsnc.addressSetManager,
+				},
+			},
+		},
+	}
+	router := &nbdb.LogicalRouter{Name: oc.GetNetworkScopedClusterRouterName()}
+	g := NewWithT(t)
+	g.Expect(libovsdbops.CreateOrUpdateLogicalRouter(nbClient, router)).To(Succeed())
+
+	initialNATs, err := bsnc.buildUDNEgressSNAT(
+		localPodSubnets, oc.GetNetworkScopedRouterToSwitchPortName(""), false)
+	g.Expect(err).NotTo(HaveOccurred())
+	unrelatedNAT := *initialNATs[0]
+	unrelatedNAT.UUID = ""
+	unrelatedNAT.ExternalIDs = map[string]string{
+		types.NetworkExternalID:  "another-network",
+		types.TopologyExternalID: types.Layer2Topology,
+	}
+	g.Expect(libovsdbops.CreateOrUpdateNATs(nbClient, router, &unrelatedNAT)).To(Succeed())
+
+	assertSNATs := func(advertised bool) {
+		t.Helper()
+		g.Expect(oc.addOrUpdateUDNClusterSubnetEgressSNAT(localPodSubnets, advertised)).To(Succeed())
+
+		routerNATs, err := libovsdbops.GetRouterNATs(nbClient, router)
+		g.Expect(err).NotTo(HaveOccurred())
+		expectedPerSubnet := 1
+		if advertised {
+			expectedPerSubnet = 2
+		}
+		g.Expect(routerNATs).To(HaveLen(len(localPodSubnets)*expectedPerSubnet + 1))
+
+		actualBySubnet := map[string][]*nbdb.NAT{}
+		unrelatedFound := false
+		for _, nat := range routerNATs {
+			if nat.ExternalIDs[types.NetworkExternalID] == "another-network" {
+				unrelatedFound = true
+				continue
+			}
+			actualBySubnet[nat.LogicalIP] = append(actualBySubnet[nat.LogicalIP], nat)
+		}
+		g.Expect(unrelatedFound).To(BeTrue())
+
+		for _, subnet := range localPodSubnets {
+			subnetNATs := actualBySubnet[subnet.String()]
+			g.Expect(subnetNATs).To(HaveLen(expectedPerSubnet))
+			for _, nat := range subnetNATs {
+				if advertised {
+					g.Expect(nat.Match).To(BeEmpty())
+					g.Expect(nat.AllowedExtIPs).NotTo(BeNil())
+				} else {
+					g.Expect(nat.Match).To(ContainSubstring("eth.dst =="))
+					g.Expect(nat.AllowedExtIPs).To(BeNil())
+				}
+			}
+		}
+	}
+
+	assertSNATs(false)
+	assertSNATs(true)
+	assertSNATs(false)
+}
+
 func newAdvertisedSNATTestController(
 	t *gotesting.T,
 	outboundSNAT string,
@@ -1273,10 +1359,11 @@ func newAdvertisedSNATTestControllerForTopology(
 	)
 	return &BaseUserDefinedNetworkController{
 			BaseNetworkController: BaseNetworkController{
-				controllerName:      controllerName,
-				ReconcilableNetInfo: util.NewReconcilableNetInfo(netInfo),
-				addressSetFactory:   asf,
-				addressSetManager:   addressSetManager,
+				CommonNetworkControllerInfo: CommonNetworkControllerInfo{nbClient: nbClient},
+				controllerName:              controllerName,
+				ReconcilableNetInfo:         util.NewReconcilableNetInfo(netInfo),
+				addressSetFactory:           asf,
+				addressSetManager:           addressSetManager,
 			},
 		},
 		asf,
