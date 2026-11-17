@@ -28,46 +28,41 @@ import (
 // inspired by arping timeout
 var msgTimeout = 500 * time.Millisecond
 
-func findInterfaceForDstIP(dstIP string) (*net.Interface, error) {
-	ifaces, err := net.Interfaces()
+// findInterfaceForDstIP returns the egress interface for dstIP using the kernel
+// routing table. Prefix Contains() matching is insufficient when hosts program
+// addresses as /32 or /128 while peers are reached via on-link or pool routes.
+func findInterfaceForDstIP(dstIP net.IP) (*net.Interface, error) {
+	if dstIP == nil {
+		return nil, fmt.Errorf("dst IP is nil")
+	}
+	routes, err := netlink.RouteGet(dstIP)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get route for %s: %w", dstIP, err)
 	}
-	netIP := net.ParseIP(dstIP)
-	if netIP == nil {
-		return nil, fmt.Errorf("failed to parse ip: %w", err)
-	}
-
-	isDown := func(iface net.Interface) bool {
-		return iface.Flags&net.FlagUp == 0
-	}
-	hasAddressInNetwork := func(iface net.Interface) bool {
-		// ignore loopback interfaces
-		if iface.Flags&net.FlagLoopback != 0 {
-			return false
+	for _, route := range routes {
+		linkIndexes := make([]int, 0, 1+len(route.MultiPath))
+		if route.LinkIndex > 0 {
+			linkIndexes = append(linkIndexes, route.LinkIndex)
 		}
-		addrs, err := iface.Addrs()
-		if err != nil {
-			return false
-		}
-		for _, a := range addrs {
-			if ipnet, ok := a.(*net.IPNet); ok {
-				if ipnet.Contains(netIP) {
-					return true
-				}
+		for _, nh := range route.MultiPath {
+			if nh.LinkIndex > 0 {
+				linkIndexes = append(linkIndexes, nh.LinkIndex)
 			}
 		}
-		return false
-	}
-
-	for _, iface := range ifaces {
-		if isDown(iface) {
-			continue
+		for _, idx := range linkIndexes {
+			iface, ifErr := net.InterfaceByIndex(idx)
+			if ifErr != nil {
+				klog.V(5).Infof("Skipping route interface index %d for %s: %v", idx, dstIP, ifErr)
+				continue
+			}
+			if iface.Flags&net.FlagUp == 0 {
+				continue
+			}
+			if iface.Flags&net.FlagLoopback != 0 {
+				continue
+			}
+			return iface, nil
 		}
-		if !hasAddressInNetwork(iface) {
-			continue
-		}
-		return &iface, nil
 	}
 	return nil, errors.New("no usable interface found")
 }
@@ -190,7 +185,7 @@ func getIPv6Macs(resolveIPs ...string) ([]net.HardwareAddr, error) {
 			klog.Warningf("Non-ipv6 address %s was passed for MAC resolution, ignore", resolveIP)
 			continue
 		}
-		iface, err := findInterfaceForDstIP(resolveIP)
+		iface, err := findInterfaceForDstIP(net.ParseIP(resolveIP))
 		if err != nil {
 			klog.Errorf("Failed to find interface for ip %v: %v", resolveIP, err)
 			continue

@@ -729,7 +729,7 @@ func LinkNeighSet(link netlink.Link, neighIP net.IP, neighMAC net.HardwareAddr) 
 }
 
 func GetMACAddressFromARP(neighIP net.IP) (net.HardwareAddr, error) {
-	selectedIface, err := findUsableInterfaceForNetwork(neighIP)
+	selectedIface, err := findInterfaceForDstIP(neighIP)
 	if err != nil {
 		return nil, err
 	}
@@ -1010,51 +1010,6 @@ func GetIPFamily(v6 bool) int {
 
 func (defaultNetLinkOps) LinkSetVfHardwareAddr(pfLink netlink.Link, vfIndex int, hwaddr net.HardwareAddr) error {
 	return netlink.LinkSetVfHardwareAddr(pfLink, vfIndex, hwaddr)
-}
-
-func findUsableInterfaceForNetwork(ipAddr net.IP) (*net.Interface, error) {
-	ifaces, err := net.Interfaces()
-
-	if err != nil {
-		return nil, err
-	}
-
-	isDown := func(iface net.Interface) bool {
-		return iface.Flags&1 == 0
-	}
-
-	for _, iface := range ifaces {
-		if isDown(iface) {
-			continue
-		}
-		found, err := ipAddrExistsAtInterface(ipAddr, iface)
-		if err != nil {
-			return nil, err
-		}
-		if !found {
-			continue
-		}
-
-		return &iface, nil
-	}
-	return nil, errors.New("no usable interface found")
-}
-
-func ipAddrExistsAtInterface(ipAddr net.IP, iface net.Interface) (bool, error) {
-	addrs, err := iface.Addrs()
-
-	if err != nil {
-		return false, err
-	}
-
-	for _, a := range addrs {
-		if ipnet, ok := a.(*net.IPNet); ok {
-			if ipnet.Contains(ipAddr) {
-				return true, nil
-			}
-		}
-	}
-	return false, nil
 }
 
 var supportsIPv6InterfaceForwarding atomic.Bool
