@@ -109,6 +109,36 @@ Use existing fixtures, fakes, and harnesses to construct valid objects, and keep
 test-only helpers in test files. New production injection points or abstractions
 must have a design justification beyond making a particular test easier to write.
 
+### Code comment style
+
+Write comments as short, plain-language explanations for a maintainer who
+has not followed the PR discussion.
+
+- Explain the intent, invariant, or dependency that is difficult to infer
+  from the code. For interacting events or state transitions, describe what
+  changed, what must be preserved or removed, and why ordering matters.
+- Use a small concrete scenario when it makes a corner case clearer, such
+  as two networks sharing a VRF or a node recovering after an uplink change.
+  Connect the scenario to the consequence the code prevents.
+- Put the overall contract and lifecycle at the function boundary; put a
+  branch-specific explanation next to the surprising decision. Explain
+  serialized fields and formats when their meaning is not obvious.
+- Be selective. Prefer improving an existing comment over adding another.
+  Do not narrate obvious operations, paraphrase variable names, repeat the
+  same explanation at several levels, or comment every branch.
+- Check explanations against the current implementation. Describe its real
+  guarantees and limitations, not intended behavior or PR history. Keep
+  comments current when the behavior changes.
+
+Example:
+
+```go
+// Blue also advertises through red's VRF. Removing red's network must
+// remove red's prefixes while keeping the router and imports used by blue.
+```
+
+This is more useful than `// Remove stale configuration` above a delete loop.
+
 ## OKEPs (Enhancement Proposals)
 
 New features require an OKEP in `docs/okeps/`. See `docs/okeps/okep-4368-template.md` for the

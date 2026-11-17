@@ -96,10 +96,9 @@ Project-specific additions:
 - **time.Duration** — use explicit units (`10*time.Second`, not `10`).
 - **Shared helpers** — utility functions belong in `pkg/util/` or the
   relevant package's utils. Don't duplicate existing helpers.
-- **Comments** — comments should explain *why*, not *what*. Don't restate
-  what the code does (e.g. `// return the error` above `return err`,
-  `// create the pod` above `CreatePod()`). Only non-obvious intent,
-  trade-offs, or constraints warrant a comment.
+- **Comments** — follow the root [code comment style](../AGENTS.md#code-comment-style):
+  explain intent, dependencies, and consequences in plain language, using
+  short scenarios where helpful. Comment selectively rather than narrating code.
 - **Doc comments** — exported functions, types, and methods must have
   godoc comments starting with the identifier name
   (e.g. `// FuncName does ...`).

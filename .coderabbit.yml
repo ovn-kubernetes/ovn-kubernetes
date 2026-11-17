@@ -269,8 +269,10 @@ reviews:
         - Flag comments that merely restate what the code does
           (e.g. "// set a to b" above "a = b", "// return the error"
           above "return err", "// create the pod" above CreatePod()).
-          Comments should explain why, not what. Only non-obvious
-          intent, trade-offs, or constraints warrant a comment.
+          Review comments using the root AGENTS.md "Code comment style"
+          guidance. Allow concise explanations of non-obvious intent,
+          behavior, invariants, dependencies, lifecycle, and consequences,
+          including small examples when helpful.
     - path: "test/e2e/**"
       instructions: |
         - Verify CI reachability for every new spec or changed selection
