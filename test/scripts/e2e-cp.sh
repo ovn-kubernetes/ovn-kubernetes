@@ -296,12 +296,10 @@ else
   fi
 fi
 
-# if we set PARALLEL=true, skip serial test
-if [ "${PARALLEL:-false}" = "true" ]; then
-  export GINKGO_PARALLEL=y
-  export GINKGO_PARALLEL_NODES=10
-  skip_label "$SERIAL_LABEL"
-fi
+# Specs marked Serial are never skipped here. A single Ginkgo worker runs
+# everything in sequence, and with several workers Ginkgo itself runs the
+# Serial specs after the parallel phase on one worker. PARALLEL only affects
+# the upstream shard runner in e2e-kind.sh.
 
 if [ "$ENABLE_NO_OVERLAY" == true ]; then
   # No-overlay mode uses underlying network infrastructure directly.

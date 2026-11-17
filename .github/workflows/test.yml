@@ -23,8 +23,8 @@ env:
   ENABLE_COREDUMPS: true
   # Keep cluster deployment and persistent-IP test selection in sync.
   OVN_ENABLE_PERSISTENT_IPS: true
-  # This skips tests tagged as Serial for most lanes
-  # Serial tests are run in a dedicated lane
+  # Run the upstream shard suites on several Ginkgo workers and skip their
+  # [Serial] specs. Control-plane suites always run their Serial specs.
   PARALLEL: true
 
   # This must be a directory
@@ -726,12 +726,6 @@ jobs:
       ENABLE_UPLINK: "${{ startsWith(matrix.target, 'network-segmentation') || matrix.network-segmentation == 'enable-network-segmentation' }}"
       ENABLE_PRE_CONF_UDN_ADDR: "${{ startsWith(matrix.target, 'network-segmentation') || matrix.network-segmentation == 'enable-network-segmentation' }}"
       ADVERTISED_UDN_ISOLATION_MODE: "${{ matrix.advertised-udn-isolation-mode }}"
-      # Managed BGP tests change the shared template and must run serially.
-      # The ARP/NDP flood lane carries Serial specs that PARALLEL=true would skip,
-      # and they are the only CI coverage of the MAC binding mirroring controller.
-      # Compared against 'true' rather than negated: any non-empty string, "false"
-      # included, is truthy in a GitHub expression.
-      PARALLEL: "${{ matrix.target != 'serial' && matrix.target != 'bgp-managed' && matrix.disable-udn-arp-ndp-flood != 'true' }}"
       OVN_UNPRIVILEGED_MODE: "${{ matrix.cni-mode == 'unprivileged' }}"
       MULTI_POD_SUBNET: true
       DYNAMIC_UDN_ALLOCATION: "${{ endsWith(matrix.target, '-dynamic') }}"
