@@ -115,6 +115,15 @@ graph LR
     LS2 -->|"6"| B["Pod B · 10.244.2.5"]:::pod
 ```
 
+Cross-zone forwarding uses static routes on each zone's `ovn_cluster_router`.
+A remote node's `ic-node` routes are reconciled to the subnets and
+gateway-router addresses that node currently owns. A prefix the node no
+longer owns is removed when that remote node is reconciled and again when
+stale nodes are cleaned up. That deletion leaves a route tagged for another
+network alone. Installing the node's current prefix can still replace a
+route for the same prefix. An empty desired-prefix set deletes nothing, so
+a failed prefix lookup cannot remove the node's routes.
+
 ---
 
 ### Pod to ClusterIP (ovn pod backend)

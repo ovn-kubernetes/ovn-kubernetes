@@ -282,6 +282,9 @@ func (zic *ZoneInterconnectHandler) DeleteNode(node *corev1.Node) error {
 }
 
 // CleanupStaleNodes cleans up the interconnect resources for stale nodes.
+// Nodes that still exist are also reconciled: a route whose prefix is no longer
+// that node's subnet or gateway-router address is removed. Those leftovers
+// otherwise stay attached to the old ic-node and become an extra ECMP next hop.
 func (zic *ZoneInterconnectHandler) CleanupStaleNodes(objs []interface{}) error {
 	// Build set of current node names
 	foundNodeNames := sets.New[string]()
@@ -371,6 +374,20 @@ func (zic *ZoneInterconnectHandler) CleanupStaleNodes(objs []interface{}) error 
 	for _, staleNodeName := range staleNodeNames.UnsortedList() {
 		if err := zic.cleanupNode(staleNodeName); err != nil {
 			klog.Errorf("Failed to cleanup the interconnect resources from OVN Northbound db for the stale node %s: %v", staleNodeName, err)
+		}
+	}
+
+	for _, obj := range objs {
+		node, ok := obj.(*corev1.Node)
+		if !ok || util.NoHostSubnet(node) {
+			continue
+		}
+		if err := zic.reconcileRemoteNodeStaticRoutes(node); err != nil {
+			if util.IsAnnotationNotSetError(err) {
+				klog.V(5).Infof("Skipping stale interconnect route cleanup for node %s on network %s: %v", node.Name, zic.GetNetworkName(), err)
+				continue
+			}
+			klog.Errorf("Failed to remove stale interconnect static routes for node %s on network %s: %v", node.Name, zic.GetNetworkName(), err)
 		}
 	}
 
@@ -637,10 +654,18 @@ func (zic *ZoneInterconnectHandler) cleanupNodeTransitSwitchPort(nodeName string
 // ovn-worker2 - { node_subnet = 10.244.0.0/24,  node id = 2,  transit switch port ip = 100.88.0.2/16,  join ip connecting to GR_ovn-worker = 100.64.0.2/16}
 // Then the below static routes are added
 // ip4.dst == 10.244.0.0/24 , nexthop = 100.88.0.2
-// ip4.dst == 100.64.0.2/16 , nexthop = 100.88.0.2  (only for default primary network)
+// ip4.dst == 100.64.0.2/32 , nexthop = 100.88.0.2  (only for default primary network)
+// Routes for a prefix this node no longer owns are deleted in the same
+// transaction. The prefix-only replace below does not see those older
+// prefixes. Desired prefixes are the subnets and gateway-router addresses
+// the node still owns, including a family with no transit nexthop.
+// getStaticRoutes omits that family, so using its result as the desired set
+// would delete the route. Creating a route still requires a same-family nexthop.
 func (zic *ZoneInterconnectHandler) addRemoteNodeStaticRoutes(node *corev1.Node, nodeTransitSwitchPortIPs, nodeSubnets, nodeGRPIPs []*net.IPNet) error {
 	ops := make([]ovsdb.Operation, 0, 2)
+	desiredPrefixes := ownedRemoteNodeStaticRoutePrefixes(nodeSubnets, nodeGRPIPs)
 	addRoute := func(prefix, nexthop string) error {
+		desiredPrefixes.Insert(prefix)
 		logicalRouterStaticRoute := nbdb.LogicalRouterStaticRoute{
 			ExternalIDs: map[string]string{
 				"ic-node":               node.Name,
@@ -679,8 +704,81 @@ func (zic *ZoneInterconnectHandler) addRemoteNodeStaticRoutes(node *corev1.Node,
 		}
 	}
 
-	_, err := libovsdbops.TransactAndCheck(zic.nbClient, ops)
-	return err
+	ops, err := zic.deleteStaleRemoteNodeStaticRoutesOps(ops, node.Name, desiredPrefixes)
+	if err != nil {
+		return err
+	}
+	if _, err := libovsdbops.TransactAndCheck(zic.nbClient, ops); err != nil {
+		return err
+	}
+	return nil
+}
+
+// reconcileRemoteNodeStaticRoutes drops interconnect routes for node whose prefix
+// is not one of its current subnets or gateway-router addresses.
+func (zic *ZoneInterconnectHandler) reconcileRemoteNodeStaticRoutes(node *corev1.Node) error {
+	nodeSubnets, err := util.ParseNodeHostSubnetAnnotation(node, zic.GetNetworkName())
+	if err != nil {
+		return fmt.Errorf("failed to parse node %s subnets annotation: %w", node.Name, err)
+	}
+	nodeTransitSwitchPortIPs, err := util.ParseNodeTransitSwitchPortAddrs(node)
+	if err != nil || len(nodeTransitSwitchPortIPs) == 0 {
+		if err == nil {
+			err = fmt.Errorf("node %s has no transit switch port addresses", node.Name)
+		}
+		return fmt.Errorf("failed to get the node transit switch port IP addresses: %w", err)
+	}
+
+	var nodeGRPIPs []*net.IPNet
+	// only primary networks have cluster router connected to join switch+GR
+	if !zic.IsUserDefinedNetwork() || (util.IsNetworkSegmentationSupportEnabled() && zic.IsPrimaryNetwork()) {
+		nodeGRPIPs, err = udn.GetGWRouterIPs(node, zic.GetNetInfo())
+		if err != nil {
+			return fmt.Errorf("failed to get the gateway router port IP addresses for node %s: %w", node.Name, err)
+		}
+	}
+
+	return zic.deleteStaleRemoteNodeStaticRoutes(node.Name, ownedRemoteNodeStaticRoutePrefixes(nodeSubnets, nodeGRPIPs))
+}
+
+// deleteStaleRemoteNodeStaticRoutes removes this node's interconnect routes on
+// the network cluster router when the prefix is no longer assigned to it.
+// Routes written before the network external-id existed have an empty id and
+// are included. Routes tagged for a different network are left in place.
+// An empty desired set deletes nothing, so a failed prefix lookup cannot wipe
+// the node's routes.
+func (zic *ZoneInterconnectHandler) deleteStaleRemoteNodeStaticRoutes(nodeName string, desiredPrefixes sets.Set[string]) error {
+	ops, err := zic.deleteStaleRemoteNodeStaticRoutesOps(nil, nodeName, desiredPrefixes)
+	if err != nil {
+		return err
+	}
+	if _, err := libovsdbops.TransactAndCheck(zic.nbClient, ops); err != nil {
+		return fmt.Errorf("failed to delete stale static routes for node %s: %w", nodeName, err)
+	}
+	return nil
+}
+
+// deleteStaleRemoteNodeStaticRoutesOps appends the stale-route deletions to ops.
+// The lookup uses the current database, so routes added in the same ops list are
+// not selected. An empty desired set appends nothing.
+func (zic *ZoneInterconnectHandler) deleteStaleRemoteNodeStaticRoutesOps(ops []ovsdb.Operation, nodeName string, desiredPrefixes sets.Set[string]) ([]ovsdb.Operation, error) {
+	if desiredPrefixes.Len() == 0 {
+		return ops, nil
+	}
+	p := func(lrsr *nbdb.LogicalRouterStaticRoute) bool {
+		if lrsr.ExternalIDs == nil || lrsr.ExternalIDs["ic-node"] != nodeName {
+			return false
+		}
+		if networkName := lrsr.ExternalIDs[types.NetworkExternalID]; networkName != "" && networkName != zic.GetNetworkName() {
+			return false
+		}
+		return !desiredPrefixes.Has(lrsr.IPPrefix)
+	}
+	ops, err := libovsdbops.DeleteLogicalRouterStaticRoutesWithPredicateOps(zic.nbClient, ops, zic.networkClusterRouterName, p)
+	if err != nil {
+		return nil, fmt.Errorf("failed to delete stale static routes for node %s: %w", nodeName, err)
+	}
+	return ops, nil
 }
 
 // deleteLocalNodeStaticRoutes deletes the static routes added by the function addRemoteNodeStaticRoutes
@@ -765,11 +863,9 @@ func (zic *ZoneInterconnectHandler) getStaticRoutes(ipPrefixes []*net.IPNet, nex
 			if utilnet.IPFamilyOfCIDR(prefix) != utilnet.IPFamilyOfCIDR(nexthop) {
 				continue
 			}
-			p := ""
-			if fullMask {
-				p = prefix.IP.String() + util.GetIPFullMaskString(prefix.IP.String())
-			} else {
-				p = prefix.String()
+			p := remoteNodeStaticRoutePrefix(prefix, fullMask)
+			if p == "" {
+				continue
 			}
 
 			staticRoute := &interconnectStaticRoute{
@@ -781,6 +877,37 @@ func (zic *ZoneInterconnectHandler) getStaticRoutes(ipPrefixes []*net.IPNet, nex
 	}
 
 	return staticRoutes
+}
+
+// remoteNodeStaticRoutePrefix is the IPPrefix stored for one owned prefix.
+// Subnet routes keep the node's prefix length. Gateway-router routes are host
+// routes, so they use a full mask.
+func remoteNodeStaticRoutePrefix(prefix *net.IPNet, fullMask bool) string {
+	if prefix == nil {
+		return ""
+	}
+	if fullMask {
+		return prefix.IP.String() + util.GetIPFullMaskString(prefix.IP.String())
+	}
+	return prefix.String()
+}
+
+// ownedRemoteNodeStaticRoutePrefixes is the set of interconnect prefixes this
+// node still owns. It does not require a same-family transit nexthop. Route
+// creation still skips a family that has no nexthop.
+func ownedRemoteNodeStaticRoutePrefixes(nodeSubnets, nodeGRPIPs []*net.IPNet) sets.Set[string] {
+	desired := sets.New[string]()
+	for _, prefix := range nodeSubnets {
+		if p := remoteNodeStaticRoutePrefix(prefix, false); p != "" {
+			desired.Insert(p)
+		}
+	}
+	for _, prefix := range nodeGRPIPs {
+		if p := remoteNodeStaticRoutePrefix(prefix, true); p != "" {
+			desired.Insert(p)
+		}
+	}
+	return desired
 }
 
 func getUserDefinedNetTransitSwitchExtIDs(networkName, topology string, isPrimaryUDN bool) map[string]string {
