@@ -19,7 +19,8 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@v5
         with:
-          python-version: 3.x
+          # Pin below PyO3's max (minify-html). '3.x' can resolve to unsupported majors.
+          python-version: '3.14'
       - run: |
           pip install mkdocs-material
           pip install mkdocs-awesome-pages-plugin

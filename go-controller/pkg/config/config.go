@@ -1187,9 +1187,9 @@ var CommonFlags = []cli.Flag{
 	},
 	&cli.StringFlag{
 		Name:        "cnilogfile",
-		Usage:       "path of a file to direct log from cni shim to output to",
+		Usage:       "path of a file to direct log from cni shim to output to, must be inside " + CNILogDir,
 		Destination: &cliConfig.Logging.CNIFile,
-		Value:       "/var/log/ovn-kubernetes/ovn-k8s-cni-overlay.log",
+		Value:       CNILogDir + "/ovn-k8s-cni-overlay.log",
 	},
 	&cli.StringFlag{
 		Name:        "libovsdblogfile",
@@ -2986,6 +2986,9 @@ func initConfigWithPath(ctx *cli.Context, exec kexec.Interface, saPath string, d
 	var level klog.Level
 	if err := level.Set(strconv.Itoa(Logging.Level)); err != nil {
 		return "", fmt.Errorf("failed to set klog log level %v", err)
+	}
+	if err := ValidateCNILogFile(Logging.CNIFile); err != nil {
+		return "", err
 	}
 	if Logging.File != "" {
 		klogFlags := flag.NewFlagSet("klog", flag.ExitOnError)

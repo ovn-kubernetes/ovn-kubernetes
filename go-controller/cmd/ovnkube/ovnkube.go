@@ -439,6 +439,26 @@ func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util
 		return ovnnode.CleanupClusterNode(ctx, runMode.identity)
 	}
 
+	var cancel context.CancelFunc
+	ctx, cancel = context.WithCancel(ctx)
+	defer cancel()
+
+	// libovsdbOvn clients are used by both node and kubecontroller when DisableUDNARPNDPFlood is true,
+	// otherwise node does not need libovsdbOvn clients.
+	var libovsdbOvnSBClient client.Client
+	var libovsdbOvnNBClient client.Client
+	if runMode.ovnkubeController {
+		libovsdbOvnNBClient, err = libovsdb.NewNBClient(ctx.Done())
+		if err != nil {
+			return fmt.Errorf("failed to initialize libovsdb NB client: %w", err)
+		}
+
+		libovsdbOvnSBClient, err = libovsdb.NewSBClient(ctx.Done())
+		if err != nil {
+			return fmt.Errorf("failed to initialize libovsdb SB client: %w", err)
+		}
+	}
+
 	watchFactory, err := newWatchFactory(runMode, ovnClientset)
 	if err != nil {
 		return fmt.Errorf("failed to initialize watch factory: %w", err)
@@ -447,8 +467,6 @@ func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util
 	// there might be dependencies across components when starting so run them
 	// in separate threads
 	wg := &sync.WaitGroup{}
-	var cancel context.CancelFunc
-	ctx, cancel = context.WithCancel(ctx)
 	var managerErr, controllerErr, nodeErr, ovsCLIErr error
 
 	if runMode.clusterManager {
@@ -456,6 +474,11 @@ func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util
 		go func() {
 			defer cancel()
 			defer wg.Done()
+
+			// Must run before NewClusterManager: it installs the workqueue
+			// metrics provider, and client-go only applies a provider to
+			// queues created after it is set.
+			metrics.RegisterClusterManagerFunctional()
 
 			clusterManager, err := clustermanager.NewClusterManager(
 				ovnClientset.GetClusterManagerClientset(),
@@ -466,8 +489,6 @@ func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util
 				managerErr = fmt.Errorf("failed to create new cluster manager: %w", err)
 				return
 			}
-
-			metrics.RegisterClusterManagerFunctional()
 
 			err = clusterManager.Start(ctx)
 			if err != nil {
@@ -496,18 +517,6 @@ func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util
 		go func() {
 			defer cancel()
 			defer wg.Done()
-
-			libovsdbOvnNBClient, err := libovsdb.NewNBClient(ctx.Done())
-			if err != nil {
-				controllerErr = fmt.Errorf("failed to initialize libovsdb NB client: %w", err)
-				return
-			}
-
-			libovsdbOvnSBClient, err := libovsdb.NewSBClient(ctx.Done())
-			if err != nil {
-				controllerErr = fmt.Errorf("failed to initialize libovsdb SB client: %w", err)
-				return
-			}
 
 			controllerManager, err := controllermanager.NewControllerManager(
 				runMode.identity,
@@ -547,6 +556,8 @@ func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util
 	}
 
 	var ovsClient client.Client
+	var nodeLibovsdbOvnSBClient client.Client
+	var nodeLibovsdbOvnNBClient client.Client
 	if runMode.node {
 		wg.Add(1)
 		go func() {
@@ -556,6 +567,15 @@ func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util
 			if config.Kubernetes.Token == "" {
 				nodeErr = fmt.Errorf("cannot initialize node without service account 'token'. Please provide one with --k8s-token argument")
 				return
+			}
+			// DisableUDNARPNDPFlood must always be set when node and kubecontroller are enabled
+			if config.Gateway.DisableUDNARPNDPFlood {
+				if !runMode.ovnkubeController {
+					nodeErr = fmt.Errorf("disable-udn-arp-ndp-flood requires controller mode; not supported in node-only mode")
+					return
+				}
+				nodeLibovsdbOvnSBClient = libovsdbOvnSBClient
+				nodeLibovsdbOvnNBClient = libovsdbOvnNBClient
 			}
 
 			// register ovnkube node specific prometheus metrics exported by the node
@@ -573,6 +593,8 @@ func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util
 			nodeControllerManager, err := controllermanager.NewNodeControllerManager(
 				ovnClientset,
 				watchFactory,
+				nodeLibovsdbOvnSBClient,
+				nodeLibovsdbOvnNBClient,
 				runMode.identity,
 				wg,
 				eventRecorder,

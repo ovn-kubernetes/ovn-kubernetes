@@ -1112,7 +1112,7 @@ func (gw *GatewayManager) updateGWRouterNAT(nodeName string, gwConfig *GatewayCo
 			}
 		}
 
-		isNetworkAdvertised := gw.isRoutingAdvertised(nodeName)
+		isNetworkAdvertised := gwConfig.isPodNetworkAdvertised
 		var clusterNodeIPsAddrSetDbIDs *libovsdbops.DbObjectIDs
 		if isNetworkAdvertised && !snatExemptionNeeded {
 			clusterNodeIPsAddrSetDbIDs, err = gw.addressSetManager.EnsureClusterNodeIPsAddressSet(addresssetmanager.ClusterNodeIPsRouteAdvertisementsBackRef)
@@ -1914,10 +1914,6 @@ func (gw *GatewayManager) containsJoinIP(ip net.IP) bool {
 		Mask: util.GetIPFullMask(ip),
 	}
 	return util.IsContainedInAnyCIDR(ipNet, gw.netInfo.JoinSubnets()...)
-}
-
-func (gw *GatewayManager) isRoutingAdvertised(node string) bool {
-	return util.IsPodNetworkAdvertisedAtNode(gw.netInfo, node)
 }
 
 // SyncGateway ensures a node's gateway router is configured according to the L3 config and host subnets

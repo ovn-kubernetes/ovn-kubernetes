@@ -28,6 +28,7 @@ import (
 	uplinkv1alpha1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1"
 	uplinklisters "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1/apis/listers/uplink/v1alpha1"
 	nbdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/nbdb"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	uplinkutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/uplink"
@@ -43,6 +44,10 @@ const (
 	noRouteLinkIndex        = -1
 	controllerExternalIDKey = string(nbdbops.OwnerControllerKey)
 	controllerName          = "RouteImport"
+
+	// sync outcomes, used as the "result" label of the sync duration metric
+	syncResultSuccess = "success"
+	syncResultError   = "error"
 )
 
 type Manager interface {
@@ -156,6 +161,10 @@ func (c *controller) ForgetNetwork(name string) {
 	delete(c.networkIDs, network.GetNetworkID())
 	delete(c.networks, name)
 	c.setTableForNetworkUnlocked(network.GetNetworkID(), noTable)
+	// nothing enqueues a forgotten network again, so its series go now rather
+	// than on a reconcile that may never run; syncNetwork still handles the
+	// reconcile that was already queued
+	metrics.DeleteRouteImportMetrics(name)
 
 	c.log.V(5).Info("Stopped tracking network", "name", name)
 }
@@ -324,12 +333,29 @@ func (s stringer) String() string {
 	return fmt.Sprintf("%v", s.v)
 }
 
-func (c *controller) syncNetwork(_ context.Context, network string) error {
+func (c *controller) syncNetwork(_ context.Context, network string) (err error) {
 	start := time.Now()
+	forgotten := false
+	defer func() {
+		if forgotten {
+			// drop the per-network timeseries last: observing the duration
+			// here would recreate the series we just removed
+			metrics.DeleteRouteImportMetrics(network)
+			return
+		}
+		// derived from the returned error rather than tracked per branch, so
+		// an early return added later cannot report the wrong outcome
+		result := syncResultSuccess
+		if err != nil {
+			result = syncResultError
+		}
+		metrics.RecordRouteImportSync(network, result, time.Since(start))
+	}()
 	c.log.V(5).Info("Reconciling network", "network", network)
 
 	info := c.getNetwork(network)
 	if info == nil {
+		forgotten = true
 		return nil
 	}
 
@@ -381,6 +407,7 @@ func (c *controller) syncNetwork(_ context.Context, network string) error {
 	if err != nil {
 		return fmt.Errorf("failed to get routes from OVN: %w", err)
 	}
+	metrics.RecordRouteImportRoutes(network, expected.Len(), actual.Len())
 
 	deletes := actual.Difference(expected)
 	adds := expected.Difference(actual)
@@ -428,6 +455,12 @@ func (c *controller) syncNetwork(_ context.Context, network string) error {
 	}
 
 	err = errors.Join(errs...)
+	if err == nil {
+		metrics.RecordRouteImportOps(network, len(adds), len(deletes))
+		// the transaction applied, so OVN now holds what the kernel holds;
+		// the two gauges only diverge while a sync is pending or failing
+		metrics.RecordRouteImportRoutes(network, expected.Len(), expected.Len())
+	}
 	c.log.V(5).Info("Reconciled network", "network", network, "took", time.Since(start), "ops", ops, "errors", err)
 	return err
 }

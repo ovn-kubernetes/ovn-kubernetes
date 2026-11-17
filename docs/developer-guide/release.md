@@ -45,7 +45,10 @@ Each new release of OVN-Kubernetes is defined with a "version" that represents t
 * See [sample release PR](https://github.com/ovn-kubernetes/ovn-kubernetes/pull/4333) which
   will become the head commit for a given release.
 * Branch will be cut on the day of release once the release PR merges.
-* CI-CD for the release branch will be added to the [GitHub Workflow](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/.github/workflows/test.yml#L6).
+* Create the `backport:release-X.Y` label for the new branch, and delete the
+  label of the release that goes out of support.
+* Mark the release that goes out of support as not maintained anymore in
+  [Information on Past Releases](#information-on-past-releases).
 
 ### Release Notes
 
@@ -81,11 +84,26 @@ Each new release of OVN-Kubernetes is defined with a "version" that represents t
 
 ## Backport Request
 
-* If a PR needs to be backported to an older release that should be requested
-  by adding the `needs-backport` label and noting the target releases on the PR.
-* Reach out to the maintainers on slack or by tagging them directly on the PR or come to the community meetings to discuss this.
+* If a PR needs to be backported to an older release, request it by adding a
+  `backport:release-X.Y` label to the PR for each target release. Only
+  maintained releases have a label.
+* If you cannot add labels, ask in a PR comment, on slack or at the community
+  meeting and someone with triage or write access will add them.
 
-### Preparing a backport
+### Automated backport
+
+The `backport` GitHub workflow acts on the `backport:release-X.Y` labels. They
+can be added before or after the merge. Once the PR is merged, the workflow
+cherry-picks its commits onto each labeled release branch and opens a PR titled
+`[release-X.Y] <original title>` that links to the original PR and copies its
+description and assignees.
+
+If a cherry-pick does not apply cleanly, or the PR branch contains merge
+commits, no PR is opened for that release and the workflow posts a comment on
+the original PR with the commands to cherry-pick locally. Follow the manual
+steps below in that case.
+
+### Preparing a backport manually
 
 1. Create a branch from the target `release-X.Y` branch.
 2. Cherry-pick the original commits with `git cherry-pick -x <commit>` so each

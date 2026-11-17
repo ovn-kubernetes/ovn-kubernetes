@@ -258,7 +258,11 @@ func TestDeleteIncompleteVTEPConfigurations(t *testing.T) {
 			c := &Controller{frrClient: client, frrLister: frrlisters.NewFRRConfigurationLister(indexer)}
 			updated, remaining, err := c.deleteIncompleteVTEPConfigurations(context.Background(), "ra", sets.New("invalid-node"), unsafeInput)
 			g.Expect(updated).To(gomega.BeTrue(), "successful deletion must be recorded despite other failures")
-			g.Expect(remaining).To(gomega.Equal(3), "failed deletions and the valid configuration must remain")
+			remainingNames := []string{}
+			for _, cfg := range remaining {
+				remainingNames = append(remainingNames, cfg.Name)
+			}
+			g.Expect(remainingNames).To(gomega.ConsistOf("fail-a", "fail-b", "keep"), "failed deletions and the valid configuration must remain")
 			g.Expect(errors.Is(err, failureA)).To(gomega.BeTrue(), "cleanup must retain the first deletion error")
 			g.Expect(errors.Is(err, failureB)).To(gomega.BeTrue(), "cleanup must retain the second deletion error")
 			g.Expect(errors.Is(err, errConfig)).To(gomega.BeFalse(), "cleanup failures must trigger retries")

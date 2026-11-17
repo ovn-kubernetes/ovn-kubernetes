@@ -12,6 +12,8 @@ type Config string
 const (
 	// L3UDNMultiSubnetConfig indicates whether L3 User Defined Network multi-subnet support is enabled
 	L3UDNMultiSubnetConfig Config = "L3UDNMultiSubnet"
+	// UDNARPNDPFloodDisabled indicates wheter disabling UDN ARP/NDP flood setting is set true
+	UDNARPNDPFloodDisabled Config = "UDNARPNDPFloodDisabled"
 )
 
 type ImageID int
@@ -24,11 +26,8 @@ type ImageConfig struct {
 // Image IDs for OVN-Kubernetes e2e test images
 const (
 	Agnhost ImageID = iota
-	IPerf3
 	Netshoot
 	Nginx
-	MetalLBLBService
-	UDPServerSrcIPPrinter
 	FRR
 	DNSMasq
 	FedoraKubevirtContainerDisk

@@ -64,15 +64,23 @@ var interconnectPodAnnotations = map[string]checkPodAnnot{
 	util.DPUConnectionStatusAnnot:  nil,
 }
 
-// PodAdmissionConditionOptions specifies additional validate admission for pod.
+// PodAdmissionConditionOption allows an external per-node component to reuse the
+// ovnkube-identity webhook for its own pod updates. Entries are loaded from the
+// --pod-admission-conditions file and usually pair with a --csr-acceptance-conditions
+// entry for the same prefix. A matching user is held to the same rules as
+// ovnkube-node: it may only update pods scheduled on its own node and may only
+// change the annotations listed here. Unlike ovnkube-node-owned annotations, the
+// annotations from this list can be updated by other identities.
 type PodAdmissionConditionOption struct {
-	// CommonNamePrefix specifies common name in Usename
+	// CommonNamePrefix is the username prefix that selects this entry, for example
+	// "system:multus". The node name is the remainder after "<prefix>:".
+	// Matching users should not overlap with --extra-allowed-user.
 	CommonNamePrefix string `json:"commonNamePrefix"`
-	// AllowedPodAnnotations contains annotation list to check Pod's annotation for webhook
-	// this is used for Defaut=false because ovn-node case requires more detailed pod annotation
-	// check
+	// AllowedPodAnnotations lists the only annotation keys this identity may add,
+	// change or remove on a pod. Annotations owned by ovnkube-node cannot be listed.
 	AllowedPodAnnotations []string `json:"allowedPodAnnotations"`
-	// AllowedPodAnnotationKeys contains AllowedPodAnnotations value as sets.Set[]
+	// AllowedPodAnnotationKeys is AllowedPodAnnotations as a set, built by
+	// InitPodAdmissionConditionOptions
 	AllowedPodAnnotationKeys sets.Set[string]
 }
 
@@ -89,14 +97,21 @@ func InitPodAdmissionConditionOptions(fileName string) (podAdmissions []PodAdmis
 		}
 	}
 
-	// initialize Sets from slices
+	ovnkubeNodeAnnotations := sets.New[string](maps.Keys(interconnectPodAnnotations)...)
 	for i, v := range podAdmissions {
+		if protected := ovnkubeNodeAnnotations.Intersection(sets.New[string](v.AllowedPodAnnotations...)); protected.Len() > 0 {
+			return nil, fmt.Errorf("pod admission condition %q must not allow ovnkube-node annotations %v",
+				v.CommonNamePrefix, sets.List(protected))
+		}
 		podAdmissions[i].AllowedPodAnnotationKeys = sets.New[string](v.AllowedPodAnnotations...)
 	}
 
 	return podAdmissions, nil
 }
 
+// PodAdmission validates pod updates for the node identities: ovnkube-node, the
+// identities configured through PodAdmissionConditionOption and the extra allowed
+// users. Everyone else is only prevented from changing ovnkube-node annotations.
 type PodAdmission struct {
 	nodeLister        listers.NodeLister
 	annotations       map[string]checkPodAnnot
@@ -105,6 +120,8 @@ type PodAdmission struct {
 	podAdmissions     []PodAdmissionConditionOption
 }
 
+// NewPodAdmissionWebhook returns a PodAdmission protecting the ovnkube-node pod
+// annotations. extraAllowedUsers may change those annotations on any pod.
 func NewPodAdmissionWebhook(nodeLister listers.NodeLister, podAdmissions []PodAdmissionConditionOption, extraAllowedUsers ...string) *PodAdmission {
 	return &PodAdmission{
 		nodeLister:        nodeLister,
@@ -156,9 +173,11 @@ func (p PodAdmission) ValidateUpdate(ctx context.Context, oldPod, newPod *corev1
 		}
 	}
 
-	if !isOVNKubeNode {
+	// Users without a node identity (neither ovnkube-node nor a podAdmission)
+	// are only restricted from changing the ovnkube-node annotations.
+	// Node identities go through all the checks below regardless of what changed.
+	if !isOVNKubeNode && podAdmission == nil {
 		if !p.annotationKeys.HasAny(changedKeys...) {
-			// the user is not an ovnkube-node and hasn't changed any ovnkube-node annotations
 			return nil, nil
 		}
 

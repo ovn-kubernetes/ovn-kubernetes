@@ -113,8 +113,8 @@ dropdown stay consistent.
   - second-highest → `<ver> (Stable)`
   - older releases → `<ver> (Legacy)`
   - `master` → `Master (Dev)`
-  Example today: `1.3 (Latest)`, `1.2 (Stable)`, `1.1 (Legacy)`, `1.0 (Legacy)`.
-  After `release-1.4` appears: `1.4 (Latest)`, `1.3 (Stable)`, and older stay
+  Example: `1.3 (Latest)`, `1.2 (Stable)`, `1.1 (Legacy)`, `1.0 (Legacy)`.
+  Then `release-1.4` appears: `1.4 (Latest)`, `1.3 (Stable)`, and older stay
   `(Legacy)`. No workflow edits are required.
 - Every branch that is deployed must have a root `mkdocs.yml`. The build injects
   `extra.version.provider: mike` if missing, but the file itself must exist.

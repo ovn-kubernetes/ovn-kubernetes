@@ -830,6 +830,10 @@ func (oc *Layer3UserDefinedNetworkController) addUpdateLocalNodeEvent(_ context.
 
 	klog.Infof("Adding or Updating local node %q for network %q", node.Name, oc.GetNetworkName())
 
+	// Read advertisement state once so that all SNATs and isolation configured
+	// in this pass agree with each other.
+	isUDNAdvertised := util.IsPodNetworkAdvertisedAtNode(oc, node.Name)
+
 	// Sync the no-overlay SNAT exemption address set before any SNAT that
 	// references it is created: addNode() adds the local-gateway egress SNAT
 	// and SyncGateway() the shared-gateway cluster-subnet SNAT. Stop and retry
@@ -858,7 +862,7 @@ func (oc *Layer3UserDefinedNetworkController) addUpdateLocalNodeEvent(_ context.
 	}
 
 	if nSyncs.syncNode {
-		if hostSubnets, err = oc.addNode(node); err != nil {
+		if hostSubnets, err = oc.addNode(node, isUDNAdvertised); err != nil {
 			oc.addNodeFailed.Store(node.Name, true)
 			oc.nodeClusterRouterPortFailed.Store(node.Name, true)
 			oc.mgmtPortFailed.Store(node.Name, true)
@@ -910,7 +914,7 @@ func (oc *Layer3UserDefinedNetworkController) addUpdateLocalNodeEvent(_ context.
 			gwManager := oc.gatewayManagerForNode(node.Name)
 			oc.gatewayManagers.Store(node.Name, gwManager)
 
-			gwConfig, err := oc.nodeGatewayConfig(node)
+			gwConfig, err := oc.nodeGatewayConfig(node, isUDNAdvertised)
 			if err != nil {
 				errs = append(errs, fmt.Errorf("failed to generate node GW configuration: %v", err))
 				oc.gatewaysFailed.Store(node.Name, true)
@@ -1023,7 +1027,7 @@ func (oc *Layer3UserDefinedNetworkController) addOrUpdateUDNNodeSubnetEgressSNAT
 	return nil
 }
 
-func (oc *Layer3UserDefinedNetworkController) addNode(node *corev1.Node) ([]*net.IPNet, error) {
+func (oc *Layer3UserDefinedNetworkController) addNode(node *corev1.Node, isUDNAdvertised bool) ([]*net.IPNet, error) {
 	// Node subnet for the layer3 UDN is allocated by cluster manager.
 	// Make sure that the node is allocated with the subnet before proceeding
 	// to create OVN Northbound resources.
@@ -1037,7 +1041,6 @@ func (oc *Layer3UserDefinedNetworkController) addNode(node *corev1.Node) ([]*net
 		return nil, err
 	}
 	if util.IsNetworkSegmentationSupportEnabled() && oc.IsPrimaryNetwork() {
-		isUDNAdvertised := util.IsPodNetworkAdvertisedAtNode(oc, node.Name)
 		if err := oc.addOrUpdateUDNNodeSubnetEgressSNAT(hostSubnets, node, isUDNAdvertised); err != nil {
 			return nil, err
 		}
@@ -1180,7 +1183,7 @@ func (oc *Layer3UserDefinedNetworkController) gatherJoinSwitchIPs() error {
 	return nil
 }
 
-func (oc *Layer3UserDefinedNetworkController) nodeGatewayConfig(node *corev1.Node) (*GatewayConfig, error) {
+func (oc *Layer3UserDefinedNetworkController) nodeGatewayConfig(node *corev1.Node, isPodNetworkAdvertised bool) (*GatewayConfig, error) {
 	l3GatewayConfig, hasUplink, err := oc.uplinkGatewayConfig(node)
 	if err != nil {
 		return nil, fmt.Errorf(
@@ -1250,6 +1253,7 @@ func (oc *Layer3UserDefinedNetworkController) nodeGatewayConfig(node *corev1.Nod
 		hostAddrs:                  hostAddrs,
 		externalIPs:                externalIPs,
 		ovnClusterLRPToJoinIfAddrs: oc.ovnClusterLRPToJoinIfAddrs,
+		isPodNetworkAdvertised:     isPodNetworkAdvertised,
 	}, nil
 }
 

@@ -65,6 +65,20 @@ const (
 	// rawConfigPriority is set to an arbitrary value that still allows users to
 	// override if needed.
 	rawConfigPriority = 10
+
+	// reconcile outcomes, used as the "result" label of the reconcile duration
+	// metric
+	reconcileResultSuccess     = "success"
+	reconcileResultError       = "error"
+	reconcileResultConfigError = "config_error"
+	reconcileResultPending     = "pending"
+
+	// generated FRRConfiguration operations, used as the "op" label of the
+	// write counter
+	frrConfigOpCreate    = "create"
+	frrConfigOpUpdate    = "update"
+	frrConfigOpDelete    = "delete"
+	frrConfigOpUnchanged = "unchanged"
 )
 
 var (
@@ -392,27 +406,51 @@ func (c *Controller) ReconcileNetwork(_ string, old, new util.NetInfo) {
 // FRRConfigurations, Nodes, EgressIPs, NADs and namespaces.
 func (c *Controller) reconcile(ctx context.Context, name string) error {
 	startTime := time.Now()
+	result := reconcileResultSuccess
+	deleted := false
 	klog.V(5).Infof("Syncing routeadvertisements %q", name)
 	defer func() {
+		if deleted {
+			// drop the per-resource timeseries last: the cleanup reconcile
+			// below still records against them
+			metrics.DeleteRouteAdvertisementMetrics(name)
+		} else {
+			metrics.RecordRouteAdvertisementReconcile(name, result, time.Since(startTime))
+		}
 		klog.V(4).Infof("Finished syncing routeadvertisements %q, took %v", name, time.Since(startTime))
 	}()
 
 	ra, err := c.raLister.Get(name)
 	if err != nil && !apierrors.IsNotFound(err) {
+		result = reconcileResultError
 		return fmt.Errorf("failed to get RouteAdvertisements %q: %w", name, err)
 	}
 
 	if ra == nil {
-		metrics.DeleteRouteAdvertisementCondition(name)
+		deleted = true
 		c.deleteRANetworks(name)
 	}
 
 	hadUpdates, err := c.reconcileRouteAdvertisements(ctx, name, ra)
+	switch {
+	case err == nil:
+	case errors.Is(err, errConfig):
+		result = reconcileResultConfigError
+	case errors.Is(err, errPending):
+		result = reconcileResultPending
+	default:
+		result = reconcileResultError
+	}
 	if err != nil && !errors.Is(err, errConfig) && !errors.Is(err, errPending) {
 		return fmt.Errorf("failed to reconcile RouteAdvertisements %q: %w", name, err)
 	}
 
-	return c.updateRAStatus(ctx, ra, hadUpdates, err)
+	if statusErr := c.updateRAStatus(ctx, ra, hadUpdates, err); statusErr != nil {
+		result = reconcileResultError
+		return fmt.Errorf("failed to update status of RouteAdvertisements %q: %w", name, statusErr)
+	}
+
+	return nil
 }
 
 // reconcileRouteAdvertisements applies sanitized advertisements and withdraws
@@ -433,9 +471,14 @@ func (c *Controller) reconcileRouteAdvertisements(ctx context.Context, name stri
 			// Return only operational errors so failed deletions are retried.
 			return hadUpdates, fmt.Errorf("failed cleaning incomplete VTEP configurations for RouteAdvertisements %q: %w", name, err)
 		}
+		// updateFRRConfigurations and generation, which normally record
+		// these, are not reached on this path: report what is still applied
+		// so a withdrawal is not left showing the previous counts
+		metrics.RecordRouteAdvertisementFRRConfigurations(name, len(remaining))
+		recordAdvertisedPrefixes(name, remaining)
 		// Unsafe input also requires upstream's cleanup of unvalidated
 		// configurations, including those on otherwise valid VTEP nodes.
-		if unsafeInput && remaining == 0 {
+		if unsafeInput && len(remaining) == 0 {
 			hadNADUpdates, err := c.updateNADs(ctx, name, nil)
 			if err != nil {
 				return hadUpdates || hadNADUpdates, fmt.Errorf("failed clearing NAD references for RouteAdvertisements %q: %w", name, err)
@@ -456,7 +499,12 @@ func (c *Controller) reconcileRouteAdvertisements(ctx context.Context, name stri
 			// not a configuration error, so that the reconcile is retried
 			return deleted, fmt.Errorf("failed deleting FRRConfigurations for RouteAdvertisements %q rejected with %v: %w", name, cfgErr, err)
 		}
-		if remaining > 0 {
+		// updateFRRConfigurations and generation, which normally record
+		// these, are not reached on this path: report what is still applied
+		// so a withdrawal is not left showing the previous counts
+		metrics.RecordRouteAdvertisementFRRConfigurations(name, len(remaining))
+		recordAdvertisedPrefixes(name, remaining)
+		if len(remaining) > 0 {
 			return deleted, cfgErr
 		}
 		// a network stays advertised while its NAD references this
@@ -1019,6 +1067,7 @@ func (c *Controller) generateFRRConfigurations(ctx context.Context, ra *ratypes.
 		}
 	}
 
+	recordAdvertisedPrefixes(ra.Name, generated)
 	// Validation alone leaves a complete, sanitized desired state to apply.
 	return generated, nads, vtepValidationErr
 }
@@ -1225,6 +1274,39 @@ func getNodeVTEPPrefixes(node *corev1.Node, vtepCIDRs map[string][]*net.IPNet) (
 		}
 	}
 	return prefixes, nil
+}
+
+// recordAdvertisedPrefixes reports the number of distinct prefixes a
+// RouteAdvertisements advertises, split by IP family.
+//
+// Derived from the generated FRRConfigurations rather than from the per-node
+// candidate prefixes: a selected node whose networks matched no source
+// FRRConfiguration produces no advertisement, and generation adds prefixes of
+// its own, such as the EVPN VTEP host routes.
+func recordAdvertisedPrefixes(ra string, generated []*frrtypes.FRRConfiguration) {
+	v4, v6 := countAdvertisedPrefixes(generated)
+	metrics.RecordRouteAdvertisementAdvertisedPrefixes(ra, "ipv4", v4)
+	metrics.RecordRouteAdvertisementAdvertisedPrefixes(ra, "ipv6", v6)
+}
+
+// countAdvertisedPrefixes counts the distinct prefixes across the generated
+// FRRConfigurations, by IP family. The same prefix advertised from several
+// nodes, or by several routers, counts once.
+func countAdvertisedPrefixes(generated []*frrtypes.FRRConfiguration) (v4, v6 int) {
+	prefixes := sets.New[string]()
+	for _, frrConfig := range generated {
+		for _, router := range frrConfig.Spec.BGP.Routers {
+			prefixes.Insert(router.Prefixes...)
+		}
+	}
+	for prefix := range prefixes {
+		if utilnet.IsIPv6CIDRString(prefix) {
+			v6++
+			continue
+		}
+		v4++
+	}
+	return v4, v6
 }
 
 // nodeHasLayer2Allocation reports whether the node has a gateway router LRP
@@ -1854,27 +1936,27 @@ func vtepCIDRPrefixSelectors(cidrs []string) []frrtypes.PrefixSelector {
 
 // deleteIncompleteVTEPConfigurations removes rejected generated configurations
 // while retaining other nodes' validated configurations on incomplete generation.
-func (c *Controller) deleteIncompleteVTEPConfigurations(ctx context.Context, name string, invalidNodes sets.Set[string], unsafeInput bool) (bool, int, error) {
+func (c *Controller) deleteIncompleteVTEPConfigurations(ctx context.Context, name string, invalidNodes sets.Set[string], unsafeInput bool) (bool, []*frrtypes.FRRConfiguration, error) {
 	existing, err := c.frrLister.List(labels.SelectorFromSet(labels.Set{types.OvnRouteAdvertisementsKey: name}))
 	if err != nil {
-		return false, 0, fmt.Errorf("failed listing incomplete VTEP configurations for RouteAdvertisements %q: %w", name, err)
+		return false, nil, fmt.Errorf("failed listing incomplete VTEP configurations for RouteAdvertisements %q: %w", name, err)
 	}
 	var hadUpdates bool
 	var errs []error
-	remaining := 0
+	var remaining []*frrtypes.FRRConfiguration
 	for _, config := range existing {
 		if config.Annotations[types.OvnRouteAdvertisementsKey] == "" {
 			continue
 		}
 		if !invalidNodes.Has(config.Spec.NodeSelector.MatchLabels["kubernetes.io/hostname"]) &&
 			(!unsafeInput || config.Annotations[types.OvnRouteAdvertisementsValidatedKey] == "true") {
-			remaining++
+			remaining = append(remaining, config)
 			continue
 		}
 		err = c.frrClient.ApiV1beta1().FRRConfigurations(config.Namespace).Delete(ctx, config.Name, metav1.DeleteOptions{})
 		if err != nil && !apierrors.IsNotFound(err) {
 			errs = append(errs, fmt.Errorf("failed withdrawing FRRConfiguration %s/%s: %w", config.Namespace, config.Name, err))
-			remaining++
+			remaining = append(remaining, config)
 			continue
 		}
 		hadUpdates = true
@@ -1885,18 +1967,18 @@ func (c *Controller) deleteIncompleteVTEPConfigurations(ctx context.Context, nam
 // deleteUnvalidatedFRRConfigurations deletes the FRRConfigurations generated
 // for a RouteAdvertisements that don't carry the
 // OvnRouteAdvertisementsValidatedKey annotation. Returns whether any was
-// deleted and how many generated FRRConfigurations remain; a failed deletion
+// deleted and which generated FRRConfigurations remain; a failed deletion
 // doesn't stop the others and is reported in the joined error.
-func (c *Controller) deleteUnvalidatedFRRConfigurations(ctx context.Context, ra string) (deleted bool, remaining int, err error) {
+func (c *Controller) deleteUnvalidatedFRRConfigurations(ctx context.Context, ra string) (deleted bool, remaining []*frrtypes.FRRConfiguration, err error) {
 	selector, err := metav1.LabelSelectorAsSelector(&metav1.LabelSelector{
 		MatchLabels: map[string]string{types.OvnRouteAdvertisementsKey: ra},
 	})
 	if err != nil {
-		return false, 0, err
+		return false, nil, err
 	}
 	frrConfigs, err := c.frrLister.List(selector)
 	if err != nil {
-		return false, 0, err
+		return false, nil, err
 	}
 	var errs []error
 	for _, frrConfig := range frrConfigs {
@@ -1904,7 +1986,7 @@ func (c *Controller) deleteUnvalidatedFRRConfigurations(ctx context.Context, ra 
 			continue
 		}
 		if frrConfig.Annotations[types.OvnRouteAdvertisementsValidatedKey] == "true" {
-			remaining++
+			remaining = append(remaining, frrConfig)
 			continue
 		}
 		err := c.frrClient.ApiV1beta1().FRRConfigurations(frrConfig.Namespace).Delete(ctx, frrConfig.Name, metav1.DeleteOptions{})
@@ -1923,6 +2005,8 @@ func (c *Controller) deleteUnvalidatedFRRConfigurations(ctx context.Context, ra 
 // state and creates, updates or deletes the FRRConfigurations accordingly.
 func (c *Controller) updateFRRConfigurations(ctx context.Context, ra string, frrConfigurations []*frrtypes.FRRConfiguration) (bool, error) {
 	var hadUpdates bool
+
+	metrics.RecordRouteAdvertisementFRRConfigurations(ra, len(frrConfigurations))
 
 	// fetch the currently existing FRRConfigurations for this
 	// RouteAdvertisements
@@ -1964,6 +2048,7 @@ func (c *Controller) updateFRRConfigurations(ctx context.Context, ra string, frr
 			if err != nil {
 				return hadUpdates, err
 			}
+			metrics.RecordRouteAdvertisementFRRConfigurationProcess(ra, frrConfigOpCreate)
 			hadUpdates = true
 			continue
 		}
@@ -1977,6 +2062,7 @@ func (c *Controller) updateFRRConfigurations(ctx context.Context, ra string, frr
 		// no changes needed so skip
 		if reflect.DeepEqual(newFRRConfig.Spec, oldFRRConfig.Spec) &&
 			oldFRRConfig.Annotations[types.OvnRouteAdvertisementsValidatedKey] == newFRRConfig.Annotations[types.OvnRouteAdvertisementsValidatedKey] {
+			metrics.RecordRouteAdvertisementFRRConfigurationProcess(ra, frrConfigOpUnchanged)
 			continue
 		}
 
@@ -1993,6 +2079,7 @@ func (c *Controller) updateFRRConfigurations(ctx context.Context, ra string, frr
 		if err != nil {
 			return hadUpdates, err
 		}
+		metrics.RecordRouteAdvertisementFRRConfigurationProcess(ra, frrConfigOpUpdate)
 		hadUpdates = true
 	}
 
@@ -2007,6 +2094,7 @@ func (c *Controller) updateFRRConfigurations(ctx context.Context, ra string, frr
 			if err != nil && !apierrors.IsNotFound(err) {
 				return hadUpdates, err
 			}
+			metrics.RecordRouteAdvertisementFRRConfigurationProcess(ra, frrConfigOpDelete)
 			hadUpdates = true
 		}
 	}
@@ -2076,6 +2164,7 @@ func (c *Controller) updateNADs(ctx context.Context, ra string, nads []*nadtypes
 		if err != nil {
 			return hadUpdates, fmt.Errorf("failed to annotate NAD %q: %w", nad.Name, err)
 		}
+		metrics.RecordRouteAdvertisementNADUpdate(ra)
 
 		hadUpdates = true
 	}
