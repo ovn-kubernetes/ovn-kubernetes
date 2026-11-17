@@ -228,12 +228,14 @@ func (c *contextKind) SetupUnderlay(f *framework.Framework, underlay api.Underla
 					return fmt.Errorf("failed to remove OVS bridge %s for pod %s/%s during cleanup: %w", underlay.BridgeName, ovsPod.Namespace, ovsPod.Name, err)
 				}
 			}
-			if err := configureBridgeMappings(
+			// Only remove this underlay's own mapping so concurrent underlays (e.g. a
+			// second VLAN on a different bridge) configured on the same node survive.
+			if err := removeBridgeMappings(
 				ovsPod.Namespace,
 				ovsPod.Name,
-				defaultNetworkBridgeMapping(),
+				underlay.LogicalNetworkName,
 			); err != nil {
-				return fmt.Errorf("failed to restore default bridge mappings for pod %s/%s during cleanup: %w", ovsPod.Namespace, ovsPod.Name, err)
+				return fmt.Errorf("failed to remove bridge mapping for logical network %s for pod %s/%s during cleanup: %w", underlay.LogicalNetworkName, ovsPod.Namespace, ovsPod.Name, err)
 			}
 		}
 		return nil
@@ -262,7 +264,10 @@ func (c *contextKind) SetupUnderlay(f *framework.Framework, underlay api.Underla
 				}
 			}
 		}
-		if err := configureBridgeMappings(
+		// Merge this underlay's mapping into any mappings already present (the default
+		// network mapping plus any other underlays) instead of replacing them, so two
+		// VLAN underlays on two bridges can coexist on the same node.
+		if err := addBridgeMappings(
 			ovsPod.Namespace,
 			ovsPod.Name,
 			defaultNetworkBridgeMapping(),
