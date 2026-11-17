@@ -5,10 +5,6 @@
 // (via envtest).  This is a separate module — no vendor/ dir, deps are
 // resolved on the fly — matching the pattern of test/e2e/.
 //
-// Long-term goal: tests from test/e2e/testscenario (CRD validation, CEL rules,
-// defaulting) that do not require a full Kind cluster should migrate here.
-// Tracking issue: https://github.com/ovn-kubernetes/ovn-kubernetes/issues/6932
-//
 // Run with: make test-crd  (from the test/ directory)
 module github.com/ovn-kubernetes/ovn-kubernetes/test/crd-integration
 

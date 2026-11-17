@@ -226,9 +226,8 @@ kube-apiserver + etcd started by [envtest](https://pkg.go.dev/sigs.k8s.io/contro
 They verify CRD admission behaviour — defaulting, validation, and CEL rules —
 without requiring a full KinD cluster.
 
-Some scenarios that do not need live pod networking have been migrated to
-`test/crd-integration/testscenario/`. The remaining scenarios are tracked in
-[ovn-kubernetes#6932](https://github.com/ovn-kubernetes/ovn-kubernetes/issues/6932).
+Schema-only scenarios that do not need live pod networking live in
+`test/crd-integration/testscenario/`.
 
 ### Prerequisites
 

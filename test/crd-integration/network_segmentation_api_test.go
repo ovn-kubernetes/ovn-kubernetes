@@ -4,15 +4,12 @@
 package crdintegration
 
 import (
-	"context"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
-	controllerruntimeclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/crd-integration/testscenario"
 	testscenariocudn "github.com/ovn-kubernetes/ovn-kubernetes/test/crd-integration/testscenario/cudn"
@@ -139,29 +136,3 @@ var _ = Describe("Network Segmentation: API validations", func() {
 		Entry("ClusterUserDefinedNetwork, layer3, multi-subnets", testscenariocudn.Layer3ValidSubnetsUpdates, SpecTimeout(networkSegmentationSpecTimeout)),
 	)
 })
-
-// cleanupValidateCRsTest deletes the resources represented by scenarios and verifies that they are gone.
-func cleanupValidateCRsTest(ctx context.Context, scenarios []testscenario.ValidateCRScenario) {
-	objs, err := testscenario.ValidateScenariosToObjects(scenarios)
-	Expect(err).NotTo(HaveOccurred(), "must convert manifest to object")
-	for _, o := range objs {
-		err = k8sClient.Delete(ctx, o)
-		err = controllerruntimeclient.IgnoreNotFound(err)
-		Expect(err).NotTo(HaveOccurred(), "expected the object to be deleted")
-	}
-	// Verify each named resource is gone individually — a global "no resources found"
-	// check is not parallel-safe since other concurrent tests may have live CUDNs.
-	for _, o := range objs {
-		err = k8sClient.Get(ctx, types.NamespacedName{Namespace: o.GetNamespace(), Name: o.GetName()}, o)
-		Expect(apierrors.IsNotFound(err)).To(BeTrue(), "expected the object to be deleted")
-	}
-}
-
-// cleanupUpdateCRScenario deletes the resources represented by each update scenario's final manifest.
-func cleanupUpdateCRScenario(ctx context.Context, updateScenarios []testscenario.UpdateCRScenario) {
-	scenarios := make([]testscenario.ValidateCRScenario, 0, len(updateScenarios))
-	for _, updateScenario := range updateScenarios {
-		scenarios = append(scenarios, updateScenario.ValidateCRScenario)
-	}
-	cleanupValidateCRsTest(ctx, scenarios)
-}
