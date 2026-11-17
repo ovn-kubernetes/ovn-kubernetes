@@ -1500,6 +1500,8 @@ func (c *nadController) GetActiveNetworkNamespaces(networkName string) ([]string
 }
 
 // DoWithLock iterates over all role primary user defined networks and executes the given fn with each network as input.
+// The callback runs while the controller read lock is held, so it must not call other controller methods that acquire
+// the same lock: a queued writer blocks a nested RLock and the callback can never return.
 // An error will not block execution and instead all errors will be aggregated and returned when all networks are processed.
 func (c *nadController) DoWithLock(f func(network util.NetInfo) error) error {
 	if !util.IsNetworkSegmentationSupportEnabled() {
