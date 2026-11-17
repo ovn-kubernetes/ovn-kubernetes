@@ -186,9 +186,23 @@ if [[ "${WHAT}" != "${CLUSTER_NETWORK_CONNECT_TESTS}"* ]]; then
 fi
 
 SERIAL_LABEL="Serial"
+DISRUPTIVE_LABEL="Disruptive"
 if [[ "${WHAT}" = "$SERIAL_LABEL" ]]; then
   require_label "$SERIAL_LABEL"
   shift # don't "focus" on Serial since we filter by label
+  # A lane that runs the Disruptive specs in a later, separate invocation sets
+  # SKIP_DISRUPTIVE so that no other spec runs after a node shutdown; the
+  # dedicated serial lane leaves it unset and keeps the Disruptive specs.
+  if [ "${SKIP_DISRUPTIVE:-false}" = true ]; then
+    skip_label "$DISRUPTIVE_LABEL"
+  fi
+elif [[ "${WHAT}" = "$DISRUPTIVE_LABEL" ]]; then
+  require_label "$DISRUPTIVE_LABEL"
+  shift # don't "focus" on Disruptive since we filter by label
+else
+  # Disruptive specs (node shutdown) leave the cluster unusable for the specs
+  # that follow on some layouts; only WHAT=Serial and WHAT=Disruptive run them.
+  skip_label "$DISRUPTIVE_LABEL"
 fi
 
 if [ "$ENABLE_UPLINK" != true ]; then
