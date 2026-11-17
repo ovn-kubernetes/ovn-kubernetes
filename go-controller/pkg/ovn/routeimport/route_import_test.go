@@ -9,9 +9,11 @@ import (
 	"net"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/go-logr/logr"
 	"github.com/go-logr/logr/testr"
+	"github.com/google/uuid"
 	"github.com/onsi/gomega"
 	"github.com/stretchr/testify/mock"
 	"github.com/vishvananda/netlink"
@@ -986,4 +988,105 @@ func Test_controller_subscribe(t *testing.T) {
 
 	g.Eventually(isLinkEventChSet).WithTimeout(subscribePeriod * 3).Should(gomega.Succeed())
 	g.Expect(c.tables).To(gomega.BeEmpty())
+}
+
+// Exercise reconciliation against the NB database: duplicates must be removed
+// even when the desired prefix/nexthop set has not changed.
+func TestSyncNetworkDuplicateRoutes(t *testing.T) {
+	originalSubnets := config.Default.ClusterSubnets
+	config.Default.ClusterSubnets = nil
+	t.Cleanup(func() { config.Default.ClusterSubnets = originalSubnets })
+
+	network := &util.DefaultNetInfo{}
+	const node = "testnode"
+	router := network.GetNetworkScopedGWRouterName(node)
+	outport := types.GWRouterToExtSwitchPrefix + router
+	makeRoute := func(prefix, nexthop string) *nbdb.LogicalRouterStaticRoute {
+		return &nbdb.LogicalRouterStaticRoute{
+			UUID: uuid.NewString(), IPPrefix: prefix, Nexthop: nexthop, OutputPort: &outport,
+			ExternalIDs: map[string]string{controllerExternalIDKey: controllerName},
+		}
+	}
+
+	for _, tc := range []struct {
+		name     string
+		withdraw bool
+		mutate   func(*nbdb.LogicalRouterStaticRoute)
+	}{
+		{name: "removes exact duplicates with unchanged desired routes"},
+		{name: "withdraws every duplicate", withdraw: true},
+		{name: "preserves another route table", mutate: func(r *nbdb.LogicalRouterStaticRoute) { r.RouteTable = "other" }},
+		{name: "preserves another policy", mutate: func(r *nbdb.LogicalRouterStaticRoute) {
+			policy := nbdb.LogicalRouterStaticRoutePolicySrcIP
+			r.Policy = &policy
+		}},
+		{name: "preserves another output port", mutate: func(r *nbdb.LogicalRouterStaticRoute) { port := "other-port"; r.OutputPort = &port }},
+		{name: "preserves different options", mutate: func(r *nbdb.LogicalRouterStaticRoute) { r.Options = map[string]string{"ecmp_symmetric_reply": "true"} }},
+		{name: "preserves different selection fields", mutate: func(r *nbdb.LogicalRouterStaticRoute) { r.SelectionFields = []string{"ip_src"} }},
+		{name: "preserves different external IDs", mutate: func(r *nbdb.LogicalRouterStaticRoute) { r.ExternalIDs["other"] = "value" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g := gomega.NewWithT(t)
+			routerUUID := uuid.NewString()
+			keep := makeRoute("192.0.2.0/24", "198.51.100.1")
+			duplicate := keep.DeepCopy()
+			duplicate.UUID = uuid.NewString()
+			third := keep.DeepCopy()
+			third.UUID = uuid.NewString()
+			if tc.mutate != nil {
+				tc.mutate(third)
+			}
+			ecmp := makeRoute(keep.IPPrefix, "198.51.100.2")
+			v6 := makeRoute("2001:db8::/64", "fe80::1")
+			v6Duplicate := v6.DeepCopy()
+			v6Duplicate.UUID = uuid.NewString()
+			unowned := keep.DeepCopy()
+			unowned.UUID = uuid.NewString()
+			unowned.ExternalIDs = map[string]string{controllerExternalIDKey: "another-controller"}
+			otherRouterRoute := keep.DeepCopy()
+			otherRouterRoute.UUID = uuid.NewString()
+			otherRouter := &nbdb.LogicalRouter{Name: "other-router", UUID: uuid.NewString(), StaticRoutes: []string{otherRouterRoute.UUID}}
+			initial := []libovsdb.TestData{
+				&nbdb.LogicalRouter{Name: router, UUID: routerUUID, StaticRoutes: []string{keep.UUID, duplicate.UUID, third.UUID, ecmp.UUID, v6.UUID, v6Duplicate.UUID, unowned.UUID}},
+				keep, duplicate, third, ecmp, v6, v6Duplicate, unowned, otherRouter, otherRouterRoute,
+			}
+			remaining := []string{unowned.UUID}
+			expected := []libovsdb.TestData{unowned, otherRouter, otherRouterRoute}
+			var routes []netlink.Route
+			if !tc.withdraw {
+				for _, r := range []*nbdb.LogicalRouterStaticRoute{keep, ecmp, v6} {
+					_, dst, err := net.ParseCIDR(r.IPPrefix)
+					g.Expect(err).NotTo(gomega.HaveOccurred())
+					routes = append(routes, netlink.Route{Dst: dst, Gw: net.ParseIP(r.Nexthop)})
+					remaining = append(remaining, r.UUID)
+					expected = append(expected, r)
+				}
+				if tc.mutate != nil {
+					remaining = append(remaining, third.UUID)
+					expected = append(expected, third)
+				}
+			}
+			expected = append(expected, &nbdb.LogicalRouter{Name: router, UUID: routerUUID, StaticRoutes: remaining})
+			nlmock := &mocks.NetLinkOps{}
+			nlmock.On("RouteListFilteredIter", netlink.FAMILY_ALL, mock.Anything, netlink.RT_FILTER_TABLE|netlink.RT_FILTER_PROTOCOL, mock.Anything).
+				Run(func(args mock.Arguments) {
+					for _, r := range routes {
+						if !args.Get(3).(func(netlink.Route) bool)(r) {
+							break
+						}
+					}
+				}).Return(nil)
+			client, cleanup, err := libovsdb.NewNBTestHarness(libovsdb.TestSetup{NBData: initial}, nil)
+			g.Expect(err).NotTo(gomega.HaveOccurred())
+			t.Cleanup(cleanup.Cleanup)
+			c := &controller{nbClient: client, node: node, log: testr.New(t),
+				networkIDs: map[int]string{0: types.DefaultNetworkName},
+				networks:   map[string]util.NetInfo{types.DefaultNetworkName: network},
+				tables:     map[int]int{}, netlink: nlmock}
+			for i := 0; i < 2; i++ {
+				g.Expect(c.syncNetwork(context.Background(), types.DefaultNetworkName)).To(gomega.Succeed())
+				g.Eventually(client, 5*time.Second).Should(libovsdb.HaveDataExact(expected...))
+			}
+		})
+	}
 }
