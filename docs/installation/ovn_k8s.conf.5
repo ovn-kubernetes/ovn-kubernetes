@@ -28,6 +28,17 @@ Default is not to log to a file.
 .TP
 \fBloglevel\fR=4
 Level is the logging verbosity level: 5=debug, 4=info, 3=warn, 2=error, 1=fatal (default: 4).
+.TP
+\fBcnilogfile\fR=/var/log/ovn-kubernetes/ovn-k8s-cni-overlay.log
+Path of the file the CNI shim logs to. It must be a canonical absolute path
+inside /var/log/ovn-kubernetes; any other path is rejected at startup. The same
+restriction applies to the \fBlogFile\fR field of an OVN-Kubernetes
+NetworkAttachmentDefinition config. The command line takes precedence over this
+file: \fB--cnilogfile=<path>\fR selects that path, and when the flag is not
+passed its default replaces any value set here. The value set here is only used
+when an empty \fB--cnilogfile=\fR is passed on the command line. To disable
+file logging for the shim, pass an empty \fB--cnilogfile=\fR and leave
+\fBcnilogfile\fR unset in this file.
 .SH [CNI]
 .PP
 The following config values are used for the CNI plugin.

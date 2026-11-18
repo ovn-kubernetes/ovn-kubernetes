@@ -294,6 +294,17 @@ var _ = Describe("Config Operations", func() {
 		os.Remove(cfgFile.Name())
 	})
 
+	It("rejects a CNI log file outside the allowed directory", func() {
+		err := runInit(app, 1, cfgFile, "-cnilogfile=/tmp/cni.log")
+		gomega.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("must be inside " + CNILogDir)))
+	})
+
+	It("accepts a CNI log file inside the allowed directory", func() {
+		err := runInit(app, 1, cfgFile, "-cnilogfile="+CNILogDir+"/cni.log")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(Logging.CNIFile).To(gomega.Equal(CNILogDir + "/cni.log"))
+	})
+
 	It("uses expected defaults", func() {
 		app.Action = func(ctx *cli.Context) error {
 			cfgPath, err := InitConfigSa(ctx, kexec.New(), tmpDir, nil)
