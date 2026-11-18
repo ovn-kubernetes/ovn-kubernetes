@@ -87,6 +87,25 @@ Validate changes with the existing builds and relevant test suites as appropriat
 and preserve coverage of existing scenarios. If a PR also changes product code
 outside `test/`, the usual test requirements still apply to those product changes.
 
+### Test organization and reuse
+
+Before adding a test, inspect existing coverage of the behavior. Prefer extending
+an existing test or adding a named table case when the setup, lifecycle, and
+assertions fit naturally. Balance reuse with clear failures and readable tests.
+
+- Give independent scenarios fresh state and descriptive names. Sequential
+  steps are useful for one lifecycle, such as failure followed by recovery.
+- Use a separate test when the behavior needs a distinct setup, lifecycle, or
+  synchronization strategy. Split tests that accumulate unrelated assertions,
+  many mode flags, or conditional setup just to accommodate additional cases.
+- Extract small test-only helpers for repeated setup, cache waits, and result
+  reads. Keep the scenario's important inputs, failure trigger, and behavioral
+  assertions visible. Avoid building a generic test framework for a few cases.
+- Preserve distinct failure reasons, ordering constraints, and recovery checks
+  when consolidating. If several invalid inputs are present, assert which one
+  caused the failure so one cannot mask another. Judge the result by useful
+  coverage and clarity, rather than test count or line count alone.
+
 ## Key Conventions
 
 See `CONTRIBUTING.md` for full details:
