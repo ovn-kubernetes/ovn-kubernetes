@@ -763,7 +763,13 @@ func (ncc *networkClusterController) Start(ctx context.Context) error {
 
 		start = time.Now()
 		klog.Infof("Cluster manager network controller %q starting Pod watcher...", ncc.GetNetworkName())
-		podHandler, err := ncc.retryPods.WatchResource()
+		var podHandler *factory.Handler
+		if ncc.IsUserDefinedNetwork() && !ncc.IsPrimaryNetwork() {
+			nadKeys := ncc.networkManager.GetNADKeysForNetwork(ncc.GetNetworkName())
+			podHandler, err = ncc.retryPods.WatchPodsWithInitialNADs(nadKeys)
+		} else {
+			podHandler, err = ncc.retryPods.WatchResource()
+		}
 		if err != nil {
 			return fmt.Errorf("unable to watch pods: %w", err)
 		}

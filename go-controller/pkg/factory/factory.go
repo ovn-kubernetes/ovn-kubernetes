@@ -1113,6 +1113,11 @@ func NewClusterManagerWatchFactory(ovnClientset *util.OVNClusterManagerClientset
 	}
 
 	if config.OVNKubernetesFeature.EnableMultiNetwork {
+		if err := wf.iFactory.Core().V1().Pods().Informer().AddIndexers(cache.Indexers{
+			podNetworkSelectionIndex: podNetworkSelectionIndexFunc,
+		}); err != nil {
+			return nil, fmt.Errorf("adding pod network selection index: %w", err)
+		}
 		wf.nadFactory = nadinformerfactory.NewSharedInformerFactory(ovnClientset.NetworkAttchDefClient, resyncInterval)
 		wf.informers[NetworkAttachmentDefinitionType], err = newQueuedInformer(eventQueueSize,
 			NetworkAttachmentDefinitionType,
@@ -1435,6 +1440,13 @@ func (wf *WatchFactory) GetResourceHandlerFunc(objType reflect.Type) (AddHandler
 }
 
 func (wf *WatchFactory) addHandler(objType reflect.Type, namespace string, sel labels.Selector, funcs cache.ResourceEventHandler, processExisting func(context.Context, []interface{}) error, priority int) (*Handler, error) {
+	return wf.addHandlerWithInitialList(objType, namespace, sel, funcs, processExisting, priority, nil)
+}
+
+// listInitial, when provided, selects the startup snapshot under the same handler
+// lock as registration. Live events remain unfiltered by this selection so that
+// changes racing with startup, including new NAD associations, are not lost.
+func (wf *WatchFactory) addHandlerWithInitialList(objType reflect.Type, namespace string, sel labels.Selector, funcs cache.ResourceEventHandler, processExisting func(context.Context, []interface{}) error, priority int, listInitial func(cache.Indexer) ([]interface{}, error)) (*Handler, error) {
 	inf, ok := wf.informers[objType]
 	if !ok {
 		klog.Fatalf("Tried to add handler of unknown object type %v", objType)
@@ -1470,8 +1482,21 @@ func (wf *WatchFactory) addHandler(objType reflect.Type, namespace string, sel l
 	// the atomic and preserve known state of the atomic while the handler is going to be added in the future
 	hadZeroHandlers := atomic.CompareAndSwapUint32(&intInf.hasHandlers, hasNoHandler, hasHandler)
 
+	var existing []interface{}
+	if listInitial == nil {
+		existing = inf.inf.GetStore().List()
+	} else {
+		var err error
+		existing, err = listInitial(inf.inf.GetIndexer())
+		if err != nil {
+			if hadZeroHandlers {
+				atomic.StoreUint32(&intInf.hasHandlers, hasNoHandler)
+			}
+			return nil, err
+		}
+	}
 	items := make([]interface{}, 0)
-	for _, obj := range inf.inf.GetStore().List() {
+	for _, obj := range existing {
 		if filterFunc(obj) {
 			items = append(items, obj)
 		}
@@ -1511,6 +1536,17 @@ func (wf *WatchFactory) removeHandler(objType reflect.Type, handler *Handler) {
 // AddPodHandler adds a handler function that will be executed on Pod object changes
 func (wf *WatchFactory) AddPodHandler(handlerFuncs cache.ResourceEventHandler, processExisting func(context.Context, []interface{}) error) (*Handler, error) {
 	return wf.addHandler(PodType, "", nil, handlerFuncs, processExisting, defaultHandlerPriority)
+}
+
+// AddPodHandlerWithInitialNADs registers an unfiltered Pod handler but limits
+// its initial sync and add replay to Pods requesting the given NADs. It is for
+// secondary-network allocators on a cluster-manager watch factory only: primary
+// networks can select Pods implicitly and must use the full startup snapshot.
+func (wf *WatchFactory) AddPodHandlerWithInitialNADs(nadKeys []string, funcs cache.ResourceEventHandler, processExisting func(context.Context, []interface{}) error) (*Handler, error) {
+	return wf.addHandlerWithInitialList(PodType, "", nil, funcs, processExisting, defaultHandlerPriority,
+		func(indexer cache.Indexer) ([]interface{}, error) {
+			return podsForNADs(indexer, nadKeys)
+		})
 }
 
 // AddFilteredPodHandler adds a handler function that will be executed when Pod objects that match the given filters change
