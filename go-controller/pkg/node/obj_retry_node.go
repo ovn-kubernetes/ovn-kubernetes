@@ -284,7 +284,7 @@ func (h *nodeEventHandler) UpdateResource(_ context.Context, oldObj, newObj inte
 				}
 			}
 
-			if err := removePMTUDNodeNFTRules(ipsToRemove); err != nil {
+			if err := h.nc.pmtudNodeIPs.remove(ipsToRemove); err != nil {
 				return fmt.Errorf("error removing node %q stale NFT rules during update: %w", oldNode.Name, err)
 			}
 		}
