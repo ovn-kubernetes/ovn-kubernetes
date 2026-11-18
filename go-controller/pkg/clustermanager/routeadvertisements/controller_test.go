@@ -4109,6 +4109,29 @@ func (m *stagedNetworkManager) setNetwork(network util.NetInfo) {
 	m.network = network
 }
 
+// TestNADNeedsUpdateWhenNetworkNameIsAnnotated verifies the event ordering
+// where the network manager notification is handled before the
+// RouteAdvertisements controller sees the network-name annotation. The later
+// annotation update must trigger another reconciliation so a pending
+// RouteAdvertisements does not remain stuck with an empty selected network.
+func TestNADNeedsUpdateWhenNetworkNameIsAnnotated(t *testing.T) {
+	g := gomega.NewWithT(t)
+
+	annotated := (&testNAD{
+		Name:      "green",
+		Namespace: "green",
+		Network:   util.GenerateCUDNNetworkName("green"),
+		Topology:  types.Layer2Topology,
+		Subnet:    "1.4.0.0/16",
+		Labels:    map[string]string{"selected": "true"},
+	}).NAD()
+	unannotated := annotated.DeepCopy()
+	delete(unannotated.Annotations, types.OvnNetworkNameAnnotation)
+
+	g.Expect(nadNeedsUpdate(unannotated, annotated)).To(gomega.BeTrue(),
+		"adding the network-name annotation must reconcile selected RouteAdvertisements")
+}
+
 // TestControllerWaitsForSelectedNetwork verifies the race where a selected NAD
 // reaches the RouteAdvertisements informer before the network manager has
 // processed it. The RouteAdvertisements must stay pending, and the network
