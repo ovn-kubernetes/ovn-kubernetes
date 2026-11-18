@@ -5,6 +5,7 @@ package kubevirt
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -12,10 +13,12 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	ktypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/rand"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
+	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -240,6 +243,128 @@ var _ = Describe("Kubevirt Pod", func() {
 		),
 	)
 
+	const (
+		localIP       = "10.244.0.5/24"
+		otherNodeIP   = "10.244.1.5/24"
+		releasedIP    = "10.244.2.5/24"
+		localIPv6     = "fd00:10:244:1::5/64"
+		otherNodeIPv6 = "fd00:10:244:2::5/64"
+	)
+	type otherPod struct {
+		phase corev1.PodPhase
+		// ips are the default network IPs of the pod, none for a pod without OVN annotation.
+		ips []string
+		// mirror makes the pod a mirror pod.
+		mirror bool
+	}
+	DescribeTable("findPodAnnotation", func(otherPods []otherPod, expectedIPs []string) {
+		const (
+			namespace = "ns1"
+			nodeName  = "node1"
+		)
+		vmPod := func(name string, phase corev1.PodPhase, annotations map[string]string) corev1.Pod {
+			pod := corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: namespace,
+					Name:      name,
+					UID:       ktypes.UID(name),
+					Labels: map[string]string{
+						kubevirtv1.AppLabel:                "virt-launcher",
+						kubevirtv1.VirtualMachineNameLabel: vmName,
+					},
+					Annotations: map[string]string{
+						kubevirtv1.AllowPodBridgeNetworkLiveMigrationAnnotation: "",
+						kubevirtv1.DomainAnnotation:                             vmName,
+					},
+				},
+				Spec:   corev1.PodSpec{NodeName: nodeName},
+				Status: corev1.PodStatus{Phase: phase},
+			}
+			for k, v := range annotations {
+				pod.Annotations[k] = v
+			}
+			return pod
+		}
+		pods := []corev1.Pod{vmPod("new", corev1.PodPending, nil)}
+		for i, other := range otherPods {
+			var annotations map[string]string
+			if len(other.ips) > 0 {
+				ips, err := json.Marshal(other.ips)
+				Expect(err).ToNot(HaveOccurred(), "failed to marshal the IPs of pod other-%d", i)
+				annotations = map[string]string{
+					ovntypes.OvnPodAnnotationName: fmt.Sprintf(`{"default":{"ip_addresses":%s,"mac_address":"0a:58:0a:f4:00:05"}}`, ips),
+				}
+			}
+			if other.mirror {
+				if annotations == nil {
+					annotations = map[string]string{}
+				}
+				annotations[corev1.MirrorPodAnnotationKey] = "hash"
+			}
+			pods = append(pods, vmPod(fmt.Sprintf("other-%d", i), other.phase, annotations))
+		}
+
+		Expect(config.PrepareTestConfig()).To(Succeed(), "failed to prepare the test config")
+		fakeClient := util.GetOVNClientset().GetOVNKubeControllerClientset()
+		_, err := fakeClient.KubeClient.CoreV1().Nodes().Create(context.Background(), &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:        nodeName,
+				Annotations: map[string]string{"k8s.ovn.org/node-subnets": `{"default":["10.244.0.0/24","fd00:10:244:1::/64"]}`},
+			},
+		}, metav1.CreateOptions{})
+		Expect(err).ToNot(HaveOccurred(), "failed to create node %s", nodeName)
+		for _, pod := range pods {
+			_, err := fakeClient.KubeClient.CoreV1().Pods(pod.Namespace).Create(context.Background(), &pod, metav1.CreateOptions{})
+			Expect(err).ToNot(HaveOccurred(), "failed to create pod %s", pod.Name)
+		}
+		wf, err := factory.NewOVNKubeControllerWatchFactory(fakeClient, nodeName)
+		Expect(err).ToNot(HaveOccurred(), "failed to create the watch factory")
+		defer wf.Shutdown()
+		Expect(wf.Start()).To(Succeed(), "failed to start the watch factory")
+
+		podAnnotation, err := findPodAnnotation(wf, &pods[0], ovntypes.DefaultNetworkName)
+		Expect(err).ToNot(HaveOccurred(), "findPodAnnotation must not fail")
+		if len(expectedIPs) == 0 {
+			Expect(podAnnotation).To(BeNil(), "no pod annotation must be inherited")
+			return
+		}
+		Expect(podAnnotation).ToNot(BeNil(), "a pod annotation must be inherited")
+		var ips []string
+		for _, ip := range podAnnotation.IPs {
+			ips = append(ips, ip.String())
+		}
+		Expect(ips).To(Equal(expectedIPs), "unexpected inherited IPs")
+	},
+		Entry("returns nil when the virtual machine has no other pod",
+			nil, nil),
+		Entry("returns the IPs of another node held by a running pod",
+			[]otherPod{{corev1.PodRunning, []string{otherNodeIP}, false}}, []string{otherNodeIP}),
+		Entry("returns the IPs of the running pod when a completed pod listed before it has other IPs",
+			[]otherPod{{corev1.PodSucceeded, []string{releasedIP}, false}, {corev1.PodRunning, []string{otherNodeIP}, false}}, []string{otherNodeIP}),
+		Entry("returns the IPs of the running pod when a completed pod listed after it has other IPs",
+			[]otherPod{{corev1.PodRunning, []string{otherNodeIP}, false}, {corev1.PodSucceeded, []string{releasedIP}, false}}, []string{otherNodeIP}),
+		Entry("returns the IPs of the pod's node held by a completed pod when the running pod has none",
+			[]otherPod{{corev1.PodSucceeded, []string{localIP}, false}, {corev1.PodRunning, nil, false}}, []string{localIP}),
+		Entry("returns nil for the IPs of another node held by a completed pod when the running pod has none",
+			[]otherPod{{corev1.PodSucceeded, []string{releasedIP}, false}, {corev1.PodRunning, nil, false}}, nil),
+		Entry("returns nil for the IPs of another node when all the other pods are completed",
+			[]otherPod{{corev1.PodSucceeded, []string{releasedIP}, false}, {corev1.PodFailed, []string{otherNodeIP}, false}}, nil),
+		Entry("returns the IPs of the pod's node when all the other pods are completed",
+			[]otherPod{{corev1.PodSucceeded, []string{localIP}, false}}, []string{localIP}),
+		Entry("returns the IPs of the pod's node when a completed pod listed before has IPs of another node",
+			[]otherPod{{corev1.PodSucceeded, []string{releasedIP}, false}, {corev1.PodFailed, []string{localIP}, false}}, []string{localIP}),
+		Entry("returns the IPs of the pod's node when a completed pod listed after has IPs of another node",
+			[]otherPod{{corev1.PodFailed, []string{localIP}, false}, {corev1.PodSucceeded, []string{releasedIP}, false}}, []string{localIP}),
+		Entry("returns nil for the IPs held by a running mirror pod",
+			[]otherPod{{corev1.PodRunning, []string{otherNodeIP}, true}}, nil),
+		Entry("returns the IPs of the running pod when a running mirror pod has other IPs",
+			[]otherPod{{corev1.PodRunning, []string{releasedIP}, true}, {corev1.PodRunning, []string{otherNodeIP}, false}}, []string{otherNodeIP}),
+		Entry("returns both IPs of the pod's node held by a completed dual-stack pod",
+			[]otherPod{{corev1.PodSucceeded, []string{localIP, localIPv6}, false}}, []string{localIP, localIPv6}),
+		Entry("returns nil when one IP of a completed dual-stack pod is of another node",
+			[]otherPod{{corev1.PodSucceeded, []string{localIP, otherNodeIPv6}, false}}, nil),
+	)
+
 	Describe("NewVMDescriptionFromPod", func() {
 		It("returns nil for non-kubevirt pod", func() {
 			pod := nonKubevirtPod()
@@ -266,6 +391,26 @@ var _ = Describe("Kubevirt Pod", func() {
 			for _, p := range pods {
 				Expect(p.Annotations[kubevirtv1.DomainAnnotation]).To(Equal(vmName))
 			}
+		})
+
+		It("does not find a pod carrying the VM name label and domain without the virt-launcher label", func() {
+			sourcePod := runningKvSourcePod
+			otherPod := nonKubevirtPod()
+			otherPod.Namespace = sourcePod.Namespace
+			otherPod.Labels = map[string]string{kubevirtv1.VirtualMachineNameLabel: sourcePod.Labels[kubevirtv1.VirtualMachineNameLabel]}
+			otherPod.Annotations = map[string]string{kubevirtv1.DomainAnnotation: vmName}
+
+			wf, shutdown := initWatchFactory([]corev1.Pod{sourcePod, otherPod})
+			defer shutdown()
+
+			desc, err := NewVMDescriptionFromPod(&sourcePod)
+			Expect(err).ToNot(HaveOccurred(), "failed to get the VM description of pod %s", sourcePod.Name)
+			Expect(desc).ToNot(BeNil(), "pod %s must have a VM description", sourcePod.Name)
+
+			pods, err := desc.OwnedPods(wf.PodCoreInformer().Lister())
+			Expect(err).ToNot(HaveOccurred(), "failed to list the pods of the VM")
+			Expect(pods).To(HaveLen(1), "only the virt-launcher pod must be found")
+			Expect(pods[0].Name).To(Equal(sourcePod.Name), "unexpected pod of the VM")
 		})
 
 		type vmDescriptionParams struct {
