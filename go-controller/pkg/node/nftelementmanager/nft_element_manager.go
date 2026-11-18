@@ -58,7 +58,7 @@ func (c *Controller) Add(elem *knftables.Element) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for i, existing := range c.elements {
-		if elementsEqual(existing.elem, elem) {
+		if elementsHaveSameKey(existing.elem, elem) {
 			c.elements[i].elem = elem
 			c.elements[i].delete = false
 			return c.reconcile()
@@ -103,7 +103,7 @@ func (c *Controller) OwnMaps(ownedMaps []string, elems ...*knftables.Element) er
 	for _, elem := range elems {
 		found := false
 		for i, existing := range c.elements {
-			if elementsEqual(existing.elem, elem) {
+			if elementsHaveSameKey(existing.elem, elem) {
 				c.elements[i].elem = elem
 				c.elements[i].delete = false
 				found = true
@@ -139,15 +139,47 @@ func (c *Controller) doReconcile(pruneOwnedMaps bool) error {
 	}
 
 	tx := nft.NewTransaction()
+	actualElements := make(map[string][]*knftables.Element)
+	for mapName := range c.ownedMaps {
+		actual, err := nft.ListElements(context.TODO(), "map", mapName)
+		if err != nil && !knftables.IsNotFound(err) {
+			return fmt.Errorf("failed to list elements in map %s: %w", mapName, err)
+		}
+		actualElements[mapName] = actual
+	}
+	for _, e := range c.elements {
+		if _, ok := actualElements[e.elem.Map]; ok {
+			continue
+		}
+		actual, err := nft.ListElements(context.TODO(), "map", e.elem.Map)
+		if err != nil && !knftables.IsNotFound(err) {
+			return fmt.Errorf("failed to list elements in map %s: %w", e.elem.Map, err)
+		}
+		actualElements[e.elem.Map] = actual
+	}
 
 	elementsToKeep := make([]element, 0, len(c.elements))
 	for _, e := range c.elements {
 		if e.delete {
-			tx.Add(e.elem)
-			tx.Delete(e.elem)
+			// Owned maps are pruned below. Skipping the explicit delete here
+			// avoids scheduling the same delete twice in one transaction.
+			if pruneOwnedMaps && c.ownedMaps.Has(e.elem.Map) {
+				continue
+			}
+			if actual := findElementByKey(actualElements[e.elem.Map], e.elem); actual != nil {
+				tx.Delete(actual)
+			}
 		} else {
 			elementsToKeep = append(elementsToKeep, e)
-			tx.Add(e.elem)
+			actual := findElementByKey(actualElements[e.elem.Map], e.elem)
+			if actual == nil {
+				tx.Add(e.elem)
+			} else if !elementsEqual(actual, e.elem) {
+				// nftables map keys are unique. Remove a stale value before adding
+				// the desired value for the same key.
+				tx.Delete(actual)
+				tx.Add(e.elem)
+			}
 		}
 	}
 
@@ -163,7 +195,6 @@ func (c *Controller) doReconcile(pruneOwnedMaps bool) error {
 			for _, existingElem := range existing {
 				if !c.isTracked(existingElem) {
 					klog.Infof("NFT element manager: deleting stale element in map %s: key=%v", mapName, existingElem.Key)
-					tx.Add(existingElem)
 					tx.Delete(existingElem)
 				}
 			}
@@ -179,11 +210,32 @@ func (c *Controller) doReconcile(pruneOwnedMaps bool) error {
 
 func (c *Controller) isTracked(candidate *knftables.Element) bool {
 	for _, e := range c.elements {
-		if !e.delete && elementsEqual(e.elem, candidate) {
+		if !e.delete && elementsHaveSameKey(e.elem, candidate) {
 			return true
 		}
 	}
 	return false
+}
+
+func findElementByKey(elements []*knftables.Element, candidate *knftables.Element) *knftables.Element {
+	for _, elem := range elements {
+		if elementsHaveSameKey(elem, candidate) {
+			return elem
+		}
+	}
+	return nil
+}
+
+func elementsHaveSameKey(a, b *knftables.Element) bool {
+	if a.Map != b.Map || len(a.Key) != len(b.Key) {
+		return false
+	}
+	for i := range a.Key {
+		if a.Key[i] != b.Key[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func elementsEqual(a, b *knftables.Element) bool {

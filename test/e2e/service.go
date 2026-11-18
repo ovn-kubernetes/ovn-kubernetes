@@ -1343,6 +1343,39 @@ spec:
 				}
 			}
 
+			ginkgo.By("Seeding a stale EgressIP SNAT map entry and restarting ovnkube-node")
+			secondaryNetworkInterface, err := infraprovider.Get().GetK8NodeNetworkInterface(egressNode, secondaryProviderNetwork)
+			framework.ExpectNoError(err, "must get secondary network interface for egress node")
+			podIP := egressPod.Status.PodIP
+			if isIPv6Cluster {
+				for _, podIPStatus := range egressPod.Status.PodIPs {
+					if utilnet.IsIPv6String(podIPStatus.IP) {
+						podIP = podIPStatus.IP
+						break
+					}
+				}
+			}
+			gomega.Expect(podIP).NotTo(gomega.BeEmpty(), "egress pod must have an IP before seeding the SNAT map")
+			mapName := "egress-ip-snat-v4"
+			if isIPv6Cluster {
+				mapName = "egress-ip-snat-v6"
+			}
+			staleSNATCommand := fmt.Sprintf("nft replace element netdev ovn-kubernetes-egressip %s { %s . \"%s\" : %s }",
+				mapName, podIP, secondaryNetworkInterface.InfName, serverExternalContainerIP)
+			_, err = infraprovider.Get().ExecK8NodeCommand(egressNode, []string{"sh", "-c", staleSNATCommand})
+			framework.ExpectNoError(err, "must replace the EgressIP SNAT map value with a stale value")
+
+			ovnkubeNodePods, err := f.ClientSet.CoreV1().Pods("ovn-kubernetes").List(context.TODO(), metav1.ListOptions{
+				FieldSelector: fmt.Sprintf("spec.nodeName=%s", egressNode),
+				LabelSelector: "app=ovnkube-node",
+			})
+			framework.ExpectNoError(err, "must list ovnkube-node pods on egress node")
+			gomega.Expect(ovnkubeNodePods.Items).To(gomega.HaveLen(1), "must find one ovnkube-node pod on egress node")
+			err = deletePodWithWaitByName(context.TODO(), f.ClientSet, ovnkubeNodePods.Items[0].Name, "ovn-kubernetes")
+			framework.ExpectNoError(err, "must restart ovnkube-node after seeding stale SNAT map entry")
+			err = waitOVNKubernetesHealthy(f)
+			framework.ExpectNoError(err, "OVN-Kubernetes must become healthy after ovnkube-node restart")
+
 			ginkgo.By("Creating NodePort services")
 
 			etpLocalServiceName := "etp-local-svc"

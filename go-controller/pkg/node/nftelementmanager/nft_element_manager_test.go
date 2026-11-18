@@ -134,6 +134,27 @@ var _ = ginkgo.Describe("NFT Element Manager", func() {
 			elems := listElements(fake, testMapV4)
 			gomega.Expect(hasElement(elems, testMapV4, []string{"10.0.0.1", "eth0"}, []string{"192.168.1.2"})).To(gomega.BeTrue())
 		})
+
+		ginkgo.It("replaces a stale element already present in nftables", func() {
+			stale := &knftables.Element{
+				Map:   testMapV4,
+				Key:   []string{"10.0.0.1", "eth0"},
+				Value: []string{"192.168.1.1"},
+			}
+			tx := fake.NewTransaction()
+			tx.Add(stale)
+			gomega.Expect(fake.Run(context.TODO(), tx)).To(gomega.Succeed(), "failed to seed stale element")
+
+			gomega.Expect(ctrl.Add(&knftables.Element{
+				Map:   testMapV4,
+				Key:   []string{"10.0.0.1", "eth0"},
+				Value: []string{"192.168.1.2"},
+			})).To(gomega.Succeed(), "failed to replace stale element")
+
+			elems := listElements(fake, testMapV4)
+			gomega.Expect(elems).To(gomega.HaveLen(1), "expected one element after stale replacement")
+			gomega.Expect(hasElement(elems, testMapV4, []string{"10.0.0.1", "eth0"}, []string{"192.168.1.2"})).To(gomega.BeTrue(), "expected replacement value in nftables")
+		})
 	})
 
 	ginkgo.Context("Delete", func() {
@@ -161,6 +182,28 @@ var _ = ginkgo.Describe("NFT Element Manager", func() {
 				Value: []string{"192.168.1.1"},
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		})
+
+		ginkgo.It("does not delete a replacement with a different value", func() {
+			gomega.Expect(ctrl.Add(&knftables.Element{
+				Map:   testMapV4,
+				Key:   []string{"10.0.0.1", "eth0"},
+				Value: []string{"192.168.1.1"},
+			})).To(gomega.Succeed(), "failed to add original element")
+			gomega.Expect(ctrl.Add(&knftables.Element{
+				Map:   testMapV4,
+				Key:   []string{"10.0.0.1", "eth0"},
+				Value: []string{"192.168.1.2"},
+			})).To(gomega.Succeed(), "failed to add replacement element")
+
+			gomega.Expect(ctrl.Delete(&knftables.Element{
+				Map:   testMapV4,
+				Key:   []string{"10.0.0.1", "eth0"},
+				Value: []string{"192.168.1.1"},
+			})).To(gomega.Succeed(), "failed to delete original element")
+
+			elems := listElements(fake, testMapV4)
+			gomega.Expect(hasElement(elems, testMapV4, []string{"10.0.0.1", "eth0"}, []string{"192.168.1.2"})).To(gomega.BeTrue(), "replacement value should remain after deleting old value")
 		})
 	})
 
@@ -227,6 +270,18 @@ var _ = ginkgo.Describe("NFT Element Manager", func() {
 	})
 
 	ginkgo.Context("fullReconcile", func() {
+		ginkgo.It("does not schedule duplicate deletes for omitted elements", func() {
+			elem := &knftables.Element{
+				Map:   testMapV4,
+				Key:   []string{"10.0.0.1", "eth0"},
+				Value: []string{"192.168.1.1"},
+			}
+			gomega.Expect(ctrl.OwnMaps([]string{testMapV4}, elem)).To(gomega.Succeed(), "failed to own initial map element")
+			gomega.Expect(ctrl.OwnMaps([]string{testMapV4})).To(gomega.Succeed(), "failed to reconcile omitted map element")
+
+			gomega.Expect(listElements(fake, testMapV4)).To(gomega.BeEmpty(), "expected owned map to be empty after omitted reconcile")
+		})
+
 		ginkgo.It("prunes stale elements from owned maps", func() {
 			// Own the map and add a legitimate element
 			gomega.Expect(ctrl.OwnMaps([]string{testMapV4},
