@@ -773,8 +773,6 @@ configure_frr_uplink_peers() {
   vtysh_cmds+=(-c "end" -c "write memory")
   "$OCI_BIN" exec "${FRR_CONTAINER_NAME}" vtysh "${vtysh_cmds[@]}"
 
-  "$OCI_BIN" exec "${FRR_CONTAINER_NAME}" ip route delete default || true
-  "$OCI_BIN" exec "${FRR_CONTAINER_NAME}" ip -6 route delete default || true
   configure_frr_uplink_receive_config "${frr_uplink_ipv4}" "${frr_uplink_ipv6}"
 }
 
@@ -1807,26 +1805,20 @@ deploy_bgp_external_server() {
     echo "FRR bgp network IPv6: ${bgp_network_frr_v6}"
     $OCI_BIN exec "${BGP_SERVER_NAME}" ip -6 route replace default via "$bgp_network_frr_v6"
   fi
-  if [ "$ADVERTISED_UDN_ISOLATION_MODE" == "loose" ]; then
+  # Set the FRR router as the default gateway of the nodes, so that cross-UDN
+  # traffic is routed back to the cluster. The advertised UDN isolation mode
+  # then decides whether that traffic is delivered (loose) or dropped (strict):
+  # without this, cross-UDN traffic would never come back and strict isolation
+  # would not be exercised.
+  if  [ "$PLATFORM_IPV4_SUPPORT" == true ] ; then
     kind_network_frr_v4=$($OCI_BIN inspect -f '{{with index .NetworkSettings.Networks "kind"}}{{.IPAddress}}{{end}}' "${FRR_CONTAINER_NAME}")
-    echo "FRR kind network IPv4: ${kind_network_frr_v4}"
-    # If UDN isolation is in loose disabled, we need to set the default gateway for the nodes in the cluster
-    # to the FRR router so that cross-UDN traffic can be routed back to the pods in the cluster in the loose mode.
     echo "Setting default gateway for nodes in the cluster to FRR router IPv4: ${kind_network_frr_v4}"
     set_nodes_default_gw "$kind_network_frr_v4"
-    if  [ "$PLATFORM_IPV6_SUPPORT" == true ] ; then
-      kind_network_frr_v6=$($OCI_BIN inspect -f '{{with index .NetworkSettings.Networks "kind"}}{{.GlobalIPv6Address}}{{end}}' "${FRR_CONTAINER_NAME}")
-      echo "FRR kind network IPv6: ${kind_network_frr_v6}"
-      set_nodes_default_gw "$kind_network_frr_v6"
-    fi
-  else
-    # disable the default route to make sure the container only routes accross
-    # directly connected or learnt networks (doing this at the very end since
-    # docker changes the routing table when a new network is connected)
-    $OCI_BIN exec "${FRR_CONTAINER_NAME}" ip route delete default
-    $OCI_BIN exec "${FRR_CONTAINER_NAME}" ip route
-    $OCI_BIN exec "${FRR_CONTAINER_NAME}" ip -6 route delete default
-    $OCI_BIN exec "${FRR_CONTAINER_NAME}" ip -6 route
+  fi
+  if  [ "$PLATFORM_IPV6_SUPPORT" == true ] ; then
+    kind_network_frr_v6=$($OCI_BIN inspect -f '{{with index .NetworkSettings.Networks "kind"}}{{.GlobalIPv6Address}}{{end}}' "${FRR_CONTAINER_NAME}")
+    echo "Setting default gateway for nodes in the cluster to FRR router IPv6: ${kind_network_frr_v6}"
+    set_nodes_default_gw "$kind_network_frr_v6"
   fi
 }
 
