@@ -9,10 +9,10 @@ package ovspinning
 import (
 	"context"
 
-	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 	"k8s.io/klog/v2"
-
 	podresourcesapi "k8s.io/kubelet/pkg/apis/podresources/v1"
+
+	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 )
 
 func Run(_ context.Context, _ <-chan struct{}, _ podresourcesapi.PodResourcesListerClient, _ libovsdbclient.Client) {

@@ -4,6 +4,7 @@
 package controllermanager
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -21,6 +22,7 @@ import (
 	"k8s.io/client-go/tools/cache"
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
+	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	uplinkfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1/apis/clientset/versioned/fake"
@@ -42,22 +44,6 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-func genListStalePortsCmd() string {
-	return "ovs-vsctl --timeout=15 --data=bare --no-headings --columns=name find interface ofport=-1"
-}
-
-func genDeleteStalePortCmd(ifaces ...string) string {
-	staleIfacesCmd := ""
-	for _, iface := range ifaces {
-		if len(staleIfacesCmd) > 0 {
-			staleIfacesCmd += fmt.Sprintf(" -- --if-exists --with-iface del-port %s", iface)
-		} else {
-			staleIfacesCmd += fmt.Sprintf("ovs-vsctl --timeout=15 --if-exists --with-iface del-port %s", iface)
-		}
-	}
-	return staleIfacesCmd
-}
-
 func newTestOVSClient(ovsData []libovsdbtest.TestData) (libovsdbclient.Client, *libovsdbtest.Context) {
 	ovsClient, testCtx, err := libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{
 		OVSData: ovsData,
@@ -69,6 +55,44 @@ func newTestOVSClient(ovsData []libovsdbtest.TestData) (libovsdbclient.Client, *
 func ovsPortAndInterface(portUUID, ifaceUUID, name string, extIDs map[string]string) (*vswitchd.Port, *vswitchd.Interface) {
 	return &vswitchd.Port{UUID: portUUID, Name: name, Interfaces: []string{ifaceUUID}},
 		&vswitchd.Interface{UUID: ifaceUUID, Name: name, ExternalIDs: extIDs}
+}
+
+type stalePortFailureClient struct {
+	libovsdbclient.Client
+	interfaceLists int
+	failedIface    string
+}
+
+func (c *stalePortFailureClient) WhereCacheByUUIDs(predicate any, uuids ...string) libovsdbclient.ConditionalAPI {
+	conditional := c.Client.WhereCacheByUUIDs(predicate, uuids...)
+	c.interfaceLists++
+	if c.interfaceLists == 2 {
+		c.failedIface = uuids[0]
+		return &failedInterfaceList{ConditionalAPI: conditional}
+	}
+	return conditional
+}
+
+type changedFailedPortClient struct {
+	libovsdbclient.Client
+	before func()
+}
+
+func (c *changedFailedPortClient) Transact(ctx context.Context, operations ...ovsdb.Operation) ([]ovsdb.OperationResult, error) {
+	if c.before != nil {
+		before := c.before
+		c.before = nil
+		before()
+	}
+	return c.Client.Transact(ctx, operations...)
+}
+
+type failedInterfaceList struct {
+	libovsdbclient.ConditionalAPI
+}
+
+func (*failedInterfaceList) List(context.Context, any) error {
+	return errors.New("injected interface lookup failure")
 }
 
 func expectUplinkInformers(factoryMock *factoryMocks.NodeWatchFactory) {
@@ -109,35 +133,180 @@ var _ = Describe("Healthcheck tests", func() {
 		util.ResetRunner()
 	})
 
-	Describe("checkForStaleOVSInternalPorts", func() {
+	Describe("checkForFailedOVSPodPorts", func() {
+		It("continues stale port cleanup after an individual operation-building error", func() {
+			minusOne := -1
+			bridge := &vswitchd.Bridge{UUID: "bridge", Name: "br-int"}
+			data := []libovsdbtest.TestData{
+				&vswitchd.OpenvSwitch{UUID: "root", Bridges: []string{bridge.UUID}},
+				bridge,
+			}
+			for i := 0; i < 3; i++ {
+				name := fmt.Sprintf("stale-%d", i)
+				port, iface := ovsPortAndInterface(name+"-port", name+"-iface", name, map[string]string{"sandbox": name, "iface-id-ver": name, "iface-id": name})
+				iface.Ofport = &minusOne
+				bridge.Ports = append(bridge.Ports, port.UUID)
+				data = append(data, port, iface)
+			}
+			ovsClient, cleanup := newTestOVSClient(data)
+			defer cleanup.Cleanup()
+			failingClient := &stalePortFailureClient{Client: ovsClient}
 
-		Context("bridge has stale ports", func() {
-			It("removes stale ports from bridge", func() {
-				execMock.AddFakeCmd(&ovntest.ExpectedCmd{
-					Cmd:    genListStalePortsCmd(),
-					Output: "foo\n\nbar\n\n" + types.K8sMgmtIntfName + "\n\n",
-					Err:    nil,
-				})
-				execMock.AddFakeCmd(&ovntest.ExpectedCmd{
-					Cmd:    genDeleteStalePortCmd("foo", "bar"),
-					Output: "",
-					Err:    nil,
-				})
-				checkForStaleOVSInternalPorts()
-				Expect(execMock.CalledMatchesExpected()).To(BeTrue(), execMock.ErrorDesc)
-			})
+			checkForFailedOVSPodPorts(failingClient)
+
+			Expect(failingClient.interfaceLists).To(Equal(3))
+			ports, err := libovsdbops.FindOVSPortsWithPredicate(ovsClient, func(*vswitchd.Port) bool { return true })
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ports).To(HaveLen(1))
+			Expect(ports[0].Interfaces).To(Equal([]string{failingClient.failedIface}))
+			ifaces, err := libovsdbops.FindInterfacesWithPredicate(ovsClient, func(*vswitchd.Interface) bool { return true })
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ifaces).To(HaveLen(1))
+			Expect(ifaces[0].UUID).To(Equal(failingClient.failedIface))
+			bridges, err := libovsdbops.ListBridges(ovsClient)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(bridges).To(HaveLen(1))
+			Expect(bridges[0].Ports).To(Equal([]string{ports[0].UUID}))
 		})
 
-		Context("bridge does not have stale ports", func() {
-			It("Does not remove any ports from bridge", func() {
-				execMock.AddFakeCmd(&ovntest.ExpectedCmd{
-					Cmd:    genListStalePortsCmd(),
-					Output: types.K8sMgmtIntfName + "\n\n",
-					Err:    nil,
-				})
-				checkForStaleOVSInternalPorts()
-				Expect(execMock.CalledMatchesExpected()).To(BeTrue(), execMock.ErrorDesc)
+		It("removes failed pod ports while preserving external, healthy and management ports", func() {
+			minusOne := -1
+			one := 1
+			ovsClient, ovsCleanup := newTestOVSClient([]libovsdbtest.TestData{
+				&vswitchd.OpenvSwitch{UUID: "00000000-0000-0000-0000-000000000001", Bridges: []string{
+					"00000000-0000-0000-0000-000000000002",
+					"00000000-0000-0000-0000-000000000009",
+				}},
+				&vswitchd.Bridge{UUID: "00000000-0000-0000-0000-000000000002", Name: "br-int", Ports: []string{
+					"00000000-0000-0000-0000-000000000003",
+					"00000000-0000-0000-0000-000000000007",
+				}},
+				&vswitchd.Port{UUID: "00000000-0000-0000-0000-000000000003", Name: "foo", Interfaces: []string{"00000000-0000-0000-0000-000000000004"}},
+				&vswitchd.Interface{UUID: "00000000-0000-0000-0000-000000000004", Name: "foo", Ofport: &minusOne, ExternalIDs: map[string]string{"sandbox": "sandbox", "iface-id-ver": "pod-uid", "iface-id": "ns_pod"}},
+				&vswitchd.Port{UUID: "00000000-0000-0000-0000-000000000007", Name: types.K8sMgmtIntfName, Interfaces: []string{"00000000-0000-0000-0000-000000000008"}},
+				&vswitchd.Interface{UUID: "00000000-0000-0000-0000-000000000008", Name: types.K8sMgmtIntfName, Ofport: &minusOne},
+				&vswitchd.Bridge{UUID: "00000000-0000-0000-0000-000000000009", Name: "br-other", Ports: []string{
+					"00000000-0000-0000-0000-000000000005",
+					"00000000-0000-0000-0000-000000000010",
+				}},
+				&vswitchd.Port{UUID: "00000000-0000-0000-0000-000000000005", Name: "bond0", Interfaces: []string{"00000000-0000-0000-0000-000000000006"}},
+				&vswitchd.Interface{UUID: "00000000-0000-0000-0000-000000000006", Name: "bar", Ofport: &minusOne},
+				&vswitchd.Port{UUID: "00000000-0000-0000-0000-000000000010", Name: "healthy", Interfaces: []string{"00000000-0000-0000-0000-000000000011"}},
+				&vswitchd.Interface{UUID: "00000000-0000-0000-0000-000000000011", Name: "healthy", Ofport: &one},
 			})
+			defer ovsCleanup.Cleanup()
+
+			checkForFailedOVSPodPorts(ovsClient)
+
+			_, err := libovsdbops.GetOVSPort(ovsClient, "foo")
+			Expect(err).To(MatchError(libovsdbclient.ErrNotFound))
+			_, err = libovsdbops.GetOVSPort(ovsClient, "bond0")
+			Expect(err).NotTo(HaveOccurred())
+			_, err = libovsdbops.GetOVSInterface(ovsClient, "bar")
+			Expect(err).NotTo(HaveOccurred())
+			_, err = libovsdbops.GetOVSPort(ovsClient, types.K8sMgmtIntfName)
+			Expect(err).NotTo(HaveOccurred())
+			_, err = libovsdbops.GetOVSPort(ovsClient, "healthy")
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		DescribeTable("preserves pod ports changed after the failed-ofport snapshot", func(recovered bool) {
+			failed := -1
+			port, iface := ovsPortAndInterface("port", "iface", "rep0", map[string]string{
+				"sandbox": "old", "iface-id-ver": "uid", "iface-id": "ns_pod",
+			})
+			iface.Ofport = &failed
+			ovsClient, cleanup := newTestOVSClient([]libovsdbtest.TestData{
+				&vswitchd.OpenvSwitch{UUID: "root", Bridges: []string{"bridge"}},
+				&vswitchd.Bridge{UUID: "bridge", Name: "br-int", Ports: []string{port.UUID}},
+				port, iface,
+			})
+			defer cleanup.Cleanup()
+			wrapped := &changedFailedPortClient{Client: ovsClient, before: func() {
+				current, err := libovsdbops.GetOVSInterface(ovsClient, "rep0")
+				Expect(err).NotTo(HaveOccurred())
+				if recovered {
+					assigned := 5
+					current.Ofport = &assigned
+				} else {
+					current.ExternalIDs["sandbox"] = "new"
+				}
+				ops, err := ovsClient.Where(current).Update(current, &current.Ofport, &current.ExternalIDs)
+				Expect(err).NotTo(HaveOccurred())
+				_, err = libovsdbops.TransactAndCheck(ovsClient, ops)
+				Expect(err).NotTo(HaveOccurred())
+			}}
+			checkForFailedOVSPodPorts(wrapped)
+			_, err := libovsdbops.GetOVSPort(ovsClient, "rep0")
+			Expect(err).NotTo(HaveOccurred())
+		},
+			Entry("recovered ofport", true),
+			Entry("reclaimed sandbox", false),
+		)
+
+		DescribeTable("preserves ports without exclusive pod ownership", func(bridgeName string, extIDs map[string]string, memberCount int, healthyMember bool) {
+			failed, healthy := -1, 1
+			port, iface := ovsPortAndInterface("port", "iface", "rep0", extIDs)
+			iface.Ofport = &failed
+			data := []libovsdbtest.TestData{
+				&vswitchd.OpenvSwitch{UUID: "root", Bridges: []string{"bridge"}},
+				&vswitchd.Bridge{UUID: "bridge", Name: bridgeName, Ports: []string{port.UUID}},
+				port, iface,
+			}
+			if memberCount == 2 {
+				other := &vswitchd.Interface{UUID: "other", Name: "rep1", Ofport: &failed}
+				if healthyMember {
+					other.Ofport = &healthy
+				}
+				port.Interfaces = append(port.Interfaces, other.UUID)
+				data = append(data, other)
+			}
+			ovsClient, cleanup := newTestOVSClient(data)
+			defer cleanup.Cleanup()
+			checkForFailedOVSPodPorts(ovsClient)
+			retained, err := libovsdbops.GetOVSPort(ovsClient, port.Name)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(retained.Interfaces).To(HaveLen(memberCount))
+			ifaces, err := libovsdbops.FindInterfacesWithPredicate(ovsClient, func(*vswitchd.Interface) bool { return true })
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ifaces).To(HaveLen(memberCount))
+		},
+			Entry("administrator port on br-int", "br-int", map[string]string{}, 1, false),
+			Entry("administrator uplink", "br-ex", map[string]string{}, 1, false),
+			Entry("incomplete ownership metadata", "br-int", map[string]string{"sandbox": "sandbox"}, 1, false),
+			Entry("pod metadata on another bridge", "br-ex", map[string]string{"sandbox": "sandbox", "iface-id-ver": "uid", "iface-id": "ns_pod"}, 1, false),
+			Entry("bond with a healthy member", "br-int", map[string]string{"sandbox": "sandbox", "iface-id-ver": "uid", "iface-id": "ns_pod"}, 2, true),
+			Entry("bond with all members failed", "br-int", map[string]string{"sandbox": "sandbox", "iface-id-ver": "uid", "iface-id": "ns_pod"}, 2, false),
+		)
+
+		It("preserves a bridge local port without blocking other stale port cleanup", func() {
+			minusOne := -1
+			ovsClient, ovsCleanup := newTestOVSClient([]libovsdbtest.TestData{
+				&vswitchd.OpenvSwitch{
+					UUID:    "00000000-0000-0000-0000-000000000001",
+					Bridges: []string{"00000000-0000-0000-0000-000000000002"},
+				},
+				&vswitchd.Bridge{
+					UUID: "00000000-0000-0000-0000-000000000002",
+					Name: "br-int",
+					Ports: []string{
+						"00000000-0000-0000-0000-000000000003",
+						"00000000-0000-0000-0000-000000000005",
+					},
+				},
+				&vswitchd.Port{UUID: "00000000-0000-0000-0000-000000000003", Name: "br-int", Interfaces: []string{"00000000-0000-0000-0000-000000000004"}},
+				&vswitchd.Interface{UUID: "00000000-0000-0000-0000-000000000004", Name: "br-int", Ofport: &minusOne},
+				&vswitchd.Port{UUID: "00000000-0000-0000-0000-000000000005", Name: "foo", Interfaces: []string{"00000000-0000-0000-0000-000000000006"}},
+				&vswitchd.Interface{UUID: "00000000-0000-0000-0000-000000000006", Name: "foo", Ofport: &minusOne, ExternalIDs: map[string]string{"sandbox": "sandbox", "iface-id-ver": "pod-uid", "iface-id": "ns_pod"}},
+			})
+			defer ovsCleanup.Cleanup()
+
+			checkForFailedOVSPodPorts(ovsClient)
+
+			_, err := libovsdbops.GetOVSPort(ovsClient, "br-int")
+			Expect(err).NotTo(HaveOccurred())
+			_, err = libovsdbops.GetOVSPort(ovsClient, "foo")
+			Expect(err).To(MatchError(libovsdbclient.ErrNotFound))
 		})
 	})
 
@@ -322,9 +491,11 @@ var _ = Describe("Healthcheck tests", func() {
 				UplinkClient: uplinkfake.NewSimpleClientset(),
 			}
 			expectUplinkInformers(&factoryMock)
+			ovsClient, ovsCleanup := newTestOVSClient(nil)
+			defer ovsCleanup.Cleanup()
 
 			ncm, err := NewNodeControllerManager(fakeClient, &factoryMock, nil, nil, "worker1",
-				&sync.WaitGroup{}, nil, routemanager.NewController(), nil)
+				&sync.WaitGroup{}, nil, routemanager.NewController(), ovsClient)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(ncm.vrfManager).NotTo(BeNil())
 			Expect(ncm.ruleManager).To(BeNil())
@@ -399,7 +570,9 @@ var _ = Describe("Healthcheck tests", func() {
 			factoryMock.On("NodeCoreInformer").Return(nodeInformerMock)
 			expectUplinkInformers(&factoryMock)
 
-			ncm, err := NewNodeControllerManager(fakeClient, &factoryMock, nil, nil, nodeName, &sync.WaitGroup{}, nil, routeManager, nil)
+			ovsClient, ovsCleanup := newTestOVSClient(nil)
+			defer ovsCleanup.Cleanup()
+			ncm, err := NewNodeControllerManager(fakeClient, &factoryMock, nil, nil, nodeName, &sync.WaitGroup{}, nil, routeManager, ovsClient)
 			Expect(err).NotTo(HaveOccurred())
 
 			err = testNS.Do(func(ns.NetNS) error {
@@ -442,10 +615,6 @@ var _ = Describe("Healthcheck tests", func() {
 			staleMgtPort := fmt.Sprintf("%s%d", types.K8sMgmtIntfNamePrefix, staleNetID)
 			fexec := ovntest.NewFakeExec()
 			Expect(util.SetExec(fexec)).To(Succeed())
-			fexec.AddFakeCmdsNoOutputNoError([]string{
-				"ovs-vsctl --timeout=15" +
-					" --if-exists del-port br-int " + staleMgtPort,
-			})
 			factoryMock := factoryMocks.NodeWatchFactory{}
 			netInfo, err := util.ParseNADInfo(nad)
 			mutableNetInfo := util.NewMutableNetInfo(netInfo)
@@ -477,7 +646,9 @@ var _ = Describe("Healthcheck tests", func() {
 			factoryMock.On("NodeCoreInformer").Return(nodeInformerMock)
 			expectUplinkInformers(&factoryMock)
 			Expect(err).NotTo(HaveOccurred())
-			ncm, err := NewNodeControllerManager(fakeClient, &factoryMock, nil, nil, nodeName, &sync.WaitGroup{}, nil, routeManager, nil)
+			ovsClient, ovsCleanup := newTestOVSClient(nil)
+			defer ovsCleanup.Cleanup()
+			ncm, err := NewNodeControllerManager(fakeClient, &factoryMock, nil, nil, nodeName, &sync.WaitGroup{}, nil, routeManager, ovsClient)
 			Expect(err).NotTo(HaveOccurred())
 
 			err = testNS.Do(func(ns.NetNS) error {

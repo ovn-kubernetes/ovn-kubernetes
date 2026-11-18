@@ -25,7 +25,6 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
-	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops/ovs"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/syncmap"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
@@ -199,7 +198,7 @@ func (c *Controller) bootstrapDPUPodMapFromOVS() error {
 		return item.ExternalIDs["sandbox"] != "" && item.ExternalIDs["vf-netdev-name"] != ""
 	}
 
-	ovsIfaces, err := ovsops.FindInterfacesWithPredicate(c.ovsClient, p)
+	ovsIfaces, err := libovsdbops.FindInterfacesWithPredicate(c.ovsClient, p)
 	if err != nil {
 		return fmt.Errorf("failed to find representor interfaces during DPU bootstrap: %w", err)
 	}
@@ -232,7 +231,7 @@ func (c *Controller) bootstrapDPUPodMapFromOVS() error {
 		readyNADs[pod.UID] = ready
 	}
 
-	var orphanedPorts []string
+	var orphanedPorts []repPortDeletion
 	for _, ovsIface := range ovsIfaces {
 		podUID := ovsIface.ExternalIDs["iface-id-ver"]
 		sandbox := ovsIface.ExternalIDs["sandbox"]
@@ -252,7 +251,7 @@ func (c *Controller) bootstrapDPUPodMapFromOVS() error {
 		ready, podExists := readyNADs[uid]
 		if !podExists {
 			klog.Infof("DPU bootstrap: removing orphaned representor %s (pod UID %s, NAD %s): pod no longer exists", repName, podUID, nadKey)
-			orphanedPorts = append(orphanedPorts, repName)
+			orphanedPorts = append(orphanedPorts, repPortDeletion{repName, sandbox, nadKey})
 			continue
 		}
 
@@ -279,11 +278,8 @@ func (c *Controller) bootstrapDPUPodMapFromOVS() error {
 	}
 
 	if len(orphanedPorts) > 0 {
-		setRepPortInterfacesDown(orphanedPorts)
-		if err := libovsdbops.DeleteMultiplePortsWithInterfaces(c.ovsClient, "br-int", orphanedPorts...); err != nil {
+		if err := c.deleteRepPorts(context.Background(), orphanedPorts); err != nil {
 			errs = append(errs, fmt.Errorf("DPU bootstrap: failed to delete orphaned representor ports %v: %w", orphanedPorts, err))
-		} else {
-			klog.Infof("DPU bootstrap: deleted orphaned representor ports %v from br-int", orphanedPorts)
 		}
 	}
 

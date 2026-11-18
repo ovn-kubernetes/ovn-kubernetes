@@ -665,9 +665,9 @@ func (c *addressManager) updateOVNEncapIPAndReconnect(newIP net.IP) {
 	}
 
 	if !alreadyConfigured {
-		if err := ovsops.UpdateOpenvSwitchExternalIDs(c.ovsClient, map[string]string{
+		if err := ovsops.UpdateOpenvSwitchSettings(c.ovsClient, map[string]string{
 			"ovn-encap-ip": newIP.String(),
-		}); err != nil {
+		}, nil); err != nil {
 			klog.Errorf("Error setting OVS encap IP %s: %v", newIP.String(), err)
 			return
 		}
