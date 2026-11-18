@@ -14,6 +14,7 @@ import (
 	"math/big"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
@@ -211,9 +212,11 @@ type allocNextFn func() (net.IP, error)
 // candidate must fall within [startLastByte, endLastByte]; any candidate outside this range
 // triggers an exhaustion error.
 func allocateIP(nodeClient v1.NodeInterface, allocateFn allocNextFn, startLastByte, endLastByte byte) (net.IP, error) {
-	nodeList, err := nodeClient.List(context.TODO(), metav1.ListOptions{})
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	nodeList, err := nodeClient.List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("failed to list nodes: %v", err)
+		return nil, fmt.Errorf("failed to list nodes: %w", err)
 	}
 	for {
 		nextIP, err := allocateFn()

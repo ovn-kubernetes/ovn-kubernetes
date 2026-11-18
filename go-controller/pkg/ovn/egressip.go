@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net"
 	"reflect"
 	"slices"
@@ -22,6 +23,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/tools/cache"
@@ -959,8 +961,10 @@ func (e *EgressIPController) addPodEgressIPAssignments(ni util.NetInfo, name str
 		podState = &podAssignmentState{
 			egressIPName:         name,
 			egressStatuses:       egressStatuses{make(map[egressipv1.EgressIPStatusItem]string)},
+			ovnNetworkStatuses:   make(map[egressipv1.EgressIPStatusItem]bool),
 			standbyEgressIPNames: sets.New[string](),
 			podIPs:               podIPs,
+			podUID:               pod.UID,
 			network:              ni,
 		}
 	} else if podState.egressIPName == name || podState.egressIPName == "" {
@@ -1015,7 +1019,7 @@ func (e *EgressIPController) addPodEgressIPAssignments(ni util.NetInfo, name str
 		if err != nil {
 			klog.Warningf("Failed to delete stale EgressIP status %s/%v for pod %s: %v", name, staleStatus, podKey, err)
 		}
-		delete(podState.egressStatuses.statusMap, staleStatus)
+		podState.deleteStatus(staleStatus)
 	}
 	if len(reprogramAssignments) > 0 {
 		klog.V(2).Infof("Pod %s IPs changed, forcing egress IP status reprogram for statuses: %+v", podKey, reprogramAssignments)
@@ -1024,11 +1028,12 @@ func (e *EgressIPController) addPodEgressIPAssignments(ni util.NetInfo, name str
 				podKey, reprogramAssignments, name, err)
 		}
 		for _, status := range reprogramAssignments {
-			delete(podState.egressStatuses.statusMap, status)
+			podState.deleteStatus(status)
 		}
 		remainingAssignments = append(remainingAssignments, reprogramAssignments...)
 	}
 	podState.podIPs = podIPs
+	podState.podUID = pod.UID
 	// We store podState into podAssignment cache at this place for two reasons.
 	// 1. When podAssignmentState is newly created.
 	// 2. deletePodEgressIPAssignments might clean the podAssignment cache, make sure we add it back.
@@ -1060,18 +1065,22 @@ func (e *EgressIPController) addPodEgressIPAssignments(ni util.NetInfo, name str
 		err = e.nodeState.DoWithLock(nodesToLock[0], func(_ string) error {
 			if status.Node == pod.Spec.NodeName {
 				// we are safe, no need to grab lock again
-				if err := e.addPodEgressIPAssignment(ni, name, status, mark, pod, podIPNets); err != nil {
+				ownsNodeSNAT, err := e.addPodEgressIPAssignment(ni, name, status, mark, pod, podIPNets)
+				if err != nil {
 					return fmt.Errorf("unable to create egressip configuration for pod %s/%s/%v, err: %w", pod.Namespace, pod.Name, podIPNets, err)
 				}
 				podState.egressStatuses.statusMap[status] = ""
+				podState.ovnNetworkStatuses[status] = ownsNodeSNAT
 				return nil
 			}
 			return e.nodeState.DoWithLock(nodesToLock[1], func(_ string) error {
 				// we need to grab lock again for pod's node
-				if err := e.addPodEgressIPAssignment(ni, name, status, mark, pod, podIPNets); err != nil {
+				ownsNodeSNAT, err := e.addPodEgressIPAssignment(ni, name, status, mark, pod, podIPNets)
+				if err != nil {
 					return fmt.Errorf("unable to create egressip configuration for pod %s/%s/%v, err: %w", pod.Namespace, pod.Name, podIPNets, err)
 				}
 				podState.egressStatuses.statusMap[status] = ""
+				podState.ovnNetworkStatuses[status] = ownsNodeSNAT
 				return nil
 			})
 		})
@@ -1133,7 +1142,7 @@ func (e *EgressIPController) deleteEgressIPAssignments(name string, statusesToRe
 					if err := e.addExternalGWPodSNAT(cachedNetwork, podNamespace, podName, statusToRemove); err != nil {
 						return err
 					}
-					podStatus.egressStatuses.delete(statusToRemove)
+					podStatus.deleteStatus(statusToRemove)
 					return nil
 				})
 				if err != nil {
@@ -1259,14 +1268,14 @@ func (e *EgressIPController) deletePodEgressIPAssignments(ni util.NetInfo, name 
 					if err := e.deletePodEgressIPAssignment(ni, name, statusToRemove, pod); err != nil {
 						return err
 					}
-					podStatus.egressStatuses.delete(statusToRemove)
+					podStatus.deleteStatus(statusToRemove)
 					return nil
 				}
 				return e.nodeState.DoWithLock(nodesToLock[1], func(_ string) error {
 					if err := e.deletePodEgressIPAssignment(ni, name, statusToRemove, pod); err != nil {
 						return err
 					}
-					podStatus.egressStatuses.delete(statusToRemove)
+					podStatus.deleteStatus(statusToRemove)
 					return nil
 				})
 			})
@@ -1335,6 +1344,47 @@ func (e *EgressIPController) deletePreviousNetworkPodEgressIPAssignments(ni util
 // managed by this controller.
 func (e *EgressIPController) isPodScheduledOnLocalNode(pod *corev1.Pod) bool {
 	return util.PodScheduled(pod) && pod.Spec.NodeName == e.nodeName
+}
+
+// podIPsNeedingNodeSNATLocked returns the subset of podIPs that still need
+// per-pod node-IP SNAT. The caller must hold the podAssignment lock for this
+// pod until any node-SNAT OVSDB transaction commits. Same-node applied
+// default-network EgressIP assignments suppress the matching IP family; pending
+// assignments, UID mismatches, and other-node assignments do not.
+func (e *EgressIPController) podIPsNeedingNodeSNATLocked(pod *corev1.Pod, podIPs []*net.IPNet) []*net.IPNet {
+	podState, exists := e.podAssignment.Load(getPodKey(pod))
+	if !exists || podState.egressIPName == "" || !podState.network.IsDefault() {
+		return podIPs
+	}
+	if podState.podUID != "" && podState.podUID != pod.UID {
+		return podIPs
+	}
+	var coveredV4, coveredV6 bool
+	for status, state := range podState.egressStatuses.statusMap {
+		if state != "" || status.Node != pod.Spec.NodeName || !podState.ovnNetworkStatuses[status] {
+			continue
+		}
+		if utilnet.IsIPv6String(status.EgressIP) {
+			coveredV6 = true
+		} else {
+			coveredV4 = true
+		}
+	}
+	if !coveredV4 && !coveredV6 {
+		return podIPs
+	}
+	remaining := make([]*net.IPNet, 0, len(podIPs))
+	for _, ip := range podIPs {
+		covered := coveredV4
+		if utilnet.IsIPv6CIDR(ip) {
+			covered = coveredV6
+		}
+		if covered && slices.ContainsFunc(podState.podIPs, func(cached net.IP) bool { return cached.Equal(ip.IP) }) {
+			continue
+		}
+		remaining = append(remaining, ip)
+	}
+	return remaining
 }
 
 // getNodeLocality reports whether nodeName is managed by this controller and
@@ -1968,6 +2018,7 @@ func (e *EgressIPController) syncPodAssignmentCache(egressIPCache egressIPCache,
 					if !ok {
 						podState = &podAssignmentState{
 							egressStatuses:       egressStatuses{make(map[egressipv1.EgressIPStatusItem]string)},
+							ovnNetworkStatuses:   make(map[egressipv1.EgressIPStatusItem]bool),
 							standbyEgressIPNames: sets.New[string](),
 							podIPs:               podIPs,
 							network:              ni,
@@ -2737,21 +2788,36 @@ type podAssignmentState struct {
 
 	egressStatuses
 
+	// Records successfully programmed same-node OVN-network assignments
+	// that took ownership of the normal per-pod node SNAT.
+	ovnNetworkStatuses map[egressipv1.EgressIPStatusItem]bool
+
 	// list of other egressIP object names that also match this pod but are on standby
 	standbyEgressIPNames sets.Set[string]
 
 	podIPs []net.IP
 
+	// UID of the pod this cache entry was programmed for. Used to avoid
+	// treating a same-name replacement as the previous assignment.
+	podUID k8stypes.UID
+
 	// network attached to the pod
 	network util.NetInfo
+}
+
+func (pas *podAssignmentState) deleteStatus(status egressipv1.EgressIPStatusItem) {
+	pas.egressStatuses.delete(status)
+	delete(pas.ovnNetworkStatuses, status)
 }
 
 // Clone deep-copies and returns the copied podAssignmentState
 func (pas *podAssignmentState) Clone() *podAssignmentState {
 	clone := &podAssignmentState{
 		egressIPName:         pas.egressIPName,
+		ovnNetworkStatuses:   maps.Clone(pas.ovnNetworkStatuses),
 		standbyEgressIPNames: pas.standbyEgressIPNames.Clone(),
 		podIPs:               make([]net.IP, 0, len(pas.podIPs)),
+		podUID:               pas.podUID,
 		network:              pas.network,
 	}
 	clone.egressStatuses = egressStatuses{make(map[egressipv1.EgressIPStatusItem]string, len(pas.egressStatuses.statusMap))}
@@ -2813,8 +2879,10 @@ func (e *EgressIPController) addStandByEgressIPAssignment(ni util.NetInfo, podKe
 	}
 	podState := &podAssignmentState{
 		egressStatuses:       egressStatuses{make(map[egressipv1.EgressIPStatusItem]string)},
+		ovnNetworkStatuses:   make(map[egressipv1.EgressIPStatusItem]bool),
 		standbyEgressIPNames: podStatus.standbyEgressIPNames,
 		podIPs:               podIPs,
+		podUID:               pod.UID,
 		network:              ni,
 	}
 	e.podAssignment.Store(podKey, podState)
@@ -2831,7 +2899,7 @@ func (e *EgressIPController) addStandByEgressIPAssignment(ni util.NetInfo, podKe
 // (SNAT-ing to the egress IP).
 // This function should be called with lock on nodeState cache key status.Node and pod.Spec.NodeName
 func (e *EgressIPController) addPodEgressIPAssignment(ni util.NetInfo, egressIPName string, status egressipv1.EgressIPStatusItem, mark util.EgressIPMark,
-	pod *corev1.Pod, podIPs []*net.IPNet) (err error) {
+	pod *corev1.Pod, podIPs []*net.IPNet) (ownsNodeSNAT bool, err error) {
 	if config.Metrics.EnableScaleMetrics {
 		start := time.Now()
 		defer func() {
@@ -2845,29 +2913,37 @@ func (e *EgressIPController) addPodEgressIPAssignment(ni util.NetInfo, egressIPN
 	eIPIP := net.ParseIP(status.EgressIP)
 	isLocalEgressNode, loadedEgressNode := e.getNodeLocality(status.Node)
 	isLocalPod, loadedPodNode := e.getNodeLocality(pod.Spec.NodeName)
+	// An informer object can precede its EgressNode handler. Keep incomplete
+	// egress-node or local-pod programming retryable instead of caching it as applied.
+	// A missing remote pod node must not block NAT programming on the local egress
+	// node: its gateway can still need that NAT while remote-node deletion settles.
+	if !loadedEgressNode || (pod.Spec.NodeName == e.nodeName && !loadedPodNode) {
+		return false, fmt.Errorf("cannot program EgressIP %s for pod %s/%s: node state not ready (egress node %s observed: %t, pod node %s observed: %t)",
+			egressIPName, pod.Namespace, pod.Name, status.Node, loadedEgressNode, pod.Spec.NodeName, loadedPodNode)
+	}
 	eNode, err := e.watchFactory.GetNode(status.Node)
 	if err != nil {
-		return fmt.Errorf("failed to add pod %s/%s because failed to lookup node %s: %v", pod.Namespace, pod.Name,
+		return false, fmt.Errorf("failed to add pod %s/%s because failed to lookup node %s: %v", pod.Namespace, pod.Name,
 			pod.Spec.NodeName, err)
 	}
 	parsedNodeEIPConfig, err := util.GetNodeEIPConfig(eNode)
 	if err != nil {
-		return fmt.Errorf("failed to get node %s egress IP config: %w", eNode.Name, err)
+		return false, fmt.Errorf("failed to get node %s egress IP config: %w", eNode.Name, err)
 	}
 	isOVNNetwork := util.IsOVNNetwork(parsedNodeEIPConfig, eIPIP)
 	nextHopIP, err := e.getNextHop(ni, status.Node, status.EgressIP, egressIPName, isLocalEgressNode, isOVNNetwork)
 	if err != nil {
-		return fmt.Errorf("failed to determine next hop for pod %s/%s when configuring egress IP %s"+
+		return false, fmt.Errorf("failed to determine next hop for pod %s/%s when configuring egress IP %s"+
 			" IP %s: %v", pod.Namespace, pod.Name, egressIPName, status.EgressIP, err)
 	}
 	if nextHopIP == "" {
-		return fmt.Errorf("could not calculate the next hop for pod %s/%s when configuring egress IP %s"+
+		return false, fmt.Errorf("could not calculate the next hop for pod %s/%s when configuring egress IP %s"+
 			" IP %s", pod.Namespace, pod.Name, egressIPName, status.EgressIP)
 	}
 	policyOpsMark := ""
 	if ni.IsUserDefinedNetwork() {
 		if !mark.IsAvailable() {
-			return fmt.Errorf("egressIP %s object must contain a mark for user defined networks", egressIPName)
+			return false, fmt.Errorf("egressIP %s object must contain a mark for user defined networks", egressIPName)
 		}
 		policyOpsMark = mark.String()
 	}
@@ -2885,14 +2961,14 @@ func (e *EgressIPController) addPodEgressIPAssignment(ni util.NetInfo, egressIPN
 			if ni.IsDefault() {
 				ops, err = e.createNATRuleOps(ni, nil, podIPs, status, egressIPName, pod.Namespace, pod.Name)
 				if err != nil {
-					return fmt.Errorf("unable to create NAT rule ops for status: %v, err: %v", status, err)
+					return false, fmt.Errorf("unable to create NAT rule ops for status: %v, err: %v", status, err)
 				}
 
 			} else if ni.IsUserDefinedNetwork() && (ni.TopologyType() == types.Layer3Topology ||
 				ni.TopologyType() == types.Layer2Topology && config.Layer2UsesTransitRouter) {
 				ops, err = e.createGWMarkPolicyOps(ni, ops, podIPs, status, policyOpsMark, pod.Namespace, pod.Name, egressIPName)
 				if err != nil {
-					return fmt.Errorf("unable to create GW router LRP ops to packet mark pod %s/%s: %v", pod.Namespace, pod.Name, err)
+					return false, fmt.Errorf("unable to create GW router LRP ops to packet mark pod %s/%s: %v", pod.Namespace, pod.Name, err)
 				}
 			}
 		}
@@ -2901,11 +2977,11 @@ func (e *EgressIPController) addPodEgressIPAssignment(ni util.NetInfo, egressIPN
 			// when the egress IP is assigned to a host secondary interface
 			routerName, err := getTopologyScopedRouterName(ni, pod.Spec.NodeName)
 			if err != nil {
-				return err
+				return false, err
 			}
 			ops, err = e.createReroutePolicyOps(ni, ops, podIPs, status, policyOpsMark, egressIPName, nextHopIP, routerName, pod.Namespace, pod.Name)
 			if err != nil {
-				return fmt.Errorf("unable to create logical router policy ops %v, err: %v", status, err)
+				return false, fmt.Errorf("unable to create logical router policy ops %v, err: %v", status, err)
 			}
 		}
 	}
@@ -2918,7 +2994,7 @@ func (e *EgressIPController) addPodEgressIPAssignment(ni util.NetInfo, egressIPN
 	}
 	routerName, err := getTopologyScopedRouterName(ni, nodeName)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	// exec when node is local OR when pods are local or L2 UDN
@@ -2927,18 +3003,23 @@ func (e *EgressIPController) addPodEgressIPAssignment(ni util.NetInfo, egressIPN
 		if isLocalPod || (isLocalEgressNode && ni.IsUserDefinedNetwork() && ni.TopologyType() == types.Layer2Topology) {
 			ops, err = e.createReroutePolicyOps(ni, ops, podIPs, status, policyOpsMark, egressIPName, nextHopIP, routerName, pod.Namespace, pod.Name)
 			if err != nil {
-				return fmt.Errorf("unable to create logical router policy ops, err: %v", err)
+				return false, fmt.Errorf("unable to create logical router policy ops, err: %v", err)
 			}
 		}
 		if isLocalPod {
 			ops, err = e.deleteExternalGWPodSNATOps(ni, ops, pod, podIPs, status, isOVNNetwork)
 			if err != nil {
-				return err
+				return false, err
 			}
 		}
 	}
-	_, err = libovsdbops.TransactAndCheck(e.nbClient, ops)
-	return err
+	if _, err = libovsdbops.TransactAndCheck(e.nbClient, ops); err != nil {
+		return false, err
+	}
+	// Only a successfully programmed local same-node assignment takes over
+	// node SNAT. Interface classification alone does not establish ownership.
+	return ni.IsDefault() && config.Gateway.DisableSNATMultipleGWs && isOVNNetwork &&
+		isLocalPod && status.Node == pod.Spec.NodeName, nil
 }
 
 // deletePodEgressIPAssignment deletes the OVN programmed egress IP

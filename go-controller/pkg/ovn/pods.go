@@ -306,28 +306,53 @@ func (oc *DefaultNetworkController) addLogicalPort(ctx context.Context, pod *cor
 		return err
 	}
 
-	if config.Gateway.DisableSNATMultipleGWs {
-		// Add NAT rules to pods if disable SNAT is set. External gateway routes
-		// (and the associated per-pod SNAT removal) are programmed by the
-		// AdminPolicyBasedExternalRoute controller.
-		snatOps, err := oc.AddPodSNATOps(pod.Spec.NodeName, podAnnotation.IPs)
-		if err != nil {
-			return err
-		}
-		ops = append(ops, snatOps...)
-	}
-
 	recordOps, txOkCallBack, _, err := oc.AddConfigDurationRecord("pod", pod.Namespace, pod.Name)
 	if err != nil {
 		klog.Errorf("Config duration recorder: %v", err)
 	}
 	ops = append(ops, recordOps...)
 
-	transactStart := time.Now()
-	_, err = libovsdbops.TransactAndCheckAndSetUUIDs(oc.nbClient, lsp, ops)
-	libovsdbExecuteTime = time.Since(transactStart)
+	// Serialize the assignment decision and node SNAT commit with EgressIP
+	// programming, including when no assignment exists yet. Keep the LSP and
+	// SNAT operations atomic: releasing the lock before the transaction commits
+	// would allow EgressIP cleanup to race with a later node SNAT write.
+	// Database reads and the bounded transaction can delay other work for this pod.
+	transactPod := func() error {
+		if config.Gateway.DisableSNATMultipleGWs {
+			// Add per-pod NAT rules unless an applied same-node OVN-network
+			// EgressIP already handles this family. APBR can remove these rules
+			// when an external gateway takes ownership of the pod traffic.
+			snatIPs := podAnnotation.IPs
+			if oc.eIPC != nil {
+				snatIPs = oc.eIPC.podIPsNeedingNodeSNATLocked(pod, snatIPs)
+			}
+			if len(snatIPs) > 0 {
+				snatOps, err := oc.AddPodSNATOps(pod.Spec.NodeName, snatIPs)
+				if err != nil {
+					return fmt.Errorf("failed to add node SNAT for pod %s/%s: %w", pod.Namespace, pod.Name, err)
+				}
+				ops = append(ops, snatOps...)
+			}
+		}
+
+		transactStart := time.Now()
+		_, err = libovsdbops.TransactAndCheckAndSetUUIDs(oc.nbClient, lsp, ops)
+		libovsdbExecuteTime = time.Since(transactStart)
+		if err != nil {
+			return fmt.Errorf("error transacting operations %+v: %w", ops, err)
+		}
+
+		return nil
+	}
+	if config.Gateway.DisableSNATMultipleGWs && oc.eIPC != nil {
+		err = oc.eIPC.podAssignment.DoWithLock(getPodKey(pod), func(_ string) error {
+			return transactPod()
+		})
+	} else {
+		err = transactPod()
+	}
 	if err != nil {
-		return fmt.Errorf("error transacting operations %+v: %v", ops, err)
+		return fmt.Errorf("failed to transact pod %s/%s: %w", pod.Namespace, pod.Name, err)
 	}
 	txOkCallBack()
 	oc.podRecorder.AddLSP(pod.UID, oc.GetNetInfo())

@@ -18,6 +18,25 @@ There are two flavors of EgressIP based on the network the egress IP belongs to:
   Traffic is rerouted out of OVN via the management port (`ovn-k8s-mp0`), then SNAT
   and routing happen in the host networking stack using iptables and policy-based routing.
 
+## Same-node node-IP SNAT vs EgressIP SNAT
+
+With `disable-snat-multiple-gws`, pod north-south traffic is SNATed on the node
+gateway router using a per-pod node-IP SNAT. When the pod's EgressIP is also
+assigned on that node, OVN-Kubernetes must not keep both SNATs for the same
+logical IP. OVN `NAT.priority` is not a reliable tie-breaker for these
+match-less SNAT rows, so a later node-IP SNAT write can steal the source IP.
+
+The EgressIP controller deletes the node-IP SNAT when it applies a same-node
+default-network assignment. Pod setup (`addLogicalPort`) skips node-IP SNAT for
+pod IPs already covered by that assignment, per IP family. It does not skip
+while the assignment is pending, for a different node, for a primary UDN
+assignment, or when a non-empty cached pod UID differs (a same-name replacement).
+
+`addLogicalPort` holds the `podAssignment` lock from that skip decision through
+the OVSDB transaction so EgressIP reconciliation cannot complete in the gap and
+a pod retry cannot recreate node-IP SNAT. New writers of per-pod node SNAT must
+use the same lock. See the [developer guide](../developer-guide/developer.md#pod-node-snat-and-egressip-assignment-lock).
+
 ## Multiple MAC Issue During EgressIP Failover (GARP Handling)
 
 When an egress IP migrates from Node A (old) to Node B (new) in case of graceful

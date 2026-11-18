@@ -76,6 +76,20 @@ Supported network configs:
 - Cluster default network
 - Role primary user defined networks
 
+### Reprocessing pods on the EgressIP node
+
+With per-pod node SNAT enabled (`disable-snat-multiple-gws`), pod setup and EgressIP
+programming share a per-pod lock through the OVN database commit. This prevents
+pod reprocessing from recreating node-IP SNAT after a same-node EgressIP assignment
+has removed it. The check applies only to the current pod IPs and address families
+with successfully applied OVN-network assignments. Secondary host interface
+assignments retain the normal OVN node-SNAT setup path.
+
+The lock also covers database reads and the bounded transaction, so a database
+outage can delay other assignment work waiting for that pod. Releasing it before
+the commit would reopen the race. This check does not guarantee EgressIP-only
+traffic while assignments are still pending, including during controller startup.
+
 ### EgressIP IP is assigned to the primary host interface
 If the Egress IP(s) are hosted on the OVN primary network then the implementation is redirecting the POD traffic
 to an egress node where it is SNATed and sent out.  
@@ -108,6 +122,18 @@ TYPE             GATEWAY_PORT          EXTERNAL_IP        EXTERNAL_PORT    LOGIC
 ...
 snat                                   172.18.0.44                         10.244.1.3
 ```
+
+When `disable-snat-multiple-gws` is enabled, each pod also has a per-IP SNAT on
+its node gateway router that uses the node IP. This applies in both shared and
+local gateway modes. A same-node
+EgressIP assignment **owns** that SNAT for the IP family of the assigned egress
+IP: the node-IP SNAT is removed and only the EgressIP SNAT remains. Dual-stack
+pods are filtered per family, so an IPv4-only EgressIP still leaves IPv6 node
+SNAT in place. Pending assignments (not yet applied in OVN) do not take
+ownership, so node-IP SNAT stays until EgressIP programming finishes. Pod
+retries must not recreate node-IP SNAT while that same-node assignment is
+applied; OVN does not rank two match-less SNATs for the same logical IP, and the
+node IP would otherwise win.
 
 For a pod attached to a role primary user defined network "network1", there is no NAT entry for the pod attached to the egress OVN gateway and
 instead a logical router policy is attached to the egress nodes OVN gateway router:
