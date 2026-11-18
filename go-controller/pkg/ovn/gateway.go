@@ -755,7 +755,6 @@ func (gw *GatewayManager) updateClusterRouterStaticRoutes(gwConfig *GatewayConfi
 	// to the same gateway router
 	//
 	// This can be removed once https://bugzilla.redhat.com/show_bug.cgi?id=1891516 is fixed.
-	// FIXME(trozet): if LRP IP is changed, we do not remove stale instances of these routes
 	nextHops := gwRouterIPs
 	if gw.netInfo.TopologyType() == types.Layer2Topology && gw.transitRouterInfo != nil {
 		nextHops = util.IPNetsToIPs(gw.transitRouterInfo.gatewayRouterNets)
@@ -778,12 +777,10 @@ func (gw *GatewayManager) updateClusterRouterStaticRoutes(gwConfig *GatewayConfi
 		lrsr := nbdb.LogicalRouterStaticRoute{
 			IPPrefix: gwRouterIP.String(),
 			Nexthop:  nextHop[0].String(),
-		}
-		if gw.netInfo.IsUserDefinedNetwork() {
-			lrsr.ExternalIDs = map[string]string{
+			ExternalIDs: map[string]string{
 				types.NetworkExternalID:  gw.netInfo.GetNetworkName(),
 				types.TopologyExternalID: gw.netInfo.TopologyType(),
-			}
+			},
 		}
 		p := func(item *nbdb.LogicalRouterStaticRoute) bool {
 			return item.IPPrefix == lrsr.IPPrefix &&
@@ -791,8 +788,14 @@ func (gw *GatewayManager) updateClusterRouterStaticRoutes(gwConfig *GatewayConfi
 		}
 
 		if gw.clusterRouterName != "" {
+			// delete stale static routes from ovn_cluster_router specific to default network
+			if gw.clusterRouterName == types.OVNClusterRouter {
+				if err = gw.deleteStaleJoinSubnetRoutes(gwRouterIP.String()); err != nil {
+					klog.Errorf("Could not remove stale static route %v", err)
+				}
+			}
 			err = libovsdbops.CreateOrReplaceLogicalRouterStaticRouteWithPredicate(gw.nbClient,
-				gw.clusterRouterName, &lrsr, p, &lrsr.Nexthop)
+				gw.clusterRouterName, &lrsr, p, &lrsr.Nexthop, &lrsr.ExternalIDs)
 			if err != nil {
 				return fmt.Errorf("error creating static route %+v in %s: %v", lrsr, gw.clusterRouterName, err)
 			}
@@ -1847,6 +1850,55 @@ func (gw *GatewayManager) staticRouteCleanup(nextHops []net.IP, ipPrefix *net.IP
 	if err != nil && !errors.Is(err, libovsdbclient.ErrNotFound) {
 		klog.Errorf("Failed to delete static route for nexthops %+v: %v", ips.UnsortedList(), err)
 	}
+}
+
+// deleteStaleJoinSubnetRoutes removes static routes referencing old join switch IP as either NextHop or IPPrefix.
+// It acts on following LRSRs:
+// 100.64.0.4               100.64.0.4 dst-ip
+func (gw *GatewayManager) deleteStaleJoinSubnetRoutes(gwLRPIP string) error {
+	node, err := gw.watchFactory.GetNode(gw.nodeName)
+	if err != nil {
+		return fmt.Errorf("failed to fetch node %s from watch factory: %w", gw.nodeName, err)
+	}
+	podSubnets, err := util.ParseNodeHostSubnetAnnotation(node, gw.netInfo.GetNetworkName())
+	if err != nil && !util.IsAnnotationNotSetError(err) {
+		return fmt.Errorf("failed to fetch the pod subnets of network %s from node %s: %w",
+			gw.netInfo.GetNetworkName(), gw.nodeName, err)
+	}
+	isPodIP := func(address string) bool {
+		ip := net.ParseIP(address)
+		if ip == nil {
+			return false
+		}
+		for _, podSubnet := range podSubnets {
+			if podSubnet.Contains(ip) {
+				return true
+			}
+		}
+		return false
+	}
+
+	p := func(lrsr *nbdb.LogicalRouterStaticRoute) bool {
+		if lrsr.Nexthop != gwLRPIP && utilnet.IPFamilyOfString(lrsr.Nexthop) == utilnet.IPFamilyOfString(gwLRPIP) &&
+			lrsr.Nexthop == lrsr.IPPrefix {
+			// This is a safe guard to make sure we don't remove unwanted routes
+			if isPodIP(lrsr.Nexthop) {
+				return false
+			}
+			networkName, hasNetworkExternalID := lrsr.ExternalIDs[types.NetworkExternalID]
+			if hasNetworkExternalID && networkName == gw.netInfo.GetNetworkName() {
+				klog.Infof("Removing stale join subnet route %s via %s from router %s for network %s",
+					lrsr.IPPrefix, lrsr.Nexthop, gw.clusterRouterName, networkName)
+				return true
+			}
+		}
+		return false
+	}
+
+	if err := libovsdbops.DeleteLogicalRouterStaticRoutesWithPredicate(gw.nbClient, gw.clusterRouterName, p); err != nil {
+		return fmt.Errorf("failed to delete static route from router %s: %v", gw.clusterRouterName, err)
+	}
+	return nil
 }
 
 // policyRouteCleanup cleans up all policies on cluster router that have a nextHop
