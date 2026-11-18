@@ -613,12 +613,15 @@ reviews:
           1. Flag use of fmt.Print, fmt.Println, log.Print, log.Fatal,
           or log.* for logging. The project uses klog exclusively.
 
-          2. Flag bare error returns without context wrapping. Errors
-          must be wrapped with fmt.Errorf("...: %w", err). Use %w when
-          the caller should be able to inspect the underlying error
-          with errors.Is/errors.As. Use %v when the underlying error
-          is an implementation detail that should not be exposed as
-          part of the API.
+          2. Flag missing diagnostic context, not bare error returns.
+          Trace the error's origin and reporting site before requesting
+          wrapping. Add operation or object context where it is missing;
+          do not require redundant wrappers in propagation or aggregation
+          helpers. Use %w when the caller should be able to inspect the
+          underlying error with errors.Is/errors.As. Use %v when the
+          underlying error is an implementation detail that should not
+          be exposed as part of the API. Preserve error classification
+          and nil success returns.
 
           3. Flag bare integers passed as time.Duration without
           explicit units. Must use e.g. 10*time.Second, not 10.
