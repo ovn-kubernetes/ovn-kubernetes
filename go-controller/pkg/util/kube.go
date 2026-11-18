@@ -848,7 +848,7 @@ func DoesEndpointSliceContainEligibleEndpoint(endpointSlice *discovery.EndpointS
 	for _, ep := range getEligibleEndpoints(endpoints, service) {
 		for _, ip := range ep.Addresses {
 			for _, port := range endpointSlice.Ports {
-				if utilnet.ParseIPSloppy(ip).String() == epIP && *port.Port == epPort && *port.Protocol == protocol {
+				if utilnet.ParseIPSloppy(ip).String() == epIP && port.Port != nil && *port.Port == epPort && *port.Protocol == protocol {
 					return true
 				}
 			}
