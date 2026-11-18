@@ -273,6 +273,13 @@ func newDefaultNetworkControllerCommon(
 	if oc.eIPC != nil {
 		oc.eIPC.retryEgressIPPods = oc.retryEgressIPPods
 	}
+	if oc.eIPC != nil {
+		// The EgressIP pod handler may see a pod before its logical port is
+		// in the cache: it is retried as soon as the port is there.
+		oc.onLogicalPortCacheAdd = func(pod *corev1.Pod, _ string) {
+			oc.eIPC.requestEgressIPPodRetry(pod, "logical port cache update")
+		}
+	}
 	return oc, nil
 }
 

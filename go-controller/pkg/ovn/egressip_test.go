@@ -124,6 +124,46 @@ var _ = ginkgo.Describe("EgressIP node locality", func() {
 		gomega.Expect(isLocal).To(gomega.BeFalse())
 		gomega.Expect(loaded).To(gomega.BeFalse())
 	})
+
+	ginkgo.It("requests immediate retry only when an entry already exists in the retry cache", func() {
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-pod",
+				Namespace: "test-ns",
+			},
+			Spec: corev1.PodSpec{
+				NodeName: "node1",
+			},
+		}
+		key, err := retry.GetResourceKey(pod)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to get resource key for pod")
+
+		retryFramework := retry.NewRetryFramework(
+			"test/egressip",
+			make(chan struct{}),
+			&sync.WaitGroup{},
+			nil,
+			&retry.ResourceHandler{
+				ObjType: factory.EgressIPPodType,
+			},
+		)
+
+		controller := &EgressIPController{
+			retryEgressIPPods: retryFramework,
+		}
+
+		// When pod is not yet in the retry cache, requestEgressIPPodRetry should not inject an unconditional retry
+		controller.requestEgressIPPodRetry(pod, "logical port cache update")
+		_, loaded := retry.GetRetryObj(key, retryFramework)
+		gomega.Expect(loaded).To(gomega.BeFalse(), "expected pod not to be loaded in retry cache")
+
+		// When pod is in the retry cache (e.g. initial reconcile failed due to cache miss), backoff should be reset to zero
+		retry.InitRetryObjWithAdd(pod, key, retryFramework)
+		gomega.Expect(retry.GetBackoffFromRetryObj(key, retryFramework)).To(gomega.Equal(time.Second), "expected initial retry backoff to be 1 second")
+
+		controller.requestEgressIPPodRetry(pod, "logical port cache update")
+		gomega.Expect(retry.GetBackoffFromRetryObj(key, retryFramework)).To(gomega.BeZero(), "expected retry backoff to be reset to zero")
+	})
 })
 
 var _ = ginkgo.Describe("EgressIP network registration", func() {
@@ -393,6 +433,106 @@ var _ = ginkgo.Describe("EgressIP network registration", func() {
 			gomega.Expect(pas).NotTo(gomega.BeNil())
 			gomega.Expect(pas.egressIPName).To(gomega.Equal(eIP.Name))
 			gomega.Expect(pas.egressStatuses.statusMap).NotTo(gomega.BeEmpty())
+			return nil
+		}
+		gomega.Expect(app.Run([]string{app.Name})).To(gomega.Succeed())
+	})
+
+	ginkgo.It("programs pod EIP config once the logical port of a pod seen too early is in the cache", func() {
+		app.Action = func(*cli.Context) error {
+			egressIP := net.ParseIP("192.168.126.211")
+			nodeIPv4 := "192.168.126.210/24"
+			egressPod := *ovntest.NewPodWithLabels(eipNamespace, podName, node1Name, podV4IP, egressPodLabel)
+			egressNamespace := ovntest.NewNamespace(eipNamespace)
+			_, nodeSubnetV4, _ := net.ParseCIDR(v4Node1Subnet)
+			annotations := map[string]string{
+				"k8s.ovn.org/node-primary-ifaddr":             fmt.Sprintf("{\"ipv4\": \"%s\", \"ipv6\": \"%s\"}", nodeIPv4, ""),
+				"k8s.ovn.org/node-subnets":                    fmt.Sprintf("{\"default\":\"%s\"}", v4Node1Subnet),
+				"k8s.ovn.org/node-transit-switch-port-ifaddr": "{\"ipv4\":\"100.88.0.2/16\"}",
+				util.OVNNodeHostCIDRs:                         fmt.Sprintf("[\"%s\"]", nodeIPv4),
+			}
+			node := getNodeObj(node1Name, annotations, map[string]string{"k8s.ovn.org/egress-assignable": ""})
+			eIP := egressipv1.EgressIP{
+				ObjectMeta: newEgressIPMeta(egressIPName),
+				Spec: egressipv1.EgressIPSpec{
+					EgressIPs: []string{egressIP.String()},
+					NamespaceSelector: metav1.LabelSelector{
+						MatchLabels: map[string]string{"name": egressNamespace.Name},
+					},
+					PodSelector: metav1.LabelSelector{
+						MatchLabels: egressPodLabel,
+					},
+				},
+				Status: egressipv1.EgressIPStatus{
+					Items: []egressipv1.EgressIPStatusItem{{
+						Node:     node1Name,
+						EgressIP: egressIP.String(),
+					}},
+				},
+			}
+
+			fakeOvn.startWithDBSetup(
+				libovsdbtest.TestSetup{
+					NBData: []libovsdbtest.TestData{
+						&nbdb.LogicalRouterPort{
+							UUID:     types.GWRouterToJoinSwitchPrefix + types.GWRouterPrefix + node1Name + "-UUID",
+							Name:     types.GWRouterToJoinSwitchPrefix + types.GWRouterPrefix + node1Name,
+							Networks: []string{nodeLogicalRouterIfAddrV4},
+						},
+						&nbdb.LogicalRouter{
+							Name: types.OVNClusterRouter,
+							UUID: types.OVNClusterRouter + "-UUID",
+						},
+						&nbdb.LogicalRouter{
+							Name:  types.GWRouterPrefix + node1Name,
+							UUID:  types.GWRouterPrefix + node1Name + "-UUID",
+							Ports: []string{types.GWRouterToJoinSwitchPrefix + types.GWRouterPrefix + node1Name + "-UUID"},
+						},
+						&nbdb.LogicalSwitchPort{
+							UUID:      "k8s-" + node.Name + "-UUID",
+							Name:      "k8s-" + node.Name,
+							Addresses: []string{"fe:1a:b2:3f:0e:fb " + util.GetNodeManagementIfAddr(nodeSubnetV4).IP.String()},
+						},
+						&nbdb.LogicalSwitch{
+							UUID:  node.Name + "-UUID",
+							Name:  node.Name,
+							Ports: []string{"k8s-" + node.Name + "-UUID"},
+						},
+					},
+				},
+				&corev1.NamespaceList{Items: []corev1.Namespace{*egressNamespace}},
+				&corev1.PodList{Items: []corev1.Pod{egressPod}},
+				&corev1.NodeList{Items: []corev1.Node{node}},
+				&egressipv1.EgressIPList{Items: []egressipv1.EgressIP{eIP}},
+			)
+			gomega.Expect(fakeOvn.eIPController.SyncNodeCache()).To(gomega.Succeed())
+			fakeOvn.eIPController.ensureNetworkPending(types.DefaultNetworkName)
+			gomega.Expect(fakeOvn.eIPController.SyncNetworkReady(types.DefaultNetworkName)).To(gomega.Succeed())
+
+			podAssigned := func() bool {
+				podKey := getPodKey(&egressPod)
+				fakeOvn.eIPController.podAssignment.LockKey(podKey)
+				defer fakeOvn.eIPController.podAssignment.UnlockKey(podKey)
+				pas, exists := fakeOvn.eIPController.podAssignment.Load(podKey)
+				return exists && len(pas.egressStatuses.statusMap) > 0
+			}
+
+			// the EgressIP pod handler sees the pod before its logical port is
+			// in the cache: nothing is programmed and the pod is to be retried
+			gomega.Expect(fakeOvn.controller.WatchEgressIPPods()).To(gomega.Succeed())
+			retryKey, err := retry.GetResourceKey(&egressPod)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			retry.CheckRetryObjectEventually(retryKey, true, fakeOvn.controller.retryEgressIPPods)
+			gomega.Expect(podAssigned()).To(gomega.BeFalse())
+
+			// what the pod handler does once it created the logical port
+			i, n, _ := net.ParseCIDR(podV4IP + "/23")
+			n.IP = i
+			fakeOvn.controller.logicalPortCache.add(&egressPod, "", types.DefaultNetworkName, "", nil, []*net.IPNet{n})
+			fakeOvn.controller.onLogicalPortCacheAdd(&egressPod, types.DefaultNetworkName)
+
+			gomega.Eventually(podAssigned).Should(gomega.BeTrue())
+			retry.CheckRetryObjectEventually(retryKey, false, fakeOvn.controller.retryEgressIPPods)
 			return nil
 		}
 		gomega.Expect(app.Run([]string{app.Name})).To(gomega.Succeed())
@@ -6717,6 +6857,43 @@ var _ = ginkgo.Describe("OVN EgressIP Operations cluster default network", func(
 			ginkgo.Entry("during an add retry", false),
 			ginkgo.Entry("during an update", true),
 		)
+		ginkgo.It("retries egress node setup once the switch of a node seen too early exists", func() {
+			app.Action = func(*cli.Context) error {
+				node := getNodeObj(node1Name, map[string]string{util.OvnNodeID: "4"}, nil)
+				fakeOvn.startWithDBSetup(libovsdbtest.TestSetup{
+					NBData: []libovsdbtest.TestData{
+						&nbdb.LogicalRouter{
+							Name: types.OVNClusterRouter,
+							UUID: types.OVNClusterRouter + "-UUID",
+						},
+					},
+				}, &corev1.NodeList{Items: []corev1.Node{node}})
+
+				switchQoSes := func() []string {
+					nodeSwitch, err := libovsdbops.GetLogicalSwitch(fakeOvn.nbClient, &nbdb.LogicalSwitch{Name: node1Name})
+					if err != nil {
+						return nil
+					}
+					return nodeSwitch.QOSRules
+				}
+
+				// the egress node handler sees the node before its switch
+				// exists: its setup fails and the node is to be retried
+				gomega.Expect(fakeOvn.controller.WatchEgressNodes()).To(gomega.Succeed())
+				retry.CheckRetryObjectEventually(node.Name, true, fakeOvn.controller.retryEgressNodes)
+
+				// what the node handler does once it created the switch
+				gomega.Expect(libovsdbops.CreateOrUpdateLogicalSwitch(fakeOvn.nbClient, &nbdb.LogicalSwitch{Name: node1Name})).To(gomega.Succeed())
+				fakeOvn.controller.requestEgressNodeRetry(&node)
+
+				gomega.Eventually(switchQoSes).ShouldNot(gomega.BeEmpty())
+				retry.CheckRetryObjectEventually(node.Name, false, fakeOvn.controller.retryEgressNodes)
+				return nil
+			}
+
+			gomega.Expect(app.Run([]string{app.Name})).To(gomega.Succeed())
+		})
+
 		ginkgo.It("should populated egress node data as they are tagged `egress assignable` with variants of IPv4/IPv6", func() {
 			app.Action = func(*cli.Context) error {
 				config.IPv6Mode = true

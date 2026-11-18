@@ -262,6 +262,15 @@ func (oc *DefaultNetworkController) removeRemoteZonePod(_ context.Context, pod *
 	return nil
 }
 
+// requestEgressNodeRetry retries, right away, the egress node setup of a node
+// if it failed. That setup needs what the node handler creates for the node,
+// and nothing orders the two handlers.
+func (oc *DefaultNetworkController) requestEgressNodeRetry(node *corev1.Node) {
+	if _, err := oc.retryEgressNodes.RequestRetryObjWithNoBackoff(node); err != nil {
+		klog.Warningf("Failed to request egress node retry for node %s: %v", node.Name, err)
+	}
+}
+
 // WatchEgressNodes starts the watching of egress assignable nodes and calls
 // back the appropriate handler logic.
 func (oc *DefaultNetworkController) WatchEgressNodes() error {
