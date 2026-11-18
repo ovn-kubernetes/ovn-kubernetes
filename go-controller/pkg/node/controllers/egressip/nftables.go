@@ -19,7 +19,7 @@ import (
 // initNFTables creates and runs a transaction populating the chain/map/rule definitions for
 // EgressIP: the SNAT chain and v4/v6 maps, the LGW connmark chain (or its cleanup when not in LGW
 // mode), and the secondary-interface chain that drops pod traffic that hasn't been SNATed yet.
-func (c *Controller) initNFTables() error {
+func (c *Controller) initNFTables(ctx context.Context) error {
 	nft, err := nodenft.GetNFTablesHelper()
 	if err != nil {
 		return fmt.Errorf("failed to get nftables helper: %w", err)
@@ -144,5 +144,5 @@ func (c *Controller) initNFTables() error {
 		}
 	}
 
-	return nft.Run(context.TODO(), tx)
+	return nft.Run(ctx, tx)
 }

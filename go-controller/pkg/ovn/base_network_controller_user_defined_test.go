@@ -858,7 +858,7 @@ var _ = Describe("BaseUserDefinedNetworkController", func() {
 			Expect(bnc.namespaces).NotTo(HaveKey(missingNamespace), "pod setup must not initialize namespace state")
 			lspName := util.GetUserDefinedNetworkLogicalPortName(pod.Namespace, pod.Name, nadKey)
 			initializeNamespace := func() {
-				Expect(bnc.AddNamespaceForUserDefinedNetwork(namespace)).To(Succeed())
+				Expect(bnc.AddNamespaceForUserDefinedNetwork(context.Background(), namespace)).To(Succeed())
 				Eventually(func() error {
 					_, err := libovsdbops.GetPortGroup(fakeOVN.nbClient, &nbdb.PortGroup{Name: pgName})
 					return err

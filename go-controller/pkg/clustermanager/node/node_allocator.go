@@ -320,7 +320,7 @@ func (na *NodeAllocator) HandleAddUpdateNodeEvent(ctx context.Context, node *cor
 			if err != nil {
 				return fmt.Errorf("failed to update node %s hybrid overlay subnet annotation: %v", node.Name, err)
 			}
-			if err := annotator.Run(); err != nil {
+			if err := annotator.Run(ctx); err != nil {
 				// Release allocated subnet if any errors occurred
 				if allocatedSubnet != nil {
 					na.releaseHybridOverlayNodeSubnet(node.Name)

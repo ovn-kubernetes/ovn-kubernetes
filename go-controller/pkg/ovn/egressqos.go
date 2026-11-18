@@ -361,10 +361,11 @@ func (oc *DefaultNetworkController) processNextEgressQoSWorkItem(wg *sync.WaitGr
 		return true
 	}
 
+	ctx := context.Background()
 	err = oc.syncEgressQoS(key, eq)
 	if err == nil {
 		oc.egressQoSQueue.Forget(key)
-		if err = oc.updateEgressQoSZoneStatusToReady(eq); err != nil {
+		if err = oc.updateEgressQoSZoneStatusToReady(ctx, eq); err != nil {
 			utilruntime.HandleError(fmt.Errorf("failed to update EgressQoS object %s with status: %v", key, err))
 		}
 		return true
@@ -377,7 +378,7 @@ func (oc *DefaultNetworkController) processNextEgressQoSWorkItem(wg *sync.WaitGr
 		return true
 	}
 
-	if err = oc.updateEgressQoSZoneStatusToNotReady(eq, err); err != nil {
+	if err = oc.updateEgressQoSZoneStatusToNotReady(ctx, eq, err); err != nil {
 		utilruntime.HandleError(fmt.Errorf("failed to update EgressQoS object %s with status: %v", key, err))
 	}
 
@@ -1015,7 +1016,7 @@ func (oc *DefaultNetworkController) syncEgressQoSNode(key string) error {
 
 // updateEgressQoSZoneStatusToReady updates the status of the EgressQoS to reflect that it is ready
 // Each zone's ovnkube-controller will call this, hence let's update status using server side apply.
-func (oc *DefaultNetworkController) updateEgressQoSZoneStatusToReady(egressQoS *egressqosapi.EgressQoS) error {
+func (oc *DefaultNetworkController) updateEgressQoSZoneStatusToReady(ctx context.Context, egressQoS *egressqosapi.EgressQoS) error {
 	if egressQoS == nil {
 		return nil
 	}
@@ -1026,12 +1027,12 @@ func (oc *DefaultNetworkController) updateEgressQoSZoneStatusToReady(egressQoS *
 		Reason:             egressQoSReadyReason,
 		Message:            egressQoSAppliedCorrectly,
 	}
-	return oc.updateEgressQoSZoneStatusCondition(readyCondition, egressQoS.Namespace, egressQoS.Name)
+	return oc.updateEgressQoSZoneStatusCondition(ctx, readyCondition, egressQoS.Namespace, egressQoS.Name)
 }
 
 // updateEgressQoSZoneStatusToNotReady updates the status of the EgressQoS to reflect that it is not ready
 // Each zone's ovnkube-controller will call this, hence let's update status using server side apply.
-func (oc *DefaultNetworkController) updateEgressQoSZoneStatusToNotReady(egressQoS *egressqosapi.EgressQoS,
+func (oc *DefaultNetworkController) updateEgressQoSZoneStatusToNotReady(ctx context.Context, egressQoS *egressqosapi.EgressQoS,
 	handlerErr error) error {
 	if egressQoS == nil {
 		return nil
@@ -1043,10 +1044,10 @@ func (oc *DefaultNetworkController) updateEgressQoSZoneStatusToNotReady(egressQo
 		Reason:             egressQoSNotReadyReason,
 		Message:            types.EgressQoSErrorMsg + ": " + handlerErr.Error(),
 	}
-	return oc.updateEgressQoSZoneStatusCondition(notReadyCondition, egressQoS.Namespace, egressQoS.Name)
+	return oc.updateEgressQoSZoneStatusCondition(ctx, notReadyCondition, egressQoS.Namespace, egressQoS.Name)
 }
 
-func (oc *DefaultNetworkController) updateEgressQoSZoneStatusCondition(newCondition metav1.Condition,
+func (oc *DefaultNetworkController) updateEgressQoSZoneStatusCondition(ctx context.Context, newCondition metav1.Condition,
 	namespace, name string) error {
 	eq, err := oc.egressQoSLister.EgressQoSes(namespace).Get(name)
 	if err != nil {
@@ -1067,7 +1068,7 @@ func (oc *DefaultNetworkController) updateEgressQoSZoneStatusCondition(newCondit
 
 	applyObj := egressqosapply.EgressQoS(name, namespace).
 		WithStatus(egressqosapply.EgressQoSStatus().WithConditions(newConditionApply))
-	_, err = oc.kube.EgressQoSClient.K8sV1().EgressQoSes(namespace).ApplyStatus(context.TODO(),
+	_, err = oc.kube.EgressQoSClient.K8sV1().EgressQoSes(namespace).ApplyStatus(ctx,
 		applyObj, metav1.ApplyOptions{FieldManager: oc.nodeName, Force: true})
 	return err
 }

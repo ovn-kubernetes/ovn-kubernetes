@@ -55,7 +55,7 @@ type NetworkConnectSubnetAnnotation struct {
 // UpdateNetworkConnectSubnetAnnotation patches the subnet annotation for the given CNC and given allocated subnets.
 // It uses the Apply method to patch the annotation and has its own manager field to avoid conflicts with other annotation patches
 // like the router tunnel key annotation patch below.
-func UpdateNetworkConnectSubnetAnnotation(cnc *networkconnectv1.ClusterNetworkConnect, cncClient networkconnectclientset.Interface, allocatedSubnets map[string][]*net.IPNet) error {
+func UpdateNetworkConnectSubnetAnnotation(ctx context.Context, cnc *networkconnectv1.ClusterNetworkConnect, cncClient networkconnectclientset.Interface, allocatedSubnets map[string][]*net.IPNet) error {
 	// Build annotation directly from allocatedSubnets (always the full list)
 	subnetsMap := make(map[string]NetworkConnectSubnetAnnotation)
 	for networkName, subnets := range allocatedSubnets {
@@ -80,7 +80,7 @@ func UpdateNetworkConnectSubnetAnnotation(cnc *networkconnectv1.ClusterNetworkCo
 	applyObj.Annotations = map[string]string{
 		ovnNetworkConnectSubnetAnnotation: string(bytes),
 	}
-	_, err = cncClient.K8sV1().ClusterNetworkConnects().Apply(context.TODO(), applyObj,
+	_, err = cncClient.K8sV1().ClusterNetworkConnects().Apply(ctx, applyObj,
 		metav1.ApplyOptions{FieldManager: networkConnectSubnetAnnotationFieldManager, Force: true})
 	if err != nil {
 		return fmt.Errorf("failed to apply network connect subnet annotation: %v", err)
@@ -146,13 +146,13 @@ func NetworkConnectSubnetAnnotationChanged(oldObj, newObj *networkconnectv1.Clus
 // UpdateNetworkConnectRouterTunnelKeyAnnotation updates the router tunnel key annotation for the given CNC and given tunnel ID.
 // It uses the Apply method to patch the annotation and has its own manager field to avoid conflicts with other annotation patches
 // like the subnet annotation patch above.
-func UpdateNetworkConnectRouterTunnelKeyAnnotation(cncName string, cncClient networkconnectclientset.Interface, tunnelID int) error {
+func UpdateNetworkConnectRouterTunnelKeyAnnotation(ctx context.Context, cncName string, cncClient networkconnectclientset.Interface, tunnelID int) error {
 	applyObj := networkconnectapply.ClusterNetworkConnect(cncName).
 		WithAnnotations(map[string]string{
 			OvnConnectRouterTunnelKeyAnnotation: strconv.Itoa(tunnelID),
 		})
 	_, err := cncClient.K8sV1().ClusterNetworkConnects().Apply(
-		context.TODO(),
+		ctx,
 		applyObj,
 		metav1.ApplyOptions{FieldManager: networkConnectRouterTunnelKeyFieldManager, Force: true},
 	)

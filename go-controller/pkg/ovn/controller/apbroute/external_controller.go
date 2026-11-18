@@ -4,6 +4,7 @@
 package apbroute
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"reflect"
@@ -229,7 +230,7 @@ type externalPolicyManager struct {
 	namespaceLister   corev1listers.NamespaceLister
 	namespaceInformer cache.SharedIndexInformer
 
-	updatePolicyStatusFunc func(policyName string, gwIPs sets.Set[string], processedError error) error
+	updatePolicyStatusFunc func(ctx context.Context, policyName string, gwIPs sets.Set[string], processedError error) error
 }
 
 type policyReferencedObjects struct {
@@ -244,7 +245,7 @@ func newExternalPolicyManager(
 	namespaceInformer coreinformers.NamespaceInformer,
 	apbRouteInformer adminpolicybasedrouteinformer.AdminPolicyBasedExternalRouteInformer,
 	netClient networkClient,
-	updatePolicyStatusFunc func(policyName string, gwIPs sets.Set[string], processedError error) error) *externalPolicyManager {
+	updatePolicyStatusFunc func(ctx context.Context, policyName string, gwIPs sets.Set[string], processedError error) error) *externalPolicyManager {
 
 	m := externalPolicyManager{
 		stopCh:                      stopCh,
@@ -368,7 +369,7 @@ func (m *externalPolicyManager) processNextPolicyWorkItem(wg *sync.WaitGroup) bo
 	}
 
 	if m.updatePolicyStatusFunc != nil {
-		statusErr := m.updatePolicyStatusFunc(key, gwIPs, err)
+		statusErr := m.updatePolicyStatusFunc(context.Background(), key, gwIPs, err)
 		if statusErr != nil {
 			klog.Warningf("Failed to update AdminPolicyBasedExternalRoutes %s status: %v", key, statusErr)
 		}

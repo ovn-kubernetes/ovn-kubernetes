@@ -51,7 +51,7 @@ func TestAdvertisedServiceRoutingTransitions(t *testing.T) {
 			}}
 			bridge := &bridgeconfig.BridgeUDNConfiguration{PktMark: "4099"}
 			// Seed legacy marks so the EVPN case also verifies their removal.
-			g.Expect(nodenft.AddObjects(getUDNNFTRules(service, bridge))).To(gomega.Succeed(), "seed legacy service marks")
+			g.Expect(nodenft.AddObjects(context.Background(), getUDNNFTRules(service, bridge))).To(gomega.Succeed(), "seed legacy service marks")
 			nc := &UserDefinedNodeNetworkController{}
 			nc.name = "node"
 			old := util.NewMutableNetInfo(netInfo)
@@ -67,7 +67,7 @@ func TestAdvertisedServiceRoutingTransitions(t *testing.T) {
 				if transport == types.NetworkTransportEVPN {
 					g.Expect(nc.shouldReconcileNetworkChange(old, current)).To(gomega.BeFalse(), "EVPN's routing decision is independent of the mapping")
 				}
-				g.Expect(reconcileUDNServiceMarkRules(service, current, "node", bridge)).To(gomega.Succeed(), "reconcile marks for VRFs %v", vrfs)
+				g.Expect(reconcileUDNServiceMarkRules(context.Background(), service, current, "node", bridge)).To(gomega.Succeed(), "reconcile marks for VRFs %v", vrfs)
 				for _, name := range []string{nftablesUDNMarkNodePortsMap, nftablesUDNMarkExternalIPsV4Map, nftablesUDNMarkExternalIPsV6Map} {
 					elements, err := nft.ListElements(context.Background(), "map", name)
 					g.Expect(err).NotTo(gomega.HaveOccurred(), "list service mark map")
@@ -106,8 +106,8 @@ func TestExistingServiceRefreshesAdvertisementMarks(t *testing.T) {
 	config.IPv6Mode = false
 	util.SetFakeIPTablesHelpers()
 	nft := nodenft.SetFakeNFTablesHelper()
-	g.Expect(initGatewayNFTables()).To(gomega.Succeed(), "initialize gateway nftables")
-	g.Expect(configureUDNServicesNFTables()).To(gomega.Succeed(), "initialize UDN service nftables")
+	g.Expect(initGatewayNFTables(context.Background())).To(gomega.Succeed(), "initialize gateway nftables")
+	g.Expect(configureUDNServicesNFTables(context.Background())).To(gomega.Succeed(), "initialize UDN service nftables")
 	clients := util.GetOVNClientset()
 	wf, err := factory.NewNodeWatchFactory(clients.GetNodeClientset(), "node")
 	g.Expect(err).NotTo(gomega.HaveOccurred(), "create node watch factory")
@@ -132,7 +132,7 @@ func TestExistingServiceRefreshesAdvertisementMarks(t *testing.T) {
 	}}
 	for _, vrfs := range [][]string{nil, {"blue"}, {types.DefaultNetworkName}, {"blue"}, nil} {
 		mutable.SetPodNetworkAdvertisedVRFs(map[string][]string{"node": vrfs})
-		g.Expect(npw.AddService(service)).To(gomega.Succeed(), "refresh unchanged service for VRFs %v", vrfs)
+		g.Expect(npw.AddService(context.Background(), service)).To(gomega.Succeed(), "refresh unchanged service for VRFs %v", vrfs)
 		elems, err := nft.ListElements(context.Background(), "map", nftablesUDNMarkNodePortsMap)
 		g.Expect(err).NotTo(gomega.HaveOccurred(), "list NodePort mark map")
 		expected := 1
@@ -148,7 +148,7 @@ func TestExistingServiceRefreshesAdvertisementMarks(t *testing.T) {
 func TestServiceMarkCleanupPreservesOtherNetworks(t *testing.T) {
 	g := gomega.NewWithT(t)
 	nft := nodenft.SetFakeNFTablesHelper()
-	g.Expect(configureUDNServicesNFTables()).To(gomega.Succeed(), "initialize shared service maps")
+	g.Expect(configureUDNServicesNFTables(context.Background())).To(gomega.Succeed(), "initialize shared service maps")
 	bridges := []*bridgeconfig.BridgeUDNConfiguration{{PktMark: "4099"}, {PktMark: "4100"}}
 	tx := nft.NewTransaction()
 	for _, bridge := range bridges {
@@ -172,9 +172,9 @@ func TestServiceMarkCleanupPreservesOtherNetworks(t *testing.T) {
 	other := service.DeepCopy()
 	other.Namespace = "red"
 	other.Spec.Ports[0].NodePort = 30081
-	g.Expect(reconcileUDNServiceMarkRules(service, blue, "node", bridges[0])).To(gomega.Succeed(), "program blue marks")
+	g.Expect(reconcileUDNServiceMarkRules(context.Background(), service, blue, "node", bridges[0])).To(gomega.Succeed(), "program blue marks")
 	for i := 0; i < 2; i++ {
-		g.Expect(reconcileUDNServiceMarkRules(other, red, "node", bridges[1])).To(gomega.Succeed(), "refresh ineligible red service, attempt %d", i)
+		g.Expect(reconcileUDNServiceMarkRules(context.Background(), other, red, "node", bridges[1])).To(gomega.Succeed(), "refresh ineligible red service, attempt %d", i)
 		for _, name := range []string{nftablesUDNMarkExternalIPsV4Map, nftablesUDNMarkExternalIPsV6Map} {
 			elems, err := nft.ListElements(context.Background(), "map", name)
 			g.Expect(err).NotTo(gomega.HaveOccurred(), "list %s", name)
@@ -186,7 +186,7 @@ func TestServiceMarkCleanupPreservesOtherNetworks(t *testing.T) {
 	}
 	blue.SetPodNetworkAdvertisedVRFs(map[string][]string{"node": {"blue"}})
 	for i := 0; i < 2; i++ {
-		g.Expect(reconcileUDNServiceMarkRules(service, blue, "node", bridges[0])).To(gomega.Succeed(), "remove own marks idempotently, attempt %d", i)
+		g.Expect(reconcileUDNServiceMarkRules(context.Background(), service, blue, "node", bridges[0])).To(gomega.Succeed(), "remove own marks idempotently, attempt %d", i)
 	}
 	for _, name := range []string{nftablesUDNMarkExternalIPsV4Map, nftablesUDNMarkExternalIPsV6Map} {
 		elems, err := nft.ListElements(context.Background(), "map", name)

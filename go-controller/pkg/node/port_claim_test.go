@@ -4,6 +4,7 @@
 package node
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
@@ -142,7 +143,7 @@ var _ = Describe("Node Operations", func() {
 					false, false,
 				)
 
-				err := pcw.AddService(service)
+				err := pcw.AddService(context.Background(), service)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(fakePort.tPortOpenCount).To(Equal(len(service.Spec.Ports)))
 
@@ -180,7 +181,7 @@ var _ = Describe("Node Operations", func() {
 					false, false,
 				)
 
-				err := pcw.AddService(service)
+				err := pcw.AddService(context.Background(), service)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(fakePort.tPortOpenCount).To(Equal(len(service.Spec.Ports)))
 
@@ -220,7 +221,7 @@ var _ = Describe("Node Operations", func() {
 					false, false,
 				)
 
-				err := pcw.AddService(service)
+				err := pcw.AddService(context.Background(), service)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(fakePort.tPortOpenCount).To(Equal(len(service.Spec.Ports) * 2))
 
@@ -260,7 +261,7 @@ var _ = Describe("Node Operations", func() {
 					false, false,
 				)
 
-				err := pcw.AddService(service)
+				err := pcw.AddService(context.Background(), service)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(fakePort.tPortOpenCount).To(Equal(len(service.Spec.Ports) * 2))
 
@@ -293,7 +294,7 @@ var _ = Describe("Node Operations", func() {
 					false, false,
 				)
 
-				err := pcw.AddService(service)
+				err := pcw.AddService(context.Background(), service)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(fakePort.tPortOpenCount).To(Equal(0))
 
@@ -347,7 +348,7 @@ var _ = Describe("Node Operations", func() {
 					false, false,
 				)
 
-				err := pcw.UpdateService(oldService, newService)
+				err := pcw.UpdateService(context.Background(), oldService, newService)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(fakePort.tPortOpenCount).To(Equal(0))
 				Expect(fakePort.tPortCloseCount).To(Equal(0))
@@ -407,7 +408,7 @@ var _ = Describe("Node Operations", func() {
 					tPortsMap:      portMap,
 				}
 				pcw := &portClaimWatcher{port: fakePort}
-				err := pcw.UpdateService(oldService, newService)
+				err := pcw.UpdateService(context.Background(), oldService, newService)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(fakePort.tPortOpenCount).To(Equal(0))
 				Expect(fakePort.tPortCloseCount).To(Equal(len(oldService.Spec.Ports)))
@@ -456,7 +457,7 @@ var _ = Describe("Node Operations", func() {
 					tPortsMap:  portMap,
 				}
 				pcw := &portClaimWatcher{port: fakePort}
-				err := pcw.DeleteService(service)
+				err := pcw.DeleteService(context.Background(), service)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(fakePort.tPortCloseCount).To(Equal(len(service.Spec.Ports) * len(service.Spec.ExternalIPs)))
 
@@ -503,7 +504,7 @@ var _ = Describe("Node Operations", func() {
 					tPortsMap:  portMap,
 				}
 				pcw := &portClaimWatcher{port: fakePort}
-				err := pcw.DeleteService(service)
+				err := pcw.DeleteService(context.Background(), service)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(fakePort.tPortCloseCount).To(Equal(len(service.Spec.Ports) * 2))
 
@@ -549,7 +550,7 @@ var _ = Describe("Node Operations", func() {
 					tPortsMap:  portMap,
 				}
 				pcw := &portClaimWatcher{port: fakePort}
-				err := pcw.DeleteService(service)
+				err := pcw.DeleteService(context.Background(), service)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(fakePort.tPortCloseCount).To(Equal(len(service.Spec.Ports) * 2))
 
@@ -590,7 +591,7 @@ var _ = Describe("Node Operations", func() {
 					tPortsMap:  portMap,
 				}
 				pcw := &portClaimWatcher{port: fakePort}
-				err := pcw.DeleteService(service)
+				err := pcw.DeleteService(context.Background(), service)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(fakePort.tPortCloseCount).To(Equal(len(service.Spec.Ports)))
 

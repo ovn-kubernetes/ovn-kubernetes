@@ -1591,7 +1591,7 @@ func (eIPC *egressIPClusterController) reconcileCloudPrivateIPConfig(ctx context
 		// a CloudPrivateIPConfig delete because the EgressIP has been deleted
 		// then we need to remove the setup made for it, but not update the
 		// object.
-		egressIP, err := eIPC.kube.GetEgressIP(egressIPName)
+		egressIP, err := eIPC.kube.GetEgressIP(ctx, egressIPName)
 		isDeleted := apierrors.IsNotFound(err)
 		if err != nil && !isDeleted {
 			return err
@@ -1639,7 +1639,7 @@ func (eIPC *egressIPClusterController) reconcileCloudPrivateIPConfig(ctx context
 				oldCloudPrivateIPConfig.Name)
 			return nil
 		}
-		egressIP, err := eIPC.kube.GetEgressIP(egressIPName)
+		egressIP, err := eIPC.kube.GetEgressIP(ctx, egressIPName)
 		if err != nil {
 			return err
 		}

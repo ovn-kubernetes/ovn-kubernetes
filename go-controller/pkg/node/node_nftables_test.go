@@ -143,7 +143,7 @@ func TestSetupEgressIPARPBlockNFT(t *testing.T) {
 
 			nft := nodenft.SetFakeEgressIPNFTablesHelper()
 
-			err := SetupEgressIPARPBlockNFT(tt.egressIPs, tt.uplinkName)
+			err := SetupEgressIPARPBlockNFT(context.Background(), tt.egressIPs, tt.uplinkName)
 
 			if tt.expectError != "" {
 				g.Expect(err).To(HaveOccurred())
@@ -245,7 +245,7 @@ func TestCleanupEgressIPARPBlockNFT(t *testing.T) {
 
 			if tt.setupTable {
 				// Create the table first by calling SetupEgressIPARPBlockNFT
-				err := SetupEgressIPARPBlockNFT(tt.egressIPs, tt.uplinkName)
+				err := SetupEgressIPARPBlockNFT(context.Background(), tt.egressIPs, tt.uplinkName)
 				g.Expect(err).NotTo(HaveOccurred())
 				rules, err := nft.ListRules(context.TODO(), nftEgressIPDropChain)
 				g.Expect(err).NotTo(HaveOccurred())

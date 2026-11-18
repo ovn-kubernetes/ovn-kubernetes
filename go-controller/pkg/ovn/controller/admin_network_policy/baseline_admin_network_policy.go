@@ -4,6 +4,7 @@
 package adminnetworkpolicy
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"time"
@@ -27,7 +28,8 @@ func (c *Controller) processNextBANPWorkItem(wg *sync.WaitGroup) bool {
 	}
 	defer c.banpQueue.Done(banpKey)
 
-	err := c.syncBaselineAdminNetworkPolicy(banpKey)
+	ctx := context.Background()
+	err := c.syncBaselineAdminNetworkPolicy(ctx, banpKey)
 	if err == nil {
 		c.banpQueue.Forget(banpKey)
 		return true
@@ -46,7 +48,7 @@ func (c *Controller) processNextBANPWorkItem(wg *sync.WaitGroup) bool {
 
 // syncBaselineAdminNetworkPolicy decides the main logic everytime
 // we dequeue a key from the banpQueue cache
-func (c *Controller) syncBaselineAdminNetworkPolicy(key string) error {
+func (c *Controller) syncBaselineAdminNetworkPolicy(ctx context.Context, key string) error {
 	c.Lock()
 	defer c.Unlock()
 	startTime := time.Now()
@@ -77,11 +79,11 @@ func (c *Controller) syncBaselineAdminNetworkPolicy(key string) error {
 	err = c.ensureBaselineAdminNetworkPolicy(banp)
 	if err != nil {
 		// we can ignore the error if status update doesn't succeed; best effort
-		_ = c.updateBANPStatusToNotReady(banp.Name, err.Error())
+		_ = c.updateBANPStatusToNotReady(ctx, banp.Name, err.Error())
 		return err
 	}
 	// we can ignore the error if status update doesn't succeed; best effort
-	_ = c.updateBANPStatusToReady(banp.Name)
+	_ = c.updateBANPStatusToReady(ctx, banp.Name)
 	return nil
 }
 

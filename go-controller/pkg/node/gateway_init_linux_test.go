@@ -330,7 +330,7 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 
 		err = util.SetNodeHostSubnetAnnotation(nodeAnnotator, ovntest.MustParseIPNets(nodeSubnet))
 		Expect(err).NotTo(HaveOccurred())
-		err = nodeAnnotator.Run()
+		err = nodeAnnotator.Run(context.Background())
 		Expect(err).NotTo(HaveOccurred())
 		wg.Add(1)
 		go func() {
@@ -393,7 +393,7 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 			Expect(err).NotTo(HaveOccurred())
 
 			ifAddrs := ovntest.MustParseIPNets(eth0CIDR)
-			sharedGw, err := newGateway(
+			sharedGw, err := newGateway(context.Background(),
 				nodeName,
 				ovntest.MustParseIPNets(nodeSubnet),
 				gatewayNextHops,
@@ -431,7 +431,7 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 			Expect(err).NotTo(HaveOccurred())
 			err = sharedGw.Init(stop, wg)
 			Expect(err).NotTo(HaveOccurred())
-			err = nodeAnnotator.Run()
+			err = nodeAnnotator.Run(context.Background())
 			Expect(err).NotTo(HaveOccurred())
 
 			// we cannot start the shared gw directly because it will spawn a goroutine that may not be bound to the test netns
@@ -715,7 +715,7 @@ func shareGatewayInterfaceDPUTest(app *cli.App, testNS ns.NetNS,
 
 		err = util.SetNodeHostSubnetAnnotation(nodeAnnotator, ovntest.MustParseIPNets(nodeSubnet))
 		Expect(err).NotTo(HaveOccurred())
-		err = nodeAnnotator.Run()
+		err = nodeAnnotator.Run(context.Background())
 		Expect(err).NotTo(HaveOccurred())
 
 		ifAddrs := ovntest.MustParseIPNets(hostCIDR)
@@ -757,7 +757,7 @@ func shareGatewayInterfaceDPUTest(app *cli.App, testNS ns.NetNS,
 			defer ovsCleanup.Cleanup()
 			gatewayNextHops, gatewayIntf, err := getGatewayNextHops(ovsClient)
 			Expect(err).NotTo(HaveOccurred())
-			sharedGw, err := newGateway(
+			sharedGw, err := newGateway(context.Background(),
 				nodeName,
 				ovntest.MustParseIPNets(nodeSubnet),
 				gatewayNextHops,
@@ -783,7 +783,7 @@ func shareGatewayInterfaceDPUTest(app *cli.App, testNS ns.NetNS,
 			err = sharedGw.Init(stop, wg)
 			Expect(err).NotTo(HaveOccurred())
 
-			err = nodeAnnotator.Run()
+			err = nodeAnnotator.Run(context.Background())
 			Expect(err).NotTo(HaveOccurred())
 
 			// we cannot start the shared gw directly because it will spawn a goroutine that may not be bound to the test netns
@@ -906,9 +906,9 @@ func shareGatewayInterfaceDPUHostTest(app *cli.App, testNS ns.NetNS, uplinkName,
 
 			nodeAnnotator := kube.NewNodeAnnotator(k, existingNode.Name)
 
-			err := nc.initGatewayDPUHostPreStart(net.ParseIP(hostIP), nodeAnnotator)
+			err := nc.initGatewayDPUHostPreStart(context.Background(), net.ParseIP(hostIP), nodeAnnotator)
 			Expect(err).NotTo(HaveOccurred())
-			err = nc.initGatewayDPUHost()
+			err = nc.initGatewayDPUHost(context.Background())
 			Expect(err).NotTo(HaveOccurred())
 
 			link, err := netlink.LinkByName(uplinkName)
@@ -1178,7 +1178,7 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 		Expect(err).NotTo(HaveOccurred())
 
 		if util.IsNetworkSegmentationSupportEnabled() {
-			err = configureUDNServicesNFTables()
+			err = configureUDNServicesNFTables(context.Background())
 			Expect(err).NotTo(HaveOccurred())
 		}
 
@@ -1214,7 +1214,7 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 
 		err = util.SetNodeHostSubnetAnnotation(nodeAnnotator, ovntest.MustParseIPNets(nodeSubnet))
 		Expect(err).NotTo(HaveOccurred())
-		err = nodeAnnotator.Run()
+		err = nodeAnnotator.Run(context.Background())
 		Expect(err).NotTo(HaveOccurred())
 		ip, ipNet, _ := net.ParseCIDR(eth0CIDR)
 		ipNet.IP = ip
@@ -1244,7 +1244,7 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 			gatewayNextHops, gatewayIntf, err := getGatewayNextHops(ovsClient)
 			Expect(err).NotTo(HaveOccurred())
 			ifAddrs := ovntest.MustParseIPNets(eth0CIDR)
-			localGw, err := newGateway(
+			localGw, err := newGateway(context.Background(),
 				nodeName,
 				ovntest.MustParseIPNets(nodeSubnet),
 				gatewayNextHops,
@@ -1270,7 +1270,7 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 			err = localGw.Init(stop, wg)
 			Expect(err).NotTo(HaveOccurred())
 
-			err = nodeAnnotator.Run()
+			err = nodeAnnotator.Run(context.Background())
 			Expect(err).NotTo(HaveOccurred())
 
 			// we cannot start the shared gw directly because it will spawn a goroutine that may not be bound to the test netns

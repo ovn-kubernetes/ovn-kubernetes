@@ -76,7 +76,7 @@ func (bsnc *BaseUserDefinedNetworkController) AddUserDefinedNetworkResourceCommo
 		if !ok {
 			return fmt.Errorf("could not cast %T object to *kapi.Namespace", obj)
 		}
-		return bsnc.AddNamespaceForUserDefinedNetwork(ns)
+		return bsnc.AddNamespaceForUserDefinedNetwork(ctx, ns)
 
 	case factory.MultiNetworkPolicyType:
 		mp, ok := obj.(*mnpapi.MultiNetworkPolicy)
@@ -634,7 +634,7 @@ func (bsnc *BaseUserDefinedNetworkController) syncPodsForUserDefinedNetwork(_ co
 }
 
 // AddNamespaceForUserDefinedNetwork creates corresponding addressset in ovn db for User Defined Network
-func (bsnc *BaseUserDefinedNetworkController) AddNamespaceForUserDefinedNetwork(ns *corev1.Namespace) error {
+func (bsnc *BaseUserDefinedNetworkController) AddNamespaceForUserDefinedNetwork(ctx context.Context, ns *corev1.Namespace) error {
 	klog.Infof("[%s] adding namespace for network %s", ns.Name, bsnc.GetNetworkName())
 	// Keep track of how long syncs take.
 	start := time.Now()
@@ -642,7 +642,7 @@ func (bsnc *BaseUserDefinedNetworkController) AddNamespaceForUserDefinedNetwork(
 		klog.Infof("[%s] adding namespace took %v for network %s", ns.Name, time.Since(start), bsnc.GetNetworkName())
 	}()
 
-	_, nsUnlock, err := bsnc.ensureNamespaceLockedForUserDefinedNetwork(ns.Name, false, ns)
+	_, nsUnlock, err := bsnc.ensureNamespaceLockedForUserDefinedNetwork(ctx, ns.Name, false, ns)
 	if err != nil {
 		return fmt.Errorf("failed to ensure namespace locked: %v", err)
 	}
@@ -653,8 +653,8 @@ func (bsnc *BaseUserDefinedNetworkController) AddNamespaceForUserDefinedNetwork(
 // ensureNamespaceLockedForUserDefinedNetwork locks namespacesMutex, gets/creates an entry for ns, configures OVN nsInfo,
 // and returns it with its mutex locked.
 // ns is the name of the namespace, while namespace is the optional k8s namespace object
-func (bsnc *BaseUserDefinedNetworkController) ensureNamespaceLockedForUserDefinedNetwork(ns string, readOnly bool, namespace *corev1.Namespace) (*namespaceInfo, func(), error) {
-	return bsnc.ensureNamespaceLockedCommon(ns, readOnly, namespace, bsnc.configureNamespaceCommon)
+func (bsnc *BaseUserDefinedNetworkController) ensureNamespaceLockedForUserDefinedNetwork(ctx context.Context, ns string, readOnly bool, namespace *corev1.Namespace) (*namespaceInfo, func(), error) {
+	return bsnc.ensureNamespaceLockedCommon(ctx, ns, readOnly, namespace, bsnc.configureNamespaceCommon)
 }
 
 func (bsnc *BaseUserDefinedNetworkController) updateNamespaceForUserDefinedNetwork(old, newer *corev1.Namespace) error {

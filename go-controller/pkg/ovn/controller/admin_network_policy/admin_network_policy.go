@@ -4,6 +4,7 @@
 package adminnetworkpolicy
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"reflect"
@@ -38,7 +39,8 @@ func (c *Controller) processNextANPWorkItem(wg *sync.WaitGroup) bool {
 	}
 	defer c.anpQueue.Done(anpKey)
 
-	err := c.syncAdminNetworkPolicy(anpKey)
+	ctx := context.Background()
+	err := c.syncAdminNetworkPolicy(ctx, anpKey)
 	if err == nil {
 		c.anpQueue.Forget(anpKey)
 		return true
@@ -56,7 +58,7 @@ func (c *Controller) processNextANPWorkItem(wg *sync.WaitGroup) bool {
 
 // syncAdminNetworkPolicy decides the main logic everytime
 // we dequeue a key from the anpQueue cache
-func (c *Controller) syncAdminNetworkPolicy(key string) error {
+func (c *Controller) syncAdminNetworkPolicy(ctx context.Context, key string) error {
 	// TODO(tssurya): A global lock is currently used from syncAdminNetworkPolicy, syncAdminNetworkPolicyPod,
 	// syncAdminNetworkPolicyNamespace and syncAdminNetworkPolicyNode. Planning to do perf/scale runs first
 	// and will remove this TODO if there are no concerns with the lock.
@@ -89,7 +91,7 @@ func (c *Controller) syncAdminNetworkPolicy(key string) error {
 	err = c.ensureAdminNetworkPolicy(anp)
 	if err != nil {
 		// we can ignore the error if status update doesn't succeed; best effort
-		_ = c.updateANPStatusToNotReady(anp.Name, err.Error())
+		_ = c.updateANPStatusToNotReady(ctx, anp.Name, err.Error())
 		if errors.Is(err, ErrorANPPriorityUnsupported) {
 			// we don't want to retry for these specific errors since they
 			// need manual intervention from users to update their CRDs
@@ -98,7 +100,7 @@ func (c *Controller) syncAdminNetworkPolicy(key string) error {
 		return err
 	}
 	// we can ignore the error if status update doesn't succeed; best effort
-	_ = c.updateANPStatusToReady(anp.Name)
+	_ = c.updateANPStatusToReady(ctx, anp.Name)
 	return nil
 }
 

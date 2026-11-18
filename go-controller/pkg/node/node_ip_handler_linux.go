@@ -7,6 +7,7 @@
 package node
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"strings"
@@ -85,7 +86,9 @@ func newAddressManagerInternal(nodeName string, k kube.Interface, mgmtPort manag
 			klog.Errorf("Failed to update host-cidrs annotations on node %s: %v", nodeName, err)
 			return nil
 		}
-		if err := mgr.nodeAnnotator.Run(); err != nil {
+
+		ctx := context.Background()
+		if err := mgr.nodeAnnotator.Run(ctx); err != nil {
 			klog.Errorf("Failed to set host-cidrs annotations on node %s: %v", nodeName, err)
 			return nil
 		}
@@ -225,7 +228,8 @@ func (c *addressManager) runInternal(stopChan <-chan struct{}, subscribe subscri
 			c.handleNodePrimaryAddrChange()
 			if addrChanged || !c.doNodeHostCIDRsMatch() {
 				klog.Infof("Host CIDRs changed to %v. Updating node address annotations.", c.cidrs)
-				err := c.updateNodeAddressAnnotations()
+				ctx := context.Background()
+				err := c.updateNodeAddressAnnotations(ctx)
 				if err != nil {
 					klog.Errorf("Address Manager failed to update node address annotations: %v", err)
 				}
@@ -325,18 +329,18 @@ func (c *addressManager) handleNodePrimaryAddrChange() {
 // by the DPU, so only host-cidrs is maintained; in all other modes the full set
 // (k8s.ovn.org/host-cidrs, k8s.ovn.org/node-primary-ifaddr, k8s.ovn.org/l3-gateway-config)
 // is updated.
-func (c *addressManager) updateNodeAddressAnnotations() error {
+func (c *addressManager) updateNodeAddressAnnotations(ctx context.Context) error {
 	if config.IsModeDPUHost() {
-		return c.updateDPUHostAddressAnnotations()
+		return c.updateDPUHostAddressAnnotations(ctx)
 	}
-	return c.updateGatewayAddressAnnotations()
+	return c.updateGatewayAddressAnnotations(ctx)
 }
 
 // updateDPUHostAddressAnnotations refreshes the host-owned annotations in DPUHost mode:
 // k8s.ovn.org/host-cidrs and k8s.ovn.org/primary-dpu-host-addr. The latter tracks the
 // gateway interface addresses; node-primary-ifaddr and l3-gateway-config are derived
 // from it by the DPU.
-func (c *addressManager) updateDPUHostAddressAnnotations() error {
+func (c *addressManager) updateDPUHostAddressAnnotations(ctx context.Context) error {
 	if err := c.updateHostCIDRs(); err != nil {
 		return err
 	}
@@ -349,13 +353,13 @@ func (c *addressManager) updateDPUHostAddressAnnotations() error {
 		return err
 	}
 
-	return c.nodeAnnotator.Run()
+	return c.nodeAnnotator.Run(ctx)
 }
 
 // updateGatewayAddressAnnotations updates k8s.ovn.org/host-cidrs,
 // k8s.ovn.org/node-primary-ifaddr and k8s.ovn.org/l3-gateway-config from the gateway
 // bridge addresses.
-func (c *addressManager) updateGatewayAddressAnnotations() error {
+func (c *addressManager) updateGatewayAddressAnnotations(ctx context.Context) error {
 	var ifAddrs []*net.IPNet
 
 	node, err := c.watchFactory.GetNode(c.nodeName)
@@ -403,7 +407,7 @@ func (c *addressManager) updateGatewayAddressAnnotations() error {
 	}
 
 	// push all updates to the node
-	return c.nodeAnnotator.Run()
+	return c.nodeAnnotator.Run(ctx)
 }
 
 func (c *addressManager) updateHostCIDRs() error {
@@ -610,7 +614,8 @@ func (c *addressManager) sync() {
 	c.handleNodePrimaryAddrChange()
 	if addrChanged || !c.doNodeHostCIDRsMatch() {
 		klog.Infof("Node address changed to %v. Updating annotations.", currAddresses)
-		err := c.updateNodeAddressAnnotations()
+		// Each sync is the root of its own work; the context is not tied to stopChan.
+		err := c.updateNodeAddressAnnotations(context.Background())
 		if err != nil {
 			klog.Errorf("Address Manager failed to update node address annotations: %v", err)
 		}
@@ -691,7 +696,8 @@ func (c *addressManager) updateOVNEncapIPAndReconnect(newIP net.IP) {
 		return
 	}
 
-	if err := c.nodeAnnotator.Run(); err != nil {
+	// The primary address change event is the root of its own work.
+	if err := c.nodeAnnotator.Run(context.Background()); err != nil {
 		klog.Errorf("Failed to set node %s annotations: %v", c.nodeName, err)
 		return
 	}

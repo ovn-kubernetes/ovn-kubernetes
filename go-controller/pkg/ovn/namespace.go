@@ -22,7 +22,7 @@ func isNamespaceMulticastEnabled(annotations map[string]string) bool {
 }
 
 // AddNamespace creates corresponding addressset in ovn db
-func (oc *DefaultNetworkController) AddNamespace(ns *corev1.Namespace) error {
+func (oc *DefaultNetworkController) AddNamespace(ctx context.Context, ns *corev1.Namespace) error {
 	klog.Infof("[%s] adding namespace", ns.Name)
 	// Keep track of how long syncs take.
 	start := time.Now()
@@ -30,7 +30,7 @@ func (oc *DefaultNetworkController) AddNamespace(ns *corev1.Namespace) error {
 		klog.Infof("[%s] adding namespace took %v", ns.Name, time.Since(start))
 	}()
 
-	_, nsUnlock, err := oc.ensureNamespaceLocked(ns.Name, false, ns)
+	_, nsUnlock, err := oc.ensureNamespaceLocked(ctx, ns.Name, false, ns)
 	if err != nil {
 		return fmt.Errorf("failed to ensure namespace locked: %v", err)
 	}
@@ -117,6 +117,6 @@ func (oc *DefaultNetworkController) deleteNamespace(ns *corev1.Namespace) error 
 // ensureNamespaceLocked locks namespacesMutex, gets/creates an entry for ns, configures OVN nsInfo, and returns it
 // with its mutex locked.
 // ns is the name of the namespace, while namespace is the optional k8s namespace object
-func (oc *DefaultNetworkController) ensureNamespaceLocked(ns string, readOnly bool, namespace *corev1.Namespace) (*namespaceInfo, func(), error) {
-	return oc.ensureNamespaceLockedCommon(ns, readOnly, namespace, oc.configureNamespace)
+func (oc *DefaultNetworkController) ensureNamespaceLocked(ctx context.Context, ns string, readOnly bool, namespace *corev1.Namespace) (*namespaceInfo, func(), error) {
+	return oc.ensureNamespaceLockedCommon(ctx, ns, readOnly, namespace, oc.configureNamespace)
 }

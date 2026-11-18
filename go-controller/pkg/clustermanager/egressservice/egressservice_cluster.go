@@ -388,7 +388,7 @@ func (c *Controller) repair(ctx context.Context) error {
 			}
 		}
 
-		err := c.kubeOVN.SetLabelsOnNode(node.Name, labelsToRemove)
+		err := c.kubeOVN.SetLabelsOnNode(ctx, node.Name, labelsToRemove)
 		if err != nil {
 			errorList = append(errorList,
 				fmt.Errorf("failed to remove stale labels %v from node %s, err: %v", labelsToRemove, node.Name, err))
@@ -631,7 +631,7 @@ func (c *Controller) syncEgressService(ctx context.Context, key string) error {
 		return err
 	}
 
-	return c.labelNodeForService(namespace, name, node.name)
+	return c.labelNodeForService(ctx, namespace, name, node.name)
 }
 
 // Removes the status of an egress service.
@@ -654,7 +654,7 @@ func (c *Controller) clearServiceResourcesAndRequeue(ctx context.Context, key st
 
 	nodeState, found := c.nodes[svcState.node]
 	if found {
-		if err := c.removeNodeServiceLabel(namespace, name, svcState.node); err != nil {
+		if err := c.removeNodeServiceLabel(ctx, namespace, name, svcState.node); err != nil {
 			return fmt.Errorf("failed to remove svc node label for %s, err: %v", svcState.node, err)
 		}
 		delete(nodeState.allocations, key)

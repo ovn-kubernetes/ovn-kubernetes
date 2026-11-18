@@ -102,7 +102,7 @@ const (
 
 // configureUDNServicesNFTables configures the nftables chains, rules, and verdict maps
 // that are used to set packet marks on externally exposed UDN services
-func configureUDNServicesNFTables() error {
+func configureUDNServicesNFTables(ctx context.Context) error {
 	nft, err := nodenft.GetNFTablesHelper()
 	if err != nil {
 		return err
@@ -184,7 +184,7 @@ func configureUDNServicesNFTables() error {
 		),
 	})
 
-	return nft.Run(context.TODO(), tx)
+	return nft.Run(ctx, tx)
 }
 
 // nodePortWatcherNFTables manages nftables rules for shared gateway
@@ -810,7 +810,7 @@ func (npw *nodePortWatcher) updateServiceInfo(index ktypes.NamespacedName, servi
 
 // addServiceRules ensures the correct nftables rules and OpenFlow physical
 // flows are programmed for a given service and endpoint configuration
-func addServiceRules(service *corev1.Service, netInfo util.NetInfo, localEndpoints util.PortToLBEndpoints, svcHasLocalHostNetEndPnt bool, npw *nodePortWatcher) error {
+func addServiceRules(ctx context.Context, service *corev1.Service, netInfo util.NetInfo, localEndpoints util.PortToLBEndpoints, svcHasLocalHostNetEndPnt bool, npw *nodePortWatcher) error {
 	// For dpu or Full mode
 	var err error
 	var errors []error
@@ -830,12 +830,12 @@ func addServiceRules(service *corev1.Service, netInfo util.NetInfo, localEndpoin
 		// add nftables rules only in full mode
 		nftObjs := getGatewayNFTRules(service, localEndpoints, svcHasLocalHostNetEndPnt)
 		if activeNetwork != nil {
-			if err := reconcileUDNServiceMarkRules(service, netInfo, npw.nodeIPManager.nodeName, activeNetwork); err != nil {
+			if err := reconcileUDNServiceMarkRules(ctx, service, netInfo, npw.nodeIPManager.nodeName, activeNetwork); err != nil {
 				errors = append(errors, err)
 			}
 		}
 		if len(nftObjs) > 0 {
-			if err := nodenft.AddObjects(nftObjs); err != nil {
+			if err := nodenft.AddObjects(ctx, nftObjs); err != nil {
 				err = fmt.Errorf("failed to update nftables rules for service %s/%s: %w",
 					service.Namespace, service.Name, err)
 				errors = append(errors, err)
@@ -848,7 +848,7 @@ func addServiceRules(service *corev1.Service, netInfo util.NetInfo, localEndpoin
 
 // delServiceRules deletes all possible nftables rules and OpenFlow physical
 // flows for a service
-func delServiceRules(service *corev1.Service, localEndpoints util.PortToLBEndpoints, npw *nodePortWatcher) error {
+func delServiceRules(ctx context.Context, service *corev1.Service, localEndpoints util.PortToLBEndpoints, npw *nodePortWatcher) error {
 	var err error
 	var errors []error
 	// full mode || dpu mode
@@ -892,7 +892,7 @@ func delServiceRules(service *corev1.Service, localEndpoints util.PortToLBEndpoi
 			nftObjs = append(nftObjs, getUDNNFTRules(service, nil)...)
 		}
 		if len(nftObjs) > 0 {
-			if err := nodenft.DeleteObjects(nftObjs); err != nil {
+			if err := nodenft.DeleteObjects(ctx, nftObjs); err != nil {
 				err = fmt.Errorf("failed to delete nftables rules for service %s/%s: %w",
 					service.Namespace, service.Name, err)
 				errors = append(errors, err)
@@ -916,7 +916,7 @@ func serviceUpdateNotNeeded(old, new *corev1.Service) bool {
 }
 
 // AddService handles configuring shared gateway bridge flows to steer External IP, Node Port, Ingress LB traffic into OVN
-func (npw *nodePortWatcher) AddService(service *corev1.Service) error {
+func (npw *nodePortWatcher) AddService(ctx context.Context, service *corev1.Service) error {
 	var localEndpoints util.PortToLBEndpoints
 	var hasLocalHostNetworkEp bool
 	if !util.ServiceTypeHasClusterIP(service) || !util.IsClusterIPSet(service) {
@@ -966,9 +966,9 @@ func (npw *nodePortWatcher) AddService(service *corev1.Service) error {
 	if exists := npw.addOrSetServiceInfo(name, service, hasLocalHostNetworkEp, localEndpoints); !exists {
 		klog.V(5).Infof("Service Add %s event in namespace %s came before endpoint event setting svcConfig",
 			service.Name, service.Namespace)
-		if err := addServiceRules(service, netInfo, localEndpoints, hasLocalHostNetworkEp, npw); err != nil {
+		if err := addServiceRules(ctx, service, netInfo, localEndpoints, hasLocalHostNetworkEp, npw); err != nil {
 			npw.getAndDeleteServiceInfo(name)
-			return fmt.Errorf("AddService failed for nodePortWatcher: %w, trying delete: %v", err, delServiceRules(service, localEndpoints, npw))
+			return fmt.Errorf("AddService failed for nodePortWatcher: %w, trying delete: %v", err, delServiceRules(ctx, service, localEndpoints, npw))
 		}
 	} else {
 		// Need to update flows here in case an attribute of the gateway has changed, such as MAC address
@@ -984,7 +984,7 @@ func (npw *nodePortWatcher) AddService(service *corev1.Service) error {
 			if netConfig == nil {
 				return fmt.Errorf("missing bridge configuration for network %s", netInfo.GetNetworkName())
 			}
-			if err := reconcileUDNServiceMarkRules(service, netInfo, npw.nodeIPManager.nodeName, netConfig); err != nil {
+			if err := reconcileUDNServiceMarkRules(ctx, service, netInfo, npw.nodeIPManager.nodeName, netConfig); err != nil {
 				return err
 			}
 		}
@@ -992,7 +992,7 @@ func (npw *nodePortWatcher) AddService(service *corev1.Service) error {
 	return nil
 }
 
-func (npw *nodePortWatcher) UpdateService(old, new *corev1.Service) error {
+func (npw *nodePortWatcher) UpdateService(ctx context.Context, old, new *corev1.Service) error {
 	var err error
 	var errors []error
 	name := ktypes.NamespacedName{Namespace: old.Namespace, Name: old.Name}
@@ -1016,7 +1016,7 @@ func (npw *nodePortWatcher) UpdateService(old, new *corev1.Service) error {
 		// so that we don't miss any endpoint update events here
 		klog.V(5).Infof("Deleting old service rules for: %v", old)
 
-		if err = delServiceRules(old, svcConfig.localEndpoints, npw); err != nil {
+		if err = delServiceRules(ctx, old, svcConfig.localEndpoints, npw); err != nil {
 			errors = append(errors, err)
 		}
 
@@ -1043,7 +1043,7 @@ func (npw *nodePortWatcher) UpdateService(old, new *corev1.Service) error {
 			return utilerrors.Join(errors...)
 		}
 
-		if err = addServiceRules(new, netInfo, svcConfig.localEndpoints, svcConfig.hasLocalHostNetworkEp, npw); err != nil {
+		if err = addServiceRules(ctx, new, netInfo, svcConfig.localEndpoints, svcConfig.hasLocalHostNetworkEp, npw); err != nil {
 			errors = append(errors, err)
 		}
 	}
@@ -1229,7 +1229,7 @@ func (npw *nodePortWatcher) deleteConntrackForService(service *corev1.Service) e
 	return nil
 }
 
-func (npw *nodePortWatcher) DeleteService(service *corev1.Service) error {
+func (npw *nodePortWatcher) DeleteService(ctx context.Context, service *corev1.Service) error {
 	var err error
 	var errors []error
 	if !util.ServiceTypeHasClusterIP(service) || !util.IsClusterIPSet(service) {
@@ -1239,7 +1239,7 @@ func (npw *nodePortWatcher) DeleteService(service *corev1.Service) error {
 	klog.V(5).Infof("Deleting service %s in namespace %s", service.Name, service.Namespace)
 	name := ktypes.NamespacedName{Namespace: service.Namespace, Name: service.Name}
 	if svcConfig, exists := npw.getAndDeleteServiceInfo(name); exists {
-		if err = delServiceRules(svcConfig.service, svcConfig.localEndpoints, npw); err != nil {
+		if err = delServiceRules(ctx, svcConfig.service, svcConfig.localEndpoints, npw); err != nil {
 			errors = append(errors, err)
 		}
 	} else {
@@ -1259,7 +1259,7 @@ func (npw *nodePortWatcher) DeleteService(service *corev1.Service) error {
 
 }
 
-func (npw *nodePortWatcher) SyncServices(services []interface{}) error {
+func (npw *nodePortWatcher) SyncServices(ctx context.Context, services []interface{}) error {
 	var err error
 	var errors []error
 	var keepNFTObjects, nftContainers []knftables.Object
@@ -1334,7 +1334,7 @@ func (npw *nodePortWatcher) SyncServices(services []interface{}) error {
 		if util.IsNetworkSegmentationSupportEnabled() {
 			nftContainers = append(nftContainers, getUDNNFTContainerObjects()...)
 		}
-		if err = nodenft.SyncObjects(nftContainers, keepNFTObjects); err != nil {
+		if err = nodenft.SyncObjects(ctx, nftContainers, keepNFTObjects); err != nil {
 			errors = append(errors, fmt.Errorf("failed to sync nftables rules for services: %w", err))
 		}
 	}
@@ -1346,7 +1346,7 @@ func (npw *nodePortWatcher) SyncServices(services []interface{}) error {
 // nftables rules can still depend on other endpoint changes (ITP=Local and load
 // balancers without NodePorts), so reconcile those separately.
 // The caller must hold serviceInfoLock while updating the cached state.
-func (npw *nodePortWatcher) updateEndpointRules(service *corev1.Service, netInfo util.NetInfo,
+func (npw *nodePortWatcher) updateEndpointRules(ctx context.Context, service *corev1.Service, netInfo util.NetInfo,
 	old *serviceConfig, localEndpoints util.PortToLBEndpoints, hasLocalHostNetworkEp bool) error {
 	var errors []error
 	dirty := old.endpointRulesDirty
@@ -1364,13 +1364,13 @@ func (npw *nodePortWatcher) updateEndpointRules(service *corev1.Service, netInfo
 		oldRules := getGatewayNFTRules(service, old.localEndpoints, old.hasLocalHostNetworkEp)
 		newRules := getGatewayNFTRules(service, localEndpoints, hasLocalHostNetworkEp)
 		if dirty || !reflect.DeepEqual(oldRules, newRules) {
-			if err := nodenft.DeleteObjects(oldRules); err != nil {
+			if err := nodenft.DeleteObjects(ctx, oldRules); err != nil {
 				errors = append(errors, err)
 				// Do not install a new endpoint configuration until the old
 				// one is removed; retain its cache entry for cleanup on retry.
 				return utilerrors.Join(errors...)
 			}
-			if err := nodenft.AddObjects(newRules); err != nil {
+			if err := nodenft.AddObjects(ctx, newRules); err != nil {
 				errors = append(errors, err)
 				return utilerrors.Join(errors...)
 			}
@@ -1384,7 +1384,7 @@ func (npw *nodePortWatcher) updateEndpointRules(service *corev1.Service, netInfo
 	return utilerrors.Join(errors...)
 }
 
-func (npw *nodePortWatcher) AddEndpointSlice(epSlice *discovery.EndpointSlice) error {
+func (npw *nodePortWatcher) AddEndpointSlice(ctx context.Context, epSlice *discovery.EndpointSlice) error {
 	var err error
 	var svc *corev1.Service
 
@@ -1440,14 +1440,14 @@ func (npw *nodePortWatcher) AddEndpointSlice(epSlice *discovery.EndpointSlice) e
 	out, exists := npw.serviceInfo[*svcNamespacedName]
 	if !exists {
 		klog.V(5).Infof("Endpointslice %s ADD event in namespace %s is creating rules", epSlice.Name, epSlice.Namespace)
-		if err = addServiceRules(svc, netInfo, localEndpoints, hasLocalHostNetworkEp, npw); err != nil {
+		if err = addServiceRules(ctx, svc, netInfo, localEndpoints, hasLocalHostNetworkEp, npw); err != nil {
 			return err
 		}
 		npw.serviceInfo[*svcNamespacedName] = &serviceConfig{service: svc, hasLocalHostNetworkEp: hasLocalHostNetworkEp, localEndpoints: localEndpoints}
 		return nil
 	}
 
-	if err = npw.updateEndpointRules(svc, netInfo, out, localEndpoints, hasLocalHostNetworkEp); err != nil {
+	if err = npw.updateEndpointRules(ctx, svc, netInfo, out, localEndpoints, hasLocalHostNetworkEp); err != nil {
 		return err
 	}
 	out.service = svc
@@ -1455,7 +1455,7 @@ func (npw *nodePortWatcher) AddEndpointSlice(epSlice *discovery.EndpointSlice) e
 
 }
 
-func (npw *nodePortWatcher) DeleteEndpointSlice(epSlice *discovery.EndpointSlice) error {
+func (npw *nodePortWatcher) DeleteEndpointSlice(ctx context.Context, epSlice *discovery.EndpointSlice) error {
 	var err error
 	var errors []error
 
@@ -1500,7 +1500,7 @@ func (npw *nodePortWatcher) DeleteEndpointSlice(epSlice *discovery.EndpointSlice
 		netInfo, err := npw.networkManager.GetActiveNetworkForNamespace(namespacedName.Namespace)
 		if err != nil || netInfo == nil {
 			// Network removal still tears down all rules, unlike endpoint loss.
-			if deleteErr := delServiceRules(svcConfig.service, svcConfig.localEndpoints, npw); deleteErr != nil {
+			if deleteErr := delServiceRules(ctx, svcConfig.service, svcConfig.localEndpoints, npw); deleteErr != nil {
 				errors = append(errors, deleteErr)
 			} else {
 				delete(npw.serviceInfo, *namespacedName)
@@ -1522,7 +1522,7 @@ func (npw *nodePortWatcher) DeleteEndpointSlice(epSlice *discovery.EndpointSlice
 			return utilerrors.Join(errors...)
 		}
 
-		if err = npw.updateEndpointRules(svcConfig.service, netInfo, svcConfig, localEndpoints, hasLocalHostNetworkEp); err != nil {
+		if err = npw.updateEndpointRules(ctx, svcConfig.service, netInfo, svcConfig, localEndpoints, hasLocalHostNetworkEp); err != nil {
 			errors = append(errors, err)
 		}
 		return utilerrors.Join(errors...)
@@ -1550,16 +1550,16 @@ func (npw *nodePortWatcher) GetLocalEligibleEndpointAddresses(endpointSlices []*
 	return portToNodeToLBEndpoints.GetNode(npw.nodeIPManager.nodeName)
 }
 
-func (npw *nodePortWatcher) UpdateEndpointSlice(oldEpSlice, newEpSlice *discovery.EndpointSlice) error {
+func (npw *nodePortWatcher) UpdateEndpointSlice(ctx context.Context, oldEpSlice, newEpSlice *discovery.EndpointSlice) error {
 	if reflect.DeepEqual(oldEpSlice.Endpoints, newEpSlice.Endpoints) && reflect.DeepEqual(oldEpSlice.Ports, newEpSlice.Ports) {
 		return nil
 	}
 	// Reconcile once against all current slices, including port-only and
 	// locality-only changes. An empty slice is not a Service deletion.
-	return npw.AddEndpointSlice(newEpSlice)
+	return npw.AddEndpointSlice(ctx, newEpSlice)
 }
 
-func (npwnft *nodePortWatcherNFTables) AddService(service *corev1.Service) error {
+func (npwnft *nodePortWatcherNFTables) AddService(ctx context.Context, service *corev1.Service) error {
 	// don't process headless service or services that doesn't have NodePorts or ExternalIPs
 	if !util.ServiceTypeHasClusterIP(service) || !util.IsClusterIPSet(service) {
 		return nil
@@ -1581,13 +1581,13 @@ func (npwnft *nodePortWatcherNFTables) AddService(service *corev1.Service) error
 		return nil
 	}
 
-	if err := addServiceRules(service, netInfo, nil, false, nil); err != nil {
+	if err := addServiceRules(ctx, service, netInfo, nil, false, nil); err != nil {
 		return fmt.Errorf("AddService failed for nodePortWatcherNFTables: %v", err)
 	}
 	return nil
 }
 
-func (npwnft *nodePortWatcherNFTables) UpdateService(old, new *corev1.Service) error {
+func (npwnft *nodePortWatcherNFTables) UpdateService(ctx context.Context, old, new *corev1.Service) error {
 	var err error
 	var errors []error
 	if serviceUpdateNotNeeded(old, new) {
@@ -1598,7 +1598,7 @@ func (npwnft *nodePortWatcherNFTables) UpdateService(old, new *corev1.Service) e
 	}
 
 	if util.ServiceTypeHasClusterIP(old) && util.IsClusterIPSet(old) {
-		if err = delServiceRules(old, nil, nil); err != nil {
+		if err = delServiceRules(ctx, old, nil, nil); err != nil {
 			errors = append(errors, err)
 		}
 	}
@@ -1613,7 +1613,7 @@ func (npwnft *nodePortWatcherNFTables) UpdateService(old, new *corev1.Service) e
 			return utilerrors.Join(errors...)
 		}
 
-		if err = addServiceRules(new, netInfo, nil, false, nil); err != nil {
+		if err = addServiceRules(ctx, new, netInfo, nil, false, nil); err != nil {
 			errors = append(errors, err)
 		}
 	}
@@ -1624,19 +1624,19 @@ func (npwnft *nodePortWatcherNFTables) UpdateService(old, new *corev1.Service) e
 
 }
 
-func (npwnft *nodePortWatcherNFTables) DeleteService(service *corev1.Service) error {
+func (npwnft *nodePortWatcherNFTables) DeleteService(ctx context.Context, service *corev1.Service) error {
 	// don't process headless service
 	if !util.ServiceTypeHasClusterIP(service) || !util.IsClusterIPSet(service) {
 		return nil
 	}
 
-	if err := delServiceRules(service, nil, nil); err != nil {
+	if err := delServiceRules(ctx, service, nil, nil); err != nil {
 		return fmt.Errorf("DeleteService failed for nodePortWatcherNFTables: %v", err)
 	}
 	return nil
 }
 
-func (npwnft *nodePortWatcherNFTables) SyncServices(services []interface{}) error {
+func (npwnft *nodePortWatcherNFTables) SyncServices(ctx context.Context, services []interface{}) error {
 	var err error
 	var errors []error
 	var keepNFTObjects, nftContainers []knftables.Object
@@ -1672,7 +1672,7 @@ func (npwnft *nodePortWatcherNFTables) SyncServices(services []interface{}) erro
 	}
 
 	nftContainers = append(nftContainers, getGatewayNFTContainerObjects()...)
-	if err = nodenft.SyncObjects(nftContainers, keepNFTObjects); err != nil {
+	if err = nodenft.SyncObjects(ctx, nftContainers, keepNFTObjects); err != nil {
 		errors = append(errors, fmt.Errorf("failed to sync nftables rules for services: %w", err))
 	}
 
@@ -1680,6 +1680,7 @@ func (npwnft *nodePortWatcherNFTables) SyncServices(services []interface{}) erro
 }
 
 func newGateway(
+	ctx context.Context,
 	nodeName string,
 	subnets []*net.IPNet,
 	gwNextHops []net.IP,
@@ -1701,7 +1702,7 @@ func newGateway(
 	}
 
 	if gatewayMode == config.GatewayModeLocal {
-		if err := initLocalGateway(subnets, mgmtPort); err != nil {
+		if err := initLocalGateway(ctx, subnets, mgmtPort); err != nil {
 			return nil, fmt.Errorf("failed to initialize new local gateway, err: %w", err)
 		}
 	}
@@ -1769,7 +1770,7 @@ func newGateway(
 			}
 
 			// Masquerade config mostly done on node, update annotation
-			if err := updateMasqueradeAnnotation(nodeName, kube); err != nil {
+			if err := updateMasqueradeAnnotation(ctx, nodeName, kube); err != nil {
 				return fmt.Errorf("failed to update masquerade subnet annotation on node: %s, error: %v", nodeName, err)
 			}
 		}
@@ -1801,7 +1802,7 @@ func newGateway(
 		})
 		if config.Gateway.NodeportEnable {
 			klog.Info("Creating Gateway Node Port Watcher")
-			gw.nodePortWatcher, err = newNodePortWatcher(gwBridge, gw.openflowManager, gw.nodeIPManager, watchFactory, networkManager)
+			gw.nodePortWatcher, err = newNodePortWatcher(ctx, gwBridge, gw.openflowManager, gw.nodeIPManager, watchFactory, networkManager)
 			if err != nil {
 				return err
 			}
@@ -1821,7 +1822,7 @@ func newGateway(
 	return gw, nil
 }
 
-func newNodePortWatcher(
+func newNodePortWatcher(ctx context.Context,
 	gwBridge *bridgeconfig.BridgeConfiguration,
 	ofm *openflowManager,
 	nodeIPManager *addressManager,
@@ -1843,11 +1844,11 @@ func newNodePortWatcher(
 	// will not be processed by the OpenFlow flows, so we need to add nftables rules that
 	// DNATs the NodePortIP:NodePort to ClusterServiceIP:Port. We don't need to do this on DPU.
 	if config.IsModeFull() {
-		if err := initGatewayNFTables(); err != nil {
+		if err := initGatewayNFTables(ctx); err != nil {
 			return nil, err
 		}
 		if util.IsNetworkSegmentationSupportEnabled() {
-			if err := configureUDNServicesNFTables(); err != nil {
+			if err := configureUDNServicesNFTables(ctx); err != nil {
 				return nil, fmt.Errorf("unable to configure UDN nftables: %w", err)
 			}
 		}
@@ -2252,14 +2253,14 @@ func addHostMACBindings(bridgeName string) error {
 	return nil
 }
 
-func updateMasqueradeAnnotation(nodeName string, kube kube.Interface) error {
+func updateMasqueradeAnnotation(ctx context.Context, nodeName string, kube kube.Interface) error {
 	_, v4MasqueradeCIDR, _ := net.ParseCIDR(config.Gateway.V4MasqueradeSubnet)
 	_, v6MasqueradeCIDR, _ := net.ParseCIDR(config.Gateway.V6MasqueradeSubnet)
 	nodeAnnotation, err := util.CreateNodeMasqueradeSubnetAnnotation(nil, v4MasqueradeCIDR, v6MasqueradeCIDR)
 	if err != nil {
 		return fmt.Errorf("unable to generate masquerade subnet annotation update: %w", err)
 	}
-	if err := kube.SetAnnotationsOnNode(context.TODO(), nodeName, nodeAnnotation); err != nil {
+	if err := kube.SetAnnotationsOnNode(ctx, nodeName, nodeAnnotation); err != nil {
 		return fmt.Errorf("unable to set node masquerade subnet annotation update: %w", err)
 	}
 	return nil
@@ -2420,7 +2421,7 @@ func deleteMasqueradeResources(link netlink.Link, staleMasqueradeIPs *config.Mas
 //	   ct state new ip daddr @advertised-udn-subnets-v4 counter packets 0 bytes 0 drop
 //	   ct state new ip6 daddr @advertised-udn-subnets-v6 counter packets 0 bytes 0 drop
 //	 }
-func configureAdvertisedUDNIsolationNFTables() error {
+func configureAdvertisedUDNIsolationNFTables(ctx context.Context) error {
 	counterIfDebug := ""
 	if config.Logging.Level > 4 {
 		counterIfDebug = "counter"
@@ -2466,5 +2467,5 @@ func configureAdvertisedUDNIsolationNFTables() error {
 		Chain: nftablesUDNBGPOutputChain,
 		Rule:  knftables.Concat("ct state new", fmt.Sprintf("ip6 daddr @%s", nftablesAdvertisedUDNsSetV6), counterIfDebug, "drop"),
 	})
-	return nft.Run(context.TODO(), tx)
+	return nft.Run(ctx, tx)
 }

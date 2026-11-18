@@ -332,7 +332,7 @@ func (sm *StatusManager) Stop() {
 	sm.typedManagers = map[string]resourceReconciler{}
 }
 
-func (sm *StatusManager) onZoneUpdate(newZones sets.Set[string]) {
+func (sm *StatusManager) onZoneUpdate(ctx context.Context, newZones sets.Set[string]) {
 	klog.Infof("StatusManager got zones update: %v", newZones)
 	sm.zonesLock.Lock()
 	deletedZones := sm.zones.Difference(newZones)
@@ -349,7 +349,7 @@ func (sm *StatusManager) onZoneUpdate(newZones sets.Set[string]) {
 		// not maintaining local caches for ANP/BANP
 		// we must try to clean up statuses across all ANPs that were managed by that zone
 		anpZoneDeleteCleanupManager := newANPManager(sm.ovnClient.ANPClient)
-		anpZoneDeleteCleanupManager.cleanupDeletedZoneStatuses(context.TODO(), deletedZones)
+		anpZoneDeleteCleanupManager.cleanupDeletedZoneStatuses(ctx, deletedZones)
 	}
 }
 

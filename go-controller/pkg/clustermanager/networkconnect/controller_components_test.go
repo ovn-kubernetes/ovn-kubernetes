@@ -2817,11 +2817,11 @@ func TestControllerSameNamedNetworkAndCNCHaveDistinctTunnelKeys(t *testing.T) {
 	c := NewController(wf, clients, fakeNM.Interface(), allocator)
 	g.Expect(c.initialSync()).To(gomega.Succeed())
 	g.Expect(c.cncCache["shared"]).NotTo(gomega.BeNil())
-	g.Expect(c.syncClusterNetworkConnect("shared", cnc)).To(gomega.Succeed())
+	g.Expect(c.syncClusterNetworkConnect(context.Background(), "shared", cnc)).To(gomega.Succeed())
 	updated, err := clients.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Get(context.Background(), "shared", metav1.GetOptions{})
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	g.Expect(updated.Annotations[util.OvnConnectRouterTunnelKeyAnnotation]).To(gomega.Equal("16715780"), "the network's switch and the CNC router must have distinct dynamic keys")
-	g.Expect(c.syncClusterNetworkConnect("shared", nil)).To(gomega.Succeed())
+	g.Expect(c.syncClusterNetworkConnect(context.Background(), "shared", nil)).To(gomega.Succeed())
 	g.Expect(allocator.ReserveKeys("other", []int{16715779})).ToNot(gomega.Succeed())
 	g.Expect(allocator.ReserveKeys("other", []int{16715780})).To(gomega.Succeed())
 }

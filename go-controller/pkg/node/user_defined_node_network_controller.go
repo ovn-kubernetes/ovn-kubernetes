@@ -85,11 +85,11 @@ func NewUserDefinedNodeNetworkController(
 }
 
 // Start starts the default controller; handles all events and creates all needed logical entities
-func (nc *UserDefinedNodeNetworkController) Start(_ context.Context) error {
+func (nc *UserDefinedNodeNetworkController) Start(ctx context.Context) error {
 	klog.Infof("Starting UDN node network controller for network %s", nc.GetNetworkName())
 
 	if util.IsNetworkSegmentationSupportEnabled() && nc.IsPrimaryNetwork() {
-		if err := nc.gateway.Start(); err != nil {
+		if err := nc.gateway.Start(ctx); err != nil {
 			return fmt.Errorf("failed to start node gateway for network %s at node %s: %w",
 				nc.GetNetworkName(), nc.name, err)
 		}
@@ -113,12 +113,12 @@ func (nc *UserDefinedNodeNetworkController) Stop() {
 }
 
 // Cleanup cleans up node entities for the given user-defined network
-func (nc *UserDefinedNodeNetworkController) Cleanup(_ context.Context) error {
+func (nc *UserDefinedNodeNetworkController) Cleanup(ctx context.Context) error {
 	var errors []error
 	var err error
 
 	if nc.gateway != nil {
-		if err = nc.gateway.Cleanup(); err != nil {
+		if err = nc.gateway.Cleanup(ctx); err != nil {
 			errors = append(errors, fmt.Errorf("deleting network gateway for network %s failed: %v", nc.GetNetworkName(), err))
 		}
 	}

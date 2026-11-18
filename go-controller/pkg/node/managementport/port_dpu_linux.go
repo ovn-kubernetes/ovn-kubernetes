@@ -7,6 +7,7 @@
 package managementport
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -188,7 +189,7 @@ func (mp *managementPortNetdev) create() error {
 		}
 	}
 
-	err = createPlatformManagementPort(mp.ifName, mp.cfg, mp.routeManager)
+	err = createPlatformManagementPort(context.Background(), mp.ifName, mp.cfg, mp.routeManager)
 	if err != nil {
 		return err
 	}
@@ -200,7 +201,7 @@ func (mp *managementPortNetdev) reconcilePeriod() time.Duration {
 }
 
 func (mp *managementPortNetdev) doReconcile() error {
-	if err := createPlatformManagementPort(mp.ifName, mp.cfg, mp.routeManager); err != nil {
+	if err := createPlatformManagementPort(context.Background(), mp.ifName, mp.cfg, mp.routeManager); err != nil {
 		klog.Warningf("Failed to reconcile management port netdev, attempting to recreate: %v", err)
 		if err := mp.create(); err != nil {
 			if errors.Is(err, errMgmtPortDeviceNotFound) {

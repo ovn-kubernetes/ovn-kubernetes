@@ -149,9 +149,7 @@ func NewUplinkStateGatewayStatusController(
 		"uplink-state-gateway-status-publisher",
 		&controllerutil.ReconcilerConfig{
 			MaxAttempts: controllerutil.InfiniteAttempts,
-			Reconcile: func(_ context.Context, stateName string) error {
-				return c.reconcileGatewayCondition(stateName)
-			},
+			Reconcile:   c.reconcileGatewayCondition,
 			Threadiness: uplinkGatewayStatusWorkers,
 		},
 	)
@@ -221,7 +219,7 @@ func (c *UplinkStateGatewayStatusController) reconcileUplinkState(stateName stri
 // reconcileGatewayCondition publishes the aggregate derived from the latest
 // informer state. API failures are retried independently of CUDN dataplane
 // reconciliation, and multiple CUDN reports for one UplinkState are coalesced.
-func (c *UplinkStateGatewayStatusController) reconcileGatewayCondition(stateName string) error {
+func (c *UplinkStateGatewayStatusController) reconcileGatewayCondition(ctx context.Context, stateName string) error {
 	state, err := c.uplinkStateLister.Get(stateName)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
@@ -234,7 +232,7 @@ func (c *UplinkStateGatewayStatusController) reconcileGatewayCondition(stateName
 	if nodeName != c.nodeName || uplinkutil.StateName(uplinkName, nodeName) != stateName {
 		return nil
 	}
-	if err := c.publishGatewayCondition(uplinkName); err != nil {
+	if err := c.publishGatewayCondition(ctx, uplinkName); err != nil {
 		if isUplinkStateNotFound(err) {
 			c.retireUplinkState(stateName)
 			return nil
@@ -502,7 +500,7 @@ func (c *UplinkStateGatewayStatusController) enqueueGatewayCondition(uplinkName 
 
 // publishGatewayCondition writes aggregate readiness for the CUDNs that have
 // reported a result for this Uplink's current input configuration.
-func (c *UplinkStateGatewayStatusController) publishGatewayCondition(uplinkName string) error {
+func (c *UplinkStateGatewayStatusController) publishGatewayCondition(ctx context.Context, uplinkName string) error {
 	c.mutex.Lock()
 	uplinkState := c.uplinks[uplinkName]
 	c.mutex.Unlock()
@@ -573,7 +571,7 @@ func (c *UplinkStateGatewayStatusController) publishGatewayCondition(uplinkName 
 	// Keep the merge result as the retry base while the informer cache catches
 	// up, preserving LastTransitionTime across duplicate publications.
 	uplinkState.lastCondition = condition.DeepCopy()
-	ctx, cancel := context.WithTimeout(context.Background(), uplinkGatewayAPITimeout)
+	applyCtx, cancel := context.WithTimeout(ctx, uplinkGatewayAPITimeout)
 	defer cancel()
 	applyState := uplinkapply.UplinkState(stateName).WithStatus(
 		uplinkapply.UplinkStateStatus().WithConditions(util.ConditionToApply(condition)),
@@ -582,7 +580,7 @@ func (c *UplinkStateGatewayStatusController) publishGatewayCondition(uplinkName 
 		applyState = applyState.WithUID(state.UID)
 	}
 	_, err = c.uplinkClient.K8sV1alpha1().UplinkStates().Apply(
-		ctx,
+		applyCtx,
 		applyState,
 		metav1.ApplyOptions{FieldManager: c.fieldManager, Force: true},
 	)

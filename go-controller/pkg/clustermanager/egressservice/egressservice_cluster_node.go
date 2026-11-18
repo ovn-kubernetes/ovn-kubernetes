@@ -222,7 +222,7 @@ func (c *Controller) syncNode(ctx context.Context, key string) error {
 			}
 		}
 		if len(labelsToRemove) > 0 {
-			return c.kubeOVN.SetLabelsOnNode(n.Name, labelsToRemove)
+			return c.kubeOVN.SetLabelsOnNode(ctx, n.Name, labelsToRemove)
 		}
 
 		return nil
@@ -285,7 +285,7 @@ func (c *Controller) syncNode(ctx context.Context, key string) error {
 		}
 	}
 
-	err = c.kubeOVN.SetLabelsOnNode(n.Name, labelsToSet)
+	err = c.kubeOVN.SetLabelsOnNode(ctx, n.Name, labelsToSet)
 	if err != nil {
 		return err
 	}
@@ -361,15 +361,15 @@ func nodeIsReady(n *corev1.Node) bool {
 
 // Labels the given node with the 'egress-service.k8s.ovn.org/<svc-namespace>-<svc-name>:""' label
 // which marks it as the node who is holding that service.
-func (c *Controller) labelNodeForService(namespace, name, node string) error {
+func (c *Controller) labelNodeForService(ctx context.Context, namespace, name, node string) error {
 	labels := map[string]any{c.nodeLabelForService(namespace, name): ""}
-	return c.kubeOVN.SetLabelsOnNode(node, labels)
+	return c.kubeOVN.SetLabelsOnNode(ctx, node, labels)
 }
 
 // Removes the 'egress-service.k8s.ovn.org/<svc-namespace>-<svc-name>:""' label from the given node.
-func (c *Controller) removeNodeServiceLabel(namespace, name, node string) error {
+func (c *Controller) removeNodeServiceLabel(ctx context.Context, namespace, name, node string) error {
 	labels := map[string]any{c.nodeLabelForService(namespace, name): nil} // Patching with a nil value results in the delete of the key
-	err := c.kubeOVN.SetLabelsOnNode(node, labels)
+	err := c.kubeOVN.SetLabelsOnNode(ctx, node, labels)
 	if err != nil && apierrors.IsNotFound(err) {
 		klog.V(5).Infof("Node %s doesn't exist", node)
 		return nil

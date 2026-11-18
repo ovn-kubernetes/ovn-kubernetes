@@ -20,7 +20,7 @@ const nftPMTUDChain = "no-pmtud"
 const nftEgressIPDropChain = "egressip-drop"
 
 // setupRemoteNodeNFTSets sets up the NFT sets that contain remote Kubernetes node IPs
-func setupRemoteNodeNFTSets() error {
+func setupRemoteNodeNFTSets(ctx context.Context) error {
 	nft, err := nodenft.GetNFTablesHelper()
 	if err != nil {
 		return fmt.Errorf("failed to get nftables helper: %w", err)
@@ -38,7 +38,7 @@ func setupRemoteNodeNFTSets() error {
 		Type:    "ipv6_addr",
 	})
 
-	err = nft.Run(context.TODO(), tx)
+	err = nft.Run(ctx, tx)
 	if err != nil {
 		return fmt.Errorf("could not add nftables sets for pmtud blocking: %v", err)
 	}
@@ -48,7 +48,7 @@ func setupRemoteNodeNFTSets() error {
 // setupNoOverlaySNATExemptNFTSets sets up the NFT sets for no-overlay SNAT exemption.
 // These sets contain cluster CIDRs + local zone node IPs that should be exempted from SNAT.
 // Caller should check if no-overlay mode with outbound SNAT is enabled before calling this.
-func setupNoOverlaySNATExemptNFTSets() error {
+func setupNoOverlaySNATExemptNFTSets(ctx context.Context) error {
 	nft, err := nodenft.GetNFTablesHelper()
 	if err != nil {
 		return fmt.Errorf("failed to get nftables helper: %w", err)
@@ -72,7 +72,7 @@ func setupNoOverlaySNATExemptNFTSets() error {
 		})
 	}
 
-	err = nft.Run(context.TODO(), tx)
+	err = nft.Run(ctx, tx)
 	if err != nil {
 		return fmt.Errorf("could not add nftables sets for no-overlay SNAT exemption: %v", err)
 	}
@@ -81,7 +81,7 @@ func setupNoOverlaySNATExemptNFTSets() error {
 
 // syncNoOverlaySNATExemptNFTSets updates the nftables sets for no-overlay SNAT exemption
 // with cluster CIDRs + local zone node IPs. This should be called when the local node is added or updated.
-func syncNoOverlaySNATExemptNFTSets(localNodeIPs []string) error {
+func syncNoOverlaySNATExemptNFTSets(ctx context.Context, localNodeIPs []string) error {
 	// Calculate desired addresses: cluster CIDRs + local node IPs
 	var desiredIPv4Addrs, desiredIPv6Addrs []string
 
@@ -139,7 +139,7 @@ func syncNoOverlaySNATExemptNFTSets(localNodeIPs []string) error {
 		}
 	}
 
-	err = nft.Run(context.TODO(), tx)
+	err = nft.Run(ctx, tx)
 	if err != nil {
 		return fmt.Errorf("failed to sync no-overlay SNAT exemption nftables sets: %w", err)
 	}
@@ -149,7 +149,7 @@ func syncNoOverlaySNATExemptNFTSets(localNodeIPs []string) error {
 
 // setupPMTUDNFTChain sets up the chain and rules to block PMTUD packets from being sent to k8s nodes
 // Relies on the sets from setupPMTUDNFTSets.
-func setupPMTUDNFTChain() error {
+func setupPMTUDNFTChain(ctx context.Context) error {
 	counterIfDebug := ""
 	if config.Logging.Level > 4 {
 		counterIfDebug = "counter"
@@ -200,7 +200,7 @@ func setupPMTUDNFTChain() error {
 		})
 	}
 
-	err = nft.Run(context.TODO(), tx)
+	err = nft.Run(ctx, tx)
 	if err != nil {
 		return fmt.Errorf("could not update nftables rule for PMTUD: %v", err)
 	}
@@ -210,7 +210,7 @@ func setupPMTUDNFTChain() error {
 // SetupEgressIPARPBlockNFT sets up nftables for blocking ARP/NDP responses for egress IPs during
 // graceful shutdown. Uses netdev family with ingress hook on the physical uplink interface to intercept
 // packets before they reach the OVS bridge, preventing OVN from responding to ARP/NDP requests.
-func SetupEgressIPARPBlockNFT(egressIPs []string, uplinkName string) error {
+func SetupEgressIPARPBlockNFT(ctx context.Context, egressIPs []string, uplinkName string) error {
 	if uplinkName == "" {
 		return fmt.Errorf("uplink interface name is required for netdev nftables rules")
 	}
@@ -294,7 +294,7 @@ func SetupEgressIPARPBlockNFT(egressIPs []string, uplinkName string) error {
 		})
 	}
 
-	if err = nft.Run(context.TODO(), tx); err != nil {
+	if err = nft.Run(ctx, tx); err != nil {
 		return fmt.Errorf("could not setup egress IP nftables: %v", err)
 	}
 

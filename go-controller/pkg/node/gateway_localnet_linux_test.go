@@ -69,7 +69,7 @@ func initFakeNodePortWatcher() *nodePortWatcher {
 }
 
 func startNodePortWatcher(n *nodePortWatcher, fakeClient *util.OVNNodeClientset) error {
-	if err := initGatewayNFTables(); err != nil {
+	if err := initGatewayNFTables(context.Background()); err != nil {
 		return err
 	}
 
@@ -96,26 +96,26 @@ func startNodePortWatcher(n *nodePortWatcher, fakeClient *util.OVNNodeClientset)
 	_, err := n.watchFactory.AddServiceHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			svc := obj.(*corev1.Service)
-			Expect(n.AddService(svc)).To(Succeed())
+			Expect(n.AddService(context.Background(), svc)).To(Succeed())
 		},
 		UpdateFunc: func(old, new interface{}) {
 			oldSvc := old.(*corev1.Service)
 			newSvc := new.(*corev1.Service)
-			Expect(n.UpdateService(oldSvc, newSvc)).To(Succeed())
+			Expect(n.UpdateService(context.Background(), oldSvc, newSvc)).To(Succeed())
 		},
 		DeleteFunc: func(obj interface{}) {
 			svc := obj.(*corev1.Service)
-			Expect(n.DeleteService(svc)).To(Succeed())
+			Expect(n.DeleteService(context.Background(), svc)).To(Succeed())
 		},
 	}, func(_ context.Context, objs []interface{}) error {
-		return n.SyncServices(objs)
+		return n.SyncServices(context.Background(), objs)
 	})
 
 	return err
 }
 
 func startNodePortWatcherWithRetry(n *nodePortWatcher, fakeClient *util.OVNNodeClientset, stopChan chan struct{}, wg *sync.WaitGroup) (*retry.RetryFramework, error) {
-	if err := initGatewayNFTables(); err != nil {
+	if err := initGatewayNFTables(context.Background()); err != nil {
 		return nil, err
 	}
 
@@ -287,7 +287,7 @@ var _ = Describe("Node Operations", func() {
 		It("removes stale nftables rules while keeping remaining intact", func() {
 			app.Action = func(*cli.Context) error {
 				// Create tables/chains/sets/etc
-				err := initGatewayNFTables()
+				err := initGatewayNFTables(context.Background())
 				Expect(err).NotTo(HaveOccurred())
 
 				// Depending on the order of informer event processing the initial
@@ -313,7 +313,7 @@ var _ = Describe("Node Operations", func() {
 				)
 
 				fakeRules := getExternalIPNFTRules(service.Spec.Ports[0], externalIP, service.Spec.ClusterIP, false, false)
-				Expect(nodenft.AddObjects(fakeRules)).To(Succeed())
+				Expect(nodenft.AddObjects(context.Background(), fakeRules)).To(Succeed())
 				fakeRules = getExternalIPNFTRules(
 					corev1.ServicePort{
 						Port:     27000,
@@ -325,7 +325,7 @@ var _ = Describe("Node Operations", func() {
 					false,
 					false,
 				)
-				Expect(nodenft.AddObjects(fakeRules)).To(Succeed())
+				Expect(nodenft.AddObjects(context.Background(), fakeRules)).To(Succeed())
 
 				expectedNFT := nftablesRulesBase + nftablesRulesGatewayServices
 				expectedNFT += "add element inet ovn-kubernetes external-ips-v4 { 1.1.1.1 . tcp . 8032 : 10.129.0.2 . 8032 }\n"

@@ -556,10 +556,10 @@ func TestUserDefinedNetworkGatewayReconcilesUplinkConfiguration(t *testing.T) {
 		udng, _, _ := newUplinkGatewayReconcileHarness(t, nil)
 		lister := &countingGatewayStateLister{UplinkStateLister: udng.uplinkStateLister}
 		udng.uplinkStateLister = lister
-		g.Expect(udng.Start()).To(Succeed())
+		g.Expect(udng.Start(context.Background())).To(Succeed())
 		g.Consistently(func() int32 { return lister.reads.Load() }, 150*time.Millisecond, 10*time.Millisecond).Should(Equal(int32(1)))
 		// Advertisement events must also wait for initial gateway programming.
-		g.Expect(udng.reconcileGateway(udng.GetNetworkName())).To(Succeed())
+		g.Expect(udng.reconcileGateway(context.Background(), udng.GetNetworkName())).To(Succeed())
 		state := resolvedGatewayUplinkState("uplink1", "node-a")
 		state.UID = "pending-state"
 		state.Status.Conditions[0].Status = metav1.ConditionFalse
@@ -596,7 +596,7 @@ func TestUserDefinedNetworkGatewayReconcilesUplinkConfiguration(t *testing.T) {
 		cleanupErr := errors.New("cleanup failed")
 		netlinkOps.On("LinkByName", util.GetNetworkVRFName(udng.NetInfo)).Return(nil, cleanupErr).Once()
 		netlinkOps.On("IsLinkNotFoundError", cleanupErr).Return(false).Once()
-		err := udng.reconcileUplinkState(uplinkutil.StateName("uplink1", "node-a"))
+		err := udng.reconcileUplinkState(context.Background(), uplinkutil.StateName("uplink1", "node-a"))
 		if err == nil || !strings.Contains(err.Error(), cleanupErr.Error()) {
 			t.Fatalf("expected retryable cleanup error, got %v", err)
 		}
@@ -612,7 +612,7 @@ func TestUserDefinedNetworkGatewayReconcilesUplinkConfiguration(t *testing.T) {
 		expectMissingGatewayVRF(netlinkOps, udnGateway)
 
 		_, observedFingerprint, err :=
-			udnGateway.reconcileUplinkConfiguration()
+			udnGateway.reconcileUplinkConfiguration(context.Background())
 		if err == nil || uplinkGatewayFailureReason(err) !=
 			uplinkv1alpha1.UplinkStateReasonGatewayProgrammingFailed {
 			t.Fatalf("unexpected unresolved result: %v", err)
@@ -646,7 +646,7 @@ func TestUserDefinedNetworkGatewayReconcilesUplinkConfiguration(t *testing.T) {
 			Return(nil, withdrawErr).Once()
 		netlinkOps.On("IsLinkNotFoundError", withdrawErr).Return(false).Once()
 
-		_, _, err := udnGateway.reconcileUplinkConfiguration()
+		_, _, err := udnGateway.reconcileUplinkConfiguration(context.Background())
 		if err == nil || !strings.Contains(err.Error(), withdrawErr.Error()) ||
 			uplinkGatewayFailureReason(err) !=
 				uplinkv1alpha1.UplinkStateReasonGatewayProgrammingFailed {
@@ -679,7 +679,7 @@ func TestUserDefinedNetworkGatewayReconcilesUplinkConfiguration(t *testing.T) {
 		addErr := errors.New("management port lookup failed")
 		nodeLister.On("Get", "node-a").Return(nil, addErr).Once()
 
-		_, _, err := udnGateway.reconcileUplinkConfiguration()
+		_, _, err := udnGateway.reconcileUplinkConfiguration(context.Background())
 		if err == nil || !strings.Contains(err.Error(), addErr.Error()) {
 			t.Fatalf("partial programming was not rebuilt: %v", err)
 		}
@@ -697,7 +697,7 @@ func TestUserDefinedNetworkGatewayReconcilesUplinkConfiguration(t *testing.T) {
 			Return(nil, cleanupErr).Once()
 		netlinkOps.On("IsLinkNotFoundError", cleanupErr).Return(false).Once()
 
-		if err := udnGateway.Cleanup(); err == nil || !strings.Contains(err.Error(), cleanupErr.Error()) {
+		if err := udnGateway.Cleanup(context.Background()); err == nil || !strings.Contains(err.Error(), cleanupErr.Error()) {
 			t.Fatalf("unexpected cleanup result: %v", err)
 		}
 
@@ -724,7 +724,7 @@ func TestUserDefinedNetworkGatewayReconcilesUplinkConfiguration(t *testing.T) {
 		udnGateway.uplinkFingerprint = current
 
 		// No netlink expectation is set: any teardown or setup call fails.
-		if _, _, err := udnGateway.reconcileUplinkConfiguration(); err != nil {
+		if _, _, err := udnGateway.reconcileUplinkConfiguration(context.Background()); err != nil {
 			t.Fatalf("changed default gateways failed: %v", err)
 		}
 		if !udnGateway.uplinkGatewayCleanupRequired {
@@ -767,7 +767,7 @@ func TestUserDefinedNetworkGatewayReconcilesUplinkConfiguration(t *testing.T) {
 		netlinkOps.On("LinkByName", util.GetNetworkVRFName(udnGateway.NetInfo)).
 			Return(nil, updateErr).Once()
 
-		_, _, err := udnGateway.reconcileUplinkConfiguration()
+		_, _, err := udnGateway.reconcileUplinkConfiguration(context.Background())
 		if err == nil || !strings.Contains(err.Error(), updateErr.Error()) ||
 			uplinkGatewayFailureReason(err) !=
 				uplinkv1alpha1.UplinkStateReasonGatewayProgrammingFailed {
@@ -791,7 +791,7 @@ func TestUserDefinedNetworkGatewayReconcilesUplinkConfiguration(t *testing.T) {
 		udnGateway.uplinkStateUID = "old-uid"
 		udnGateway.uplinkFingerprint = current
 
-		if _, _, err := udnGateway.reconcileUplinkConfiguration(); err != nil {
+		if _, _, err := udnGateway.reconcileUplinkConfiguration(context.Background()); err != nil {
 			t.Fatalf("unchanged configuration failed: %v", err)
 		}
 		if !udnGateway.uplinkGatewayCleanupRequired || udnGateway.uplinkFingerprint != current {
@@ -810,7 +810,7 @@ func TestUserDefinedNetworkGatewayReconcilesUplinkConfiguration(t *testing.T) {
 		udnGateway.uplinkStateUID = "old-uid"
 		udnGateway.uplinkFingerprint = uplinkGatewayFingerprintFromState(state)
 
-		if err := udnGateway.reconcileGateway(udnGateway.GetNetworkName()); err == nil {
+		if err := udnGateway.reconcileGateway(context.Background(), udnGateway.GetNetworkName()); err == nil {
 			t.Fatal("expected advertisement reconciliation to fail without bridge configuration")
 		}
 
@@ -836,7 +836,7 @@ func TestUserDefinedNetworkGatewayReconcilesUplinkConfiguration(t *testing.T) {
 		addErr := errors.New("management port lookup failed")
 		nodeLister.On("Get", "node-a").Return(nil, addErr).Once()
 
-		_, _, err := udnGateway.reconcileUplinkConfiguration()
+		_, _, err := udnGateway.reconcileUplinkConfiguration(context.Background())
 		if err == nil || !strings.Contains(err.Error(), addErr.Error()) {
 			t.Fatalf("replacement did not reach gateway programming: %v", err)
 		}
@@ -851,7 +851,7 @@ func TestUserDefinedNetworkGatewayReconcilesUplinkConfiguration(t *testing.T) {
 			t.Fatalf("failed replacement retained UID: %s",
 				udnGateway.uplinkStateUID)
 		}
-		if err := udnGateway.reconcileGateway(udnGateway.GetNetworkName()); err != nil {
+		if err := udnGateway.reconcileGateway(context.Background(), udnGateway.GetNetworkName()); err != nil {
 			t.Fatalf("advertisement reconciliation did not wait for replacement to succeed: %v", err)
 		}
 	})
@@ -863,7 +863,7 @@ func TestUserDefinedNetworkGatewayReconcilesUplinkConfiguration(t *testing.T) {
 		nodeLister.On("Get", "node-a").Return(nil, addErr).Once()
 
 		_, observedFingerprint, err :=
-			udnGateway.reconcileUplinkConfiguration()
+			udnGateway.reconcileUplinkConfiguration(context.Background())
 		if err == nil || !strings.Contains(err.Error(), addErr.Error()) {
 			t.Fatalf("initial reconciliation did not reach gateway programming: %v", err)
 		}
@@ -877,7 +877,7 @@ func TestUserDefinedNetworkGatewayReconcilesUplinkConfiguration(t *testing.T) {
 		if observedFingerprint != uplinkGatewayFingerprintFromState(state) {
 			t.Fatal("failed programming did not produce a status fingerprint")
 		}
-		if err := udnGateway.reconcileGateway(udnGateway.GetNetworkName()); err != nil {
+		if err := udnGateway.reconcileGateway(context.Background(), udnGateway.GetNetworkName()); err != nil {
 			t.Fatalf("advertisement reconciliation did not wait for initial programming to succeed: %v", err)
 		}
 	})
@@ -1446,7 +1446,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		mgtPortMAC = util.IPAddrToHWAddr(util.GetNodeManagementIfAddr(ipNet).IP).String()
 		getCreationFakeCommands(fexec, mgtPort, mgtPortMAC, netName, nodeName, netInfo.MTU())
 		nodeLister.On("Get", mock.AnythingOfType("string")).Return(node, nil)
-		factoryMock.On("GetNodeForWindows", "worker1").Return(node, nil)
+		factoryMock.On("GetNodeForWindows", mock.Anything, "worker1").Return(node, nil)
 
 		err = testNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
@@ -1497,7 +1497,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		Expect(err).NotTo(HaveOccurred())
 		getDeletionFakeOVSCommands(fexec, mgtPort)
 		nodeLister.On("Get", mock.AnythingOfType("string")).Return(node, nil)
-		factoryMock.On("GetNodeForWindows", "worker1").Return(node, nil)
+		factoryMock.On("GetNodeForWindows", mock.Anything, "worker1").Return(node, nil)
 		err = testNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
 			ofm := getDummyOpenflowManager()
@@ -1536,7 +1536,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		mgtPortMAC = util.IPAddrToHWAddr(util.GetNodeManagementIfAddr(ipNet).IP).String()
 		getCreationFakeCommands(fexec, mgtPort, mgtPortMAC, netName, nodeName, netInfo.MTU())
 		nodeLister.On("Get", mock.AnythingOfType("string")).Return(node, nil)
-		factoryMock.On("GetNodeForWindows", "worker1").Return(node, nil)
+		factoryMock.On("GetNodeForWindows", mock.Anything, "worker1").Return(node, nil)
 		err = testNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
 			ofm := getDummyOpenflowManager()
@@ -1586,7 +1586,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		Expect(err).NotTo(HaveOccurred())
 		getDeletionFakeOVSCommands(fexec, mgtPort)
 		nodeLister.On("Get", mock.AnythingOfType("string")).Return(node, nil)
-		factoryMock.On("GetNodeForWindows", "worker1").Return(node, nil)
+		factoryMock.On("GetNodeForWindows", mock.Anything, "worker1").Return(node, nil)
 		err = testNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
 			ofm := getDummyOpenflowManager()
@@ -1680,7 +1680,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 				VLANID:      ptr.To(uint(0)),
 			}}).Return(nil)
 		nodeAnnotatorMock.On("Set", mock.Anything, mock.Anything).Return(nil)
-		nodeAnnotatorMock.On("Run").Return(nil)
+		nodeAnnotatorMock.On("Run", mock.Anything).Return(nil)
 		kubeMock.On("SetAnnotationsOnNode", mock.Anything, node.Name, map[string]interface{}{
 			"k8s.ovn.org/node-masquerade-subnet": "{\"ipv4\":\"169.254.0.0/17\",\"ipv6\":\"fd69::/112\"}",
 		}).Return(nil)
@@ -1716,7 +1716,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			// make preparations for creating openflow manager in DNCC which can be used for SNCC
-			localGw, err := newGateway(
+			localGw, err := newGateway(context.Background(),
 				nodeName,
 				nodeSubnets,
 				gatewayNextHops,
@@ -1774,7 +1774,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			Expect(udnGateway.openflowManager.defaultBridge.GetNetConfigLen()).To(Equal(1)) // only default network
 
 			addOVSPatchPortInterface(ovsClient, "breth0", "patch-breth0_bluenet_worker1-to-br-int", 15)
-			Expect(udnGateway.Start()).To(Succeed())
+			Expect(udnGateway.Start(context.Background())).To(Succeed())
 
 			flowMap = udnGateway.gateway.openflowManager.defaultBridge.flowCache
 			udnDefaultFlows := 22
@@ -1812,7 +1812,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			openflowManagerCheckPorts(udnGateway.openflowManager)
 
 			udnGateway.Stop()
-			Expect(udnGateway.Cleanup()).To(Succeed())
+			Expect(udnGateway.Cleanup(context.Background())).To(Succeed())
 			flowMap = udnGateway.gateway.openflowManager.defaultBridge.flowCache
 			Expect(flowMap["DEFAULT"]).To(HaveLen(baseFlowCount))
 			Expect(udnGateway.openflowManager.defaultBridge.GetNetConfigLen()).To(Equal(1)) // default network only
@@ -1916,7 +1916,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 				VLANID:      ptr.To(uint(0)),
 			}}).Return(nil)
 		nodeAnnotatorMock.On("Set", mock.Anything, mock.Anything).Return(nil)
-		nodeAnnotatorMock.On("Run").Return(nil)
+		nodeAnnotatorMock.On("Run", mock.Anything).Return(nil)
 		kubeMock.On("SetAnnotationsOnNode", mock.Anything, node.Name, map[string]interface{}{
 			"k8s.ovn.org/node-masquerade-subnet": "{\"ipv4\":\"169.254.0.0/17\",\"ipv6\":\"fd69::/112\"}",
 		}).Return(nil)
@@ -1952,7 +1952,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			// make preparations for creating openflow manager in DNCC which can be used for SNCC
-			localGw, err := newGateway(
+			localGw, err := newGateway(context.Background(),
 				nodeName,
 				nodeSubnets,
 				gatewayNextHops,
@@ -2015,7 +2015,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			Expect(udnGateway.openflowManager.defaultBridge.GetNetConfigLen()).To(Equal(1)) // only default network
 			By("Deleting the gateway network with injected error")
 			udnGateway.Stop()
-			err = udnGateway.Cleanup()
+			err = udnGateway.Cleanup(context.Background())
 			Expect(err).To(MatchError(ContainSubstring("fake delete metadata error")))
 			By("Ensuring everything else was still cleaned up correctly")
 			flowMap = udnGateway.gateway.openflowManager.defaultBridge.flowCache
@@ -2118,7 +2118,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 				VLANID:      ptr.To(uint(0)),
 			}}).Return(nil)
 		nodeAnnotatorMock.On("Set", mock.Anything, mock.Anything).Return(nil)
-		nodeAnnotatorMock.On("Run").Return(nil)
+		nodeAnnotatorMock.On("Run", mock.Anything).Return(nil)
 		kubeMock.On("SetAnnotationsOnNode", mock.Anything, node.Name, map[string]interface{}{
 			"k8s.ovn.org/node-masquerade-subnet": "{\"ipv4\":\"169.254.0.0/17\",\"ipv6\":\"fd69::/112\"}",
 		}).Return(nil)
@@ -2149,7 +2149,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			// make preparations for creating openflow manager in DNCC which can be used for SNCC
-			localGw, err := newGateway(
+			localGw, err := newGateway(context.Background(),
 				nodeName,
 				ovntest.MustParseIPNets(v4NodeSubnet, v6NodeSubnet),
 				gatewayNextHops,
@@ -2205,7 +2205,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			Expect(udnGateway.openflowManager.defaultBridge.GetNetConfigLen()).To(Equal(1)) // only default network
 
 			addOVSPatchPortInterface(ovsClient, "breth0", "patch-breth0_bluenet_worker1-to-br-int", 15)
-			Expect(udnGateway.Start()).To(Succeed())
+			Expect(udnGateway.Start(context.Background())).To(Succeed())
 
 			flowMap = udnGateway.gateway.openflowManager.defaultBridge.flowCache
 			udnDefaultFlows := 22
@@ -2243,7 +2243,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			openflowManagerCheckPorts(udnGateway.openflowManager)
 
 			udnGateway.Stop()
-			Expect(udnGateway.Cleanup()).To(Succeed())
+			Expect(udnGateway.Cleanup(context.Background())).To(Succeed())
 			flowMap = udnGateway.gateway.openflowManager.defaultBridge.flowCache
 			Expect(flowMap["DEFAULT"]).To(HaveLen(baseFlowCount))
 			Expect(udnGateway.openflowManager.defaultBridge.GetNetConfigLen()).To(Equal(1)) // default network only
@@ -2281,7 +2281,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		config.Gateway.NodeportEnable = true
 		config.OVNKubernetesFeature.EnableMultiNetwork = true
 		config.OVNKubernetesFeature.EnableRouteAdvertisements = true
-		Expect(configureAdvertisedUDNIsolationNFTables()).To(Succeed())
+		Expect(configureAdvertisedUDNIsolationNFTables(context.Background())).To(Succeed())
 		ifAddrs := ovntest.MustParseIPNets(v4NodeIP, v6NodeIP)
 		node := &corev1.Node{
 			ObjectMeta: metav1.ObjectMeta{
@@ -2355,7 +2355,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 				VLANID:      ptr.To(uint(0)),
 			}}).Return(nil)
 		nodeAnnotatorMock.On("Set", mock.Anything, mock.Anything).Return(nil)
-		nodeAnnotatorMock.On("Run").Return(nil)
+		nodeAnnotatorMock.On("Run", mock.Anything).Return(nil)
 		kubeMock.On("SetAnnotationsOnNode", mock.Anything, node.Name, map[string]interface{}{
 			"k8s.ovn.org/node-masquerade-subnet": "{\"ipv4\":\"169.254.0.0/17\",\"ipv6\":\"fd69::/112\"}",
 		}).Return(nil)
@@ -2391,7 +2391,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			// make preparations for creating openflow manager in DNCC which can be used for SNCC
-			localGw, err := newGateway(
+			localGw, err := newGateway(context.Background(),
 				nodeName,
 				nodeSubnets,
 				gatewayNextHops,
@@ -2449,7 +2449,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			Expect(udnGateway.openflowManager.defaultBridge.GetNetConfigLen()).To(Equal(1)) // only default network
 
 			addOVSPatchPortInterface(ovsClient, "breth0", "patch-breth0_bluenet_worker1-to-br-int", 15)
-			Expect(udnGateway.Start()).To(Succeed())
+			Expect(udnGateway.Start(context.Background())).To(Succeed())
 
 			flowMap = udnGateway.gateway.openflowManager.defaultBridge.flowCache
 			udnDefaultFlows := 22
@@ -2491,7 +2491,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 			openflowManagerCheckPorts(udnGateway.openflowManager)
 
 			udnGateway.Stop()
-			Expect(udnGateway.Cleanup()).To(Succeed())
+			Expect(udnGateway.Cleanup(context.Background())).To(Succeed())
 			flowMap = udnGateway.gateway.openflowManager.defaultBridge.flowCache
 			Expect(flowMap["DEFAULT"]).To(HaveLen(baseFlowCount))
 			Expect(udnGateway.openflowManager.defaultBridge.GetNetConfigLen()).To(Equal(1)) // default network only
@@ -3125,7 +3125,7 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		// network manager may have a different implementation that fake network manager but both will return the same error.
 		fNPW.networkManager = &networkmanager.FakeNetworkManager{PrimaryNetworks: map[string]util.NetInfo{namespace.Name: nil}}
 		services := append([]interface{}{}, service)
-		Expect(fNPW.SyncServices(services)).NotTo(HaveOccurred(), "must sync services")
+		Expect(fNPW.SyncServices(context.Background(), services)).NotTo(HaveOccurred(), "must sync services")
 	})
 })
 
@@ -3940,7 +3940,7 @@ func TestUserDefinedNetworkGateway_updateAdvertisedUDNIsolationRules(t *testing.
 			netInfo, err := util.ParseNADInfo(tt.nad)
 			g.Expect(err).NotTo(HaveOccurred())
 
-			err = configureAdvertisedUDNIsolationNFTables()
+			err = configureAdvertisedUDNIsolationNFTables(context.Background())
 			g.Expect(err).ToNot(HaveOccurred())
 			tx := nft.NewTransaction()
 			for _, element := range tt.initialElements {
@@ -3954,7 +3954,7 @@ func TestUserDefinedNetworkGateway_updateAdvertisedUDNIsolationRules(t *testing.
 				NetInfo: netInfo,
 			}
 			udng.isNetworkAdvertised = tt.isNetworkAdvertised
-			err = udng.updateAdvertisedUDNIsolationRules()
+			err = udng.updateAdvertisedUDNIsolationRules(context.Background())
 			g.Expect(err).NotTo(HaveOccurred())
 
 			v4Elems, err := nft.ListElements(context.TODO(), "set", nftablesAdvertisedUDNsSetV4)

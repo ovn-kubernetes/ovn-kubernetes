@@ -169,11 +169,11 @@ var _ = Describe("Unidling Controller", func() {
 		_, err = client.CoreV1().Services("default").Create(context.Background(), svc, metav1.CreateOptions{})
 		Expect(err).NotTo(HaveOccurred())
 
-		err = kube.SetAnnotationsOnService("default", "svc1",
+		err = kube.SetAnnotationsOnService(context.Background(), "default", "svc1",
 			map[string]interface{}{"k8s.ovn.org/idled-at": "2023-02-06T13:48:49Z"})
 		Expect(err).ToNot(HaveOccurred())
 
-		err = kube.SetAnnotationsOnService("default", "svc1",
+		err = kube.SetAnnotationsOnService(context.Background(), "default", "svc1",
 			map[string]interface{}{"k8s.ovn.org/idled-at": nil})
 		Expect(err).ToNot(HaveOccurred())
 

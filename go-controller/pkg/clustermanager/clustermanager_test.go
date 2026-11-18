@@ -206,7 +206,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 				for _, n := range nodes {
 					nodeAnnotator := kube.NewNodeAnnotator(&kube.Kube{KClient: kubeFakeClient}, n.Name)
 					util.DeleteNodeHostSubnetAnnotation(nodeAnnotator)
-					err = nodeAnnotator.Run()
+					err = nodeAnnotator.Run(context.Background())
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				}
 
@@ -381,7 +381,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 						gomega.Expect(nodeAnnotator.Set(k, v)).To(gomega.Succeed())
 					}
 					nodeAnnotator.Delete(hotypes.HybridOverlayNodeSubnet)
-					err = nodeAnnotator.Run()
+					err = nodeAnnotator.Run(context.Background())
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				}
 
@@ -730,7 +730,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 						gomega.Expect(nodeAnnotator.Set(k, v)).To(gomega.Succeed())
 					}
 					nodeAnnotator.Delete(ovnNodeIDAnnotaton)
-					err = nodeAnnotator.Run()
+					err = nodeAnnotator.Run(context.Background())
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				}
 
@@ -1641,7 +1641,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 				}
 				node1TransitSwitchIps := node1.Annotations[ovnTransitSwitchPortAddrAnnotation]
 				nodeAnnotator.Delete(ovnTransitSwitchPortAddrAnnotation)
-				err = nodeAnnotator.Run()
+				err = nodeAnnotator.Run(context.Background())
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				gomega.Eventually(func() error {

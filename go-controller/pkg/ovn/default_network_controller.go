@@ -1081,7 +1081,7 @@ func (h *defaultNetworkControllerEventHandler) AddResource(ctx context.Context, 
 		if !ok {
 			return fmt.Errorf("could not cast %T object to *corev1.Namespace", obj)
 		}
-		return h.oc.AddNamespace(ns)
+		return h.oc.AddNamespace(ctx, ns)
 
 	default:
 		return h.oc.AddResourceCommon(h.objType, obj)

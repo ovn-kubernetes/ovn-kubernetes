@@ -4,6 +4,7 @@
 package node
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"sync"
@@ -44,7 +45,7 @@ type Gateway interface {
 	SetDefaultGatewayBridgeMAC(addr net.HardwareAddr)
 	SetDefaultPodNetworkAdvertised(bool)
 	SetDefaultBridgeGARPDropFlows(bool)
-	Reconcile() error
+	Reconcile(context.Context) error
 }
 
 type gateway struct {
@@ -71,102 +72,102 @@ type gateway struct {
 	nextHops []net.IP
 }
 
-func (g *gateway) AddService(svc *corev1.Service) error {
+func (g *gateway) AddService(ctx context.Context, svc *corev1.Service) error {
 	var err error
 	var errors []error
 
 	if g.portClaimWatcher != nil {
-		if err = g.portClaimWatcher.AddService(svc); err != nil {
+		if err = g.portClaimWatcher.AddService(ctx, svc); err != nil {
 			errors = append(errors, err)
 		}
 	}
 	if g.loadBalancerHealthChecker != nil {
-		if err = g.loadBalancerHealthChecker.AddService(svc); err != nil {
+		if err = g.loadBalancerHealthChecker.AddService(ctx, svc); err != nil {
 			errors = append(errors, err)
 		}
 	}
 	if g.nodePortWatcher != nil {
-		if err = g.nodePortWatcher.AddService(svc); err != nil {
+		if err = g.nodePortWatcher.AddService(ctx, svc); err != nil {
 			errors = append(errors, err)
 		}
 	}
 	if g.nodePortWatcherNFTables != nil {
-		if err = g.nodePortWatcherNFTables.AddService(svc); err != nil {
+		if err = g.nodePortWatcherNFTables.AddService(ctx, svc); err != nil {
 			errors = append(errors, err)
 		}
 	}
 	return utilerrors.Join(errors...)
 }
 
-func (g *gateway) UpdateService(old, new *corev1.Service) error {
+func (g *gateway) UpdateService(ctx context.Context, old, new *corev1.Service) error {
 	var err error
 	var errors []error
 
 	if g.portClaimWatcher != nil {
-		if err = g.portClaimWatcher.UpdateService(old, new); err != nil {
+		if err = g.portClaimWatcher.UpdateService(ctx, old, new); err != nil {
 			errors = append(errors, err)
 		}
 	}
 	if g.loadBalancerHealthChecker != nil {
-		if err = g.loadBalancerHealthChecker.UpdateService(old, new); err != nil {
+		if err = g.loadBalancerHealthChecker.UpdateService(ctx, old, new); err != nil {
 			errors = append(errors, err)
 		}
 	}
 	if g.nodePortWatcher != nil {
-		if err = g.nodePortWatcher.UpdateService(old, new); err != nil {
+		if err = g.nodePortWatcher.UpdateService(ctx, old, new); err != nil {
 			errors = append(errors, err)
 		}
 	}
 	if g.nodePortWatcherNFTables != nil {
-		if err = g.nodePortWatcherNFTables.UpdateService(old, new); err != nil {
+		if err = g.nodePortWatcherNFTables.UpdateService(ctx, old, new); err != nil {
 			errors = append(errors, err)
 		}
 	}
 	return utilerrors.Join(errors...)
 }
 
-func (g *gateway) DeleteService(svc *corev1.Service) error {
+func (g *gateway) DeleteService(ctx context.Context, svc *corev1.Service) error {
 	var err error
 	var errors []error
 
 	if g.portClaimWatcher != nil {
-		if err = g.portClaimWatcher.DeleteService(svc); err != nil {
+		if err = g.portClaimWatcher.DeleteService(ctx, svc); err != nil {
 			errors = append(errors, err)
 		}
 	}
 	if g.loadBalancerHealthChecker != nil {
-		if err = g.loadBalancerHealthChecker.DeleteService(svc); err != nil {
+		if err = g.loadBalancerHealthChecker.DeleteService(ctx, svc); err != nil {
 			errors = append(errors, err)
 		}
 	}
 	if g.nodePortWatcher != nil {
-		if err = g.nodePortWatcher.DeleteService(svc); err != nil {
+		if err = g.nodePortWatcher.DeleteService(ctx, svc); err != nil {
 			errors = append(errors, err)
 		}
 	}
 	if g.nodePortWatcherNFTables != nil {
-		if err = g.nodePortWatcherNFTables.DeleteService(svc); err != nil {
+		if err = g.nodePortWatcherNFTables.DeleteService(ctx, svc); err != nil {
 			errors = append(errors, err)
 		}
 	}
 	return utilerrors.Join(errors...)
 }
 
-func (g *gateway) SyncServices(objs []interface{}) error {
+func (g *gateway) SyncServices(ctx context.Context, objs []interface{}) error {
 	var err error
 	klog.Infof("Starting gateway service sync")
 	start := time.Now()
 	if g.portClaimWatcher != nil {
-		err = g.portClaimWatcher.SyncServices(objs)
+		err = g.portClaimWatcher.SyncServices(ctx, objs)
 	}
 	if err == nil && g.loadBalancerHealthChecker != nil {
-		err = g.loadBalancerHealthChecker.SyncServices(objs)
+		err = g.loadBalancerHealthChecker.SyncServices(ctx, objs)
 	}
 	if err == nil && g.nodePortWatcher != nil {
-		err = g.nodePortWatcher.SyncServices(objs)
+		err = g.nodePortWatcher.SyncServices(ctx, objs)
 	}
 	if err == nil && g.nodePortWatcherNFTables != nil {
-		err = g.nodePortWatcherNFTables.SyncServices(objs)
+		err = g.nodePortWatcherNFTables.SyncServices(ctx, objs)
 	}
 	if err != nil {
 		return fmt.Errorf("gateway sync services failed: %v", err)
@@ -175,7 +176,7 @@ func (g *gateway) SyncServices(objs []interface{}) error {
 	return nil
 }
 
-func (g *gateway) AddEndpointSlice(epSlice *discovery.EndpointSlice) error {
+func (g *gateway) AddEndpointSlice(ctx context.Context, epSlice *discovery.EndpointSlice) error {
 	var err error
 	var errors []error
 
@@ -183,13 +184,13 @@ func (g *gateway) AddEndpointSlice(epSlice *discovery.EndpointSlice) error {
 		// Filter out objects without the default serviceName label to exclude mirrored EndpointSlices
 		// Only default EndpointSlices contain the discovery.LabelServiceName label
 		if !util.IsNetworkSegmentationSupportEnabled() || epSlice.Labels[discovery.LabelServiceName] != "" {
-			if err = g.loadBalancerHealthChecker.AddEndpointSlice(epSlice); err != nil {
+			if err = g.loadBalancerHealthChecker.AddEndpointSlice(ctx, epSlice); err != nil {
 				errors = append(errors, err)
 			}
 		}
 	}
 	if g.nodePortWatcher != nil {
-		if err = g.nodePortWatcher.AddEndpointSlice(epSlice); err != nil {
+		if err = g.nodePortWatcher.AddEndpointSlice(ctx, epSlice); err != nil {
 			errors = append(errors, err)
 		}
 	}
@@ -197,7 +198,7 @@ func (g *gateway) AddEndpointSlice(epSlice *discovery.EndpointSlice) error {
 
 }
 
-func (g *gateway) UpdateEndpointSlice(oldEpSlice, newEpSlice *discovery.EndpointSlice) error {
+func (g *gateway) UpdateEndpointSlice(ctx context.Context, oldEpSlice, newEpSlice *discovery.EndpointSlice) error {
 	var err error
 	var errors []error
 
@@ -205,13 +206,13 @@ func (g *gateway) UpdateEndpointSlice(oldEpSlice, newEpSlice *discovery.Endpoint
 		// Filter out objects without the default serviceName label to exclude mirrored EndpointSlices
 		// Only default EndpointSlices contain the discovery.LabelServiceName label
 		if !util.IsNetworkSegmentationSupportEnabled() || newEpSlice.Labels[discovery.LabelServiceName] != "" {
-			if err = g.loadBalancerHealthChecker.UpdateEndpointSlice(oldEpSlice, newEpSlice); err != nil {
+			if err = g.loadBalancerHealthChecker.UpdateEndpointSlice(ctx, oldEpSlice, newEpSlice); err != nil {
 				errors = append(errors, err)
 			}
 		}
 	}
 	if g.nodePortWatcher != nil {
-		if err = g.nodePortWatcher.UpdateEndpointSlice(oldEpSlice, newEpSlice); err != nil {
+		if err = g.nodePortWatcher.UpdateEndpointSlice(ctx, oldEpSlice, newEpSlice); err != nil {
 			errors = append(errors, err)
 		}
 	}
@@ -219,7 +220,7 @@ func (g *gateway) UpdateEndpointSlice(oldEpSlice, newEpSlice *discovery.Endpoint
 
 }
 
-func (g *gateway) DeleteEndpointSlice(epSlice *discovery.EndpointSlice) error {
+func (g *gateway) DeleteEndpointSlice(ctx context.Context, epSlice *discovery.EndpointSlice) error {
 	var err error
 	var errors []error
 
@@ -227,13 +228,13 @@ func (g *gateway) DeleteEndpointSlice(epSlice *discovery.EndpointSlice) error {
 		// Filter out objects without the default serviceName label to exclude mirrored EndpointSlices
 		// Only default EndpointSlices contain the discovery.LabelServiceName label
 		if !util.IsNetworkSegmentationSupportEnabled() || epSlice.Labels[discovery.LabelServiceName] != "" {
-			if err = g.loadBalancerHealthChecker.DeleteEndpointSlice(epSlice); err != nil {
+			if err = g.loadBalancerHealthChecker.DeleteEndpointSlice(ctx, epSlice); err != nil {
 				errors = append(errors, err)
 			}
 		}
 	}
 	if g.nodePortWatcher != nil {
-		if err = g.nodePortWatcher.DeleteEndpointSlice(epSlice); err != nil {
+		if err = g.nodePortWatcher.DeleteEndpointSlice(ctx, epSlice); err != nil {
 			errors = append(errors, err)
 		}
 	}
@@ -251,62 +252,62 @@ func canHandleBridgeEgressIP() bool {
 		(config.IsModeDPU() || config.IsModeFull())
 }
 
-func (g *gateway) AddEgressIP(eip *egressipv1.EgressIP) error {
+func (g *gateway) AddEgressIP(ctx context.Context, eip *egressipv1.EgressIP) error {
 	if !canHandleBridgeEgressIP() {
 		return nil
 	}
-	isSyncRequired, err := g.bridgeEIPAddrManager.AddEgressIP(eip)
+	isSyncRequired, err := g.bridgeEIPAddrManager.AddEgressIP(ctx, eip)
 	if err != nil {
 		return err
 	}
 	if isSyncRequired {
-		if err = g.Reconcile(); err != nil {
+		if err = g.Reconcile(ctx); err != nil {
 			return fmt.Errorf("failed to sync gateway: %v", err)
 		}
 	}
 	return nil
 }
 
-func (g *gateway) UpdateEgressIP(oldEIP, newEIP *egressipv1.EgressIP) error {
+func (g *gateway) UpdateEgressIP(ctx context.Context, oldEIP, newEIP *egressipv1.EgressIP) error {
 	if !canHandleBridgeEgressIP() {
 		return nil
 	}
-	isSyncRequired, err := g.bridgeEIPAddrManager.UpdateEgressIP(oldEIP, newEIP)
+	isSyncRequired, err := g.bridgeEIPAddrManager.UpdateEgressIP(ctx, oldEIP, newEIP)
 	if err != nil {
 		return err
 	}
 	if isSyncRequired {
-		if err = g.Reconcile(); err != nil {
+		if err = g.Reconcile(ctx); err != nil {
 			return fmt.Errorf("failed to sync gateway: %v", err)
 		}
 	}
 	return nil
 }
 
-func (g *gateway) DeleteEgressIP(eip *egressipv1.EgressIP) error {
+func (g *gateway) DeleteEgressIP(ctx context.Context, eip *egressipv1.EgressIP) error {
 	if !canHandleBridgeEgressIP() {
 		return nil
 	}
-	isSyncRequired, err := g.bridgeEIPAddrManager.DeleteEgressIP(eip)
+	isSyncRequired, err := g.bridgeEIPAddrManager.DeleteEgressIP(ctx, eip)
 	if err != nil {
 		return err
 	}
 	if isSyncRequired {
-		if err = g.Reconcile(); err != nil {
+		if err = g.Reconcile(ctx); err != nil {
 			return fmt.Errorf("failed to sync gateway: %v", err)
 		}
 	}
 	return nil
 }
 
-func (g *gateway) SyncEgressIP(eips []interface{}) error {
+func (g *gateway) SyncEgressIP(ctx context.Context, eips []interface{}) error {
 	if !canHandleBridgeEgressIP() {
 		return nil
 	}
-	if err := g.bridgeEIPAddrManager.SyncEgressIP(eips); err != nil {
+	if err := g.bridgeEIPAddrManager.SyncEgressIP(ctx, eips); err != nil {
 		return err
 	}
-	if err := g.Reconcile(); err != nil {
+	if err := g.Reconcile(ctx); err != nil {
 		return fmt.Errorf("failed to sync gateway: %v", err)
 	}
 	return nil
@@ -540,16 +541,16 @@ func (g *gateway) SetDefaultBridgeGARPDropFlows(isDropped bool) {
 // OFM and Services, in response to a change with cluster-wide reach (node IP/MAC
 // change, EgressIP, default-network advertised change, init). It resyncs every
 // service because any service's flows may be affected.
-func (g *gateway) Reconcile() error {
-	return g.reconcile(g.resyncAllServices)
+func (g *gateway) Reconcile(ctx context.Context) error {
+	return g.reconcile(ctx, g.resyncAllServices)
 }
 
 // ReconcileNetwork rebuilds the shared bridge flows after a primary UDN is added
 // and resyncs only that network's namespaces' services. Advertised-state changes
 // must go through UserDefinedNetworkGateway.Reconcile (reconcileAdvertisedState),
 // not this.
-func (g *gateway) ReconcileNetwork(netInfo util.NetInfo) error {
-	return g.reconcile(func() []error {
+func (g *gateway) ReconcileNetwork(ctx context.Context, netInfo util.NetInfo) error {
+	return g.reconcile(ctx, func() []error {
 		return g.resyncNetworkServices(netInfo)
 	})
 }
@@ -560,13 +561,13 @@ func (g *gateway) ReconcileNetwork(netInfo util.NetInfo) error {
 // is immutable), so the removed network's services are either already gone (their own
 // delete events clean their per-service flows) or their namespace still carries the
 // label with no NAD, leaving them with no valid network to reprogram onto.
-func (g *gateway) ReconcileNetworkRemoval() error {
-	return g.reconcile(nil)
+func (g *gateway) ReconcileNetworkRemoval(ctx context.Context) error {
+	return g.reconcile(ctx, nil)
 }
 
 // reconcile refreshes the gateway's OpenFlow/SNAT state and, if syncServices is
 // non-nil, resyncs the selected services through the retry framework.
-func (g *gateway) reconcile(syncServices func() []error) error {
+func (g *gateway) reconcile(ctx context.Context, syncServices func() []error) error {
 	klog.Info("Reconciling gateway with updates")
 	if config.IsModeDPU() || config.IsModeFull() {
 		if g.openflowManager != nil {
@@ -581,10 +582,10 @@ func (g *gateway) reconcile(syncServices func() []error) error {
 			}
 		}
 	}
-	// TBD updateSNATRules() gets node host-cidr by accessing gateway.nodeIPManager, which does not
+	// TBD updateSNATRules(ctx) gets node host-cidr by accessing gateway.nodeIPManager, which does not
 	// exist in dpu-host mode.
 	if config.IsModeFull() {
-		err := g.updateSNATRules()
+		err := g.updateSNATRules(ctx)
 		if err != nil {
 			return err
 		}
@@ -645,9 +646,9 @@ func (g *gateway) resyncServices(svcs []*corev1.Service) []error {
 	return errs
 }
 
-func (g *gateway) updateSNATRules() error {
+func (g *gateway) updateSNATRules(ctx context.Context) error {
 	if config.Gateway.Mode != config.GatewayModeLocal {
-		return delLocalGatewayPodSubnetNFTRules()
+		return delLocalGatewayPodSubnetNFTRules(ctx)
 	}
 
 	if g.nodeIPManager == nil {
@@ -660,5 +661,5 @@ func (g *gateway) updateSNATRules() error {
 	}
 	subnets := util.IPsToNetworkIPs(g.nodeIPManager.mgmtPort.GetAddresses()...)
 
-	return addOrUpdateLocalGatewayPodSubnetNFTRules(g.GetDefaultPodNetworkAdvertised(), subnets...)
+	return addOrUpdateLocalGatewayPodSubnetNFTRules(ctx, g.GetDefaultPodNetworkAdvertised(), subnets...)
 }

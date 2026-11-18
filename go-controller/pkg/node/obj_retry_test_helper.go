@@ -85,11 +85,11 @@ func (h *nodePortWatcherEventHandler) GetResourceFromInformerCache(key string) (
 // Given a *RetryFramework instance, an object to add and a boolean specifying if the function was executed from
 // iterateRetryResources, AddResource adds the specified object to the cluster according to its type and
 // returns the error, if any, yielded during object creation.
-func (h *nodePortWatcherEventHandler) AddResource(_ context.Context, obj interface{}, _ bool) error {
+func (h *nodePortWatcherEventHandler) AddResource(ctx context.Context, obj interface{}, _ bool) error {
 	switch h.objType {
 	case factory.ServiceForFakeNodePortWatcherType:
 		svc := obj.(*corev1.Service)
-		return h.n.AddService(svc)
+		return h.n.AddService(ctx, svc)
 
 	default:
 		return fmt.Errorf("no add function for object type %s", h.objType)
@@ -99,12 +99,12 @@ func (h *nodePortWatcherEventHandler) AddResource(_ context.Context, obj interfa
 // Given a *RetryFramework instance, an old and a new object, UpdateResource updates the specified object in the cluster
 // to its version in newObj according to its type and returns the error, if any, yielded during the object update.
 // The inRetryCache boolean argument is to indicate if the given resource is in the retryCache or not.
-func (h *nodePortWatcherEventHandler) UpdateResource(_ context.Context, oldObj, newObj interface{}, _ bool) error {
+func (h *nodePortWatcherEventHandler) UpdateResource(ctx context.Context, oldObj, newObj interface{}, _ bool) error {
 	switch h.objType {
 	case factory.ServiceForFakeNodePortWatcherType:
 		oldSvc := oldObj.(*corev1.Service)
 		newSvc := newObj.(*corev1.Service)
-		return h.n.UpdateService(oldSvc, newSvc)
+		return h.n.UpdateService(ctx, oldSvc, newSvc)
 
 	default:
 		return fmt.Errorf("no update function for object type %s", h.objType)
@@ -114,11 +114,11 @@ func (h *nodePortWatcherEventHandler) UpdateResource(_ context.Context, oldObj, 
 // Given a *RetryFramework instance, an object and optionally a cachedObj, DeleteResource deletes the object from the cluster
 // according to the delete logic of its resource type. cachedObj is the internal cache entry for this object,
 // used for now for pods and network policies.
-func (h *nodePortWatcherEventHandler) DeleteResource(_ context.Context, obj, _ interface{}) error {
+func (h *nodePortWatcherEventHandler) DeleteResource(ctx context.Context, obj, _ interface{}) error {
 	switch h.objType {
 	case factory.ServiceForFakeNodePortWatcherType:
 		svc := obj.(*corev1.Service)
-		return h.n.DeleteService(svc)
+		return h.n.DeleteService(ctx, svc)
 
 	default:
 		return fmt.Errorf("no delete function for object type %s", h.objType)

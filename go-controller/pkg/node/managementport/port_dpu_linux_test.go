@@ -7,6 +7,7 @@
 package managementport
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -448,7 +449,7 @@ var _ = Describe("Mananagement port DPU tests", func() {
 				hostSubnets: []*net.IPNet{ipnet},
 				netInfo:     netInfoMock,
 			}
-			Expect(SetupManagementPortNFTSets()).To(Succeed())
+			Expect(SetupManagementPortNFTSets(context.Background())).To(Succeed())
 			mgmtPort := newManagementPortNetdev(deviceID, cfg, nil, ovsClient)
 			linkMock := &mocks.Link{}
 			linkMock.On("Attrs").Return(&netlink.LinkAttrs{
@@ -477,7 +478,7 @@ var _ = Describe("Mananagement port DPU tests", func() {
 				hostSubnets: []*net.IPNet{ipnet},
 				netInfo:     netInfoMock,
 			}
-			Expect(SetupManagementPortNFTSets()).To(Succeed())
+			Expect(SetupManagementPortNFTSets(context.Background())).To(Succeed())
 			mgmtPort := newManagementPortNetdev(deviceID, cfg, nil, ovsClient)
 			linkMock := &mocks.Link{}
 			linkMock.On("Attrs").Return(&netlink.LinkAttrs{

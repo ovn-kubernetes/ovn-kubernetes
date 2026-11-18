@@ -67,14 +67,14 @@ func doesStatusNeedAnUpdate(existingCondition *metav1.Condition, newCondition me
 
 // updateANPStatusToReady updates the status of the policy to reflect that it is ready
 // Each zone's ovnkube-controller will call this, hence let's update status using server-side-apply
-func (c *Controller) updateANPStatusToReady(anpName string) error {
+func (c *Controller) updateANPStatusToReady(ctx context.Context, anpName string) error {
 	readyCondition := metav1.Condition{
 		Type:    policyReadyStatusType + c.nodeName,
 		Status:  metav1.ConditionTrue,
 		Reason:  policyReadyReason,
 		Message: "Setting up OVN DB plumbing was successful",
 	}
-	err := c.updateANPZoneStatusCondition(readyCondition, anpName)
+	err := c.updateANPZoneStatusCondition(ctx, readyCondition, anpName)
 	if err != nil {
 		return fmt.Errorf("unable to update the status of ANP %s, err: %v", anpName, err)
 	}
@@ -86,7 +86,7 @@ func (c *Controller) updateANPStatusToReady(anpName string) error {
 // status.message must be less than 32768 characters and is usually the error that occurred which is passed
 // to this function. Message is particularly useful as it can tell which zone's setup has not finished for
 // this ANP instead of having to manually check logs across zones
-func (c *Controller) updateANPStatusToNotReady(anpName, message string) error {
+func (c *Controller) updateANPStatusToNotReady(ctx context.Context, anpName, message string) error {
 	if len(message) >= 32767 { // max length of message can be 32768
 		message = message[:32766]
 	}
@@ -96,14 +96,14 @@ func (c *Controller) updateANPStatusToNotReady(anpName, message string) error {
 		Reason:  policyNotReadyReason,
 		Message: message,
 	}
-	err := c.updateANPZoneStatusCondition(notReadyCondition, anpName)
+	err := c.updateANPZoneStatusCondition(ctx, notReadyCondition, anpName)
 	if err != nil {
 		return fmt.Errorf("unable update the status of ANP %s, err: %v", anpName, err)
 	}
 	return nil
 }
 
-func (c *Controller) updateANPZoneStatusCondition(newCondition metav1.Condition, anpName string) error {
+func (c *Controller) updateANPZoneStatusCondition(ctx context.Context, newCondition metav1.Condition, anpName string) error {
 	anp, err := c.anpLister.Get(anpName)
 	if err != nil {
 		return err
@@ -127,7 +127,7 @@ func (c *Controller) updateANPZoneStatusCondition(newCondition metav1.Condition,
 	applyObj := anpapiapply.AdminNetworkPolicy(anpName).
 		WithStatus(anpapiapply.AdminNetworkPolicyStatus().WithConditions(newCondition))
 	_, err = c.anpClientSet.PolicyV1alpha1().AdminNetworkPolicies().
-		ApplyStatus(context.TODO(), applyObj, metav1.ApplyOptions{FieldManager: c.nodeName, Force: true})
+		ApplyStatus(ctx, applyObj, metav1.ApplyOptions{FieldManager: c.nodeName, Force: true})
 	if err == nil {
 		klog.V(5).Infof("Patched the status of ANP %s with condition type %s/%s, reason %s, message: %s",
 			anpName, newCondition.Type, newCondition.Status, newCondition.Reason, newCondition.Message)
@@ -137,14 +137,14 @@ func (c *Controller) updateANPZoneStatusCondition(newCondition metav1.Condition,
 
 // updateBANPStatusToReady updates the status of the policy to reflect that it is ready
 // Each zone's ovnkube-controller will call this, hence let's update status using server-side-apply
-func (c *Controller) updateBANPStatusToReady(banpName string) error {
+func (c *Controller) updateBANPStatusToReady(ctx context.Context, banpName string) error {
 	readyCondition := metav1.Condition{
 		Type:    policyReadyStatusType + c.nodeName,
 		Status:  metav1.ConditionTrue,
 		Reason:  policyReadyReason,
 		Message: "Setting up OVN DB plumbing was successful",
 	}
-	err := c.updateBANPZoneStatusCondition(readyCondition, banpName)
+	err := c.updateBANPZoneStatusCondition(ctx, readyCondition, banpName)
 	if err != nil {
 		return fmt.Errorf("unable to update the status of BANP %s, err: %v", banpName, err)
 	}
@@ -156,21 +156,21 @@ func (c *Controller) updateBANPStatusToReady(banpName string) error {
 // status.message must be less than 32768 characters and is usually the error that occurred which is passed
 // to this function. Message is particularly useful as it can tell which zone's setup has not finished for
 // this ANP instead of having to manually check logs across zones
-func (c *Controller) updateBANPStatusToNotReady(banpName, message string) error {
+func (c *Controller) updateBANPStatusToNotReady(ctx context.Context, banpName, message string) error {
 	notReadyCondition := metav1.Condition{
 		Type:    policyReadyStatusType + c.nodeName,
 		Status:  metav1.ConditionFalse,
 		Reason:  policyNotReadyReason,
 		Message: message,
 	}
-	err := c.updateBANPZoneStatusCondition(notReadyCondition, banpName)
+	err := c.updateBANPZoneStatusCondition(ctx, notReadyCondition, banpName)
 	if err != nil {
 		return fmt.Errorf("unable update the status of BANP %s, err: %v", banpName, err)
 	}
 	return nil
 }
 
-func (c *Controller) updateBANPZoneStatusCondition(newCondition metav1.Condition, banpName string) error {
+func (c *Controller) updateBANPZoneStatusCondition(ctx context.Context, newCondition metav1.Condition, banpName string) error {
 	banp, err := c.banpLister.Get(banpName)
 	if err != nil {
 		return err
@@ -194,7 +194,7 @@ func (c *Controller) updateBANPZoneStatusCondition(newCondition metav1.Condition
 	applyObj := anpapiapply.BaselineAdminNetworkPolicy(banpName).
 		WithStatus(anpapiapply.BaselineAdminNetworkPolicyStatus().WithConditions(newCondition))
 	_, err = c.anpClientSet.PolicyV1alpha1().BaselineAdminNetworkPolicies().
-		ApplyStatus(context.TODO(), applyObj, metav1.ApplyOptions{FieldManager: c.nodeName, Force: true})
+		ApplyStatus(ctx, applyObj, metav1.ApplyOptions{FieldManager: c.nodeName, Force: true})
 	if err == nil {
 		klog.V(5).Infof("Patched the status of BANP %s with condition type %s/%s, reason %s, message: %s",
 			banpName, newCondition.Type, newCondition.Status, newCondition.Reason, newCondition.Message)

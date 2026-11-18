@@ -42,7 +42,7 @@ func newHONodeController(
 }
 
 // AddNode set annotations about its VTEP and gateway MAC address to its own node object
-func (n *HONodeController) AddNode(node *corev1.Node) error {
+func (n *HONodeController) AddNode(ctx context.Context, node *corev1.Node) error {
 	if node.Name != n.nodeName {
 		return nil
 	}
@@ -72,7 +72,7 @@ func (n *HONodeController) AddNode(node *corev1.Node) error {
 	}
 
 	klog.Infof("Set hybrid overlay DRMAC annotation: %s", drMAC)
-	if err := n.kube.SetAnnotationsOnNode(context.TODO(), node.Name, map[string]interface{}{
+	if err := n.kube.SetAnnotationsOnNode(ctx, node.Name, map[string]interface{}{
 		hotypes.HybridOverlayDRMAC: drMAC,
 	}); err != nil {
 		return fmt.Errorf("failed to set DRMAC annotation on node: %v", err)
@@ -81,12 +81,12 @@ func (n *HONodeController) AddNode(node *corev1.Node) error {
 }
 
 // Delete handles node deletions
-func (n *HONodeController) DeleteNode(_ *corev1.Node) error {
+func (n *HONodeController) DeleteNode(_ context.Context, _ *corev1.Node) error {
 	return nil
 }
 
 // AddPod remove the ovnkube annotation from the pods running on its own node
-func (n *HONodeController) AddPod(pod *corev1.Pod) error {
+func (n *HONodeController) AddPod(ctx context.Context, pod *corev1.Pod) error {
 	if pod.Spec.NodeName != n.nodeName {
 		return nil
 	}
@@ -96,7 +96,7 @@ func (n *HONodeController) AddPod(pod *corev1.Pod) error {
 		klog.Infof("Remove the ovnkube pod annotation from pod %s", pod.Name)
 		podToUpdate := pod.DeepCopy()
 		delete(podToUpdate.Annotations, types.OvnPodAnnotationName)
-		if err := n.kube.PatchPodStatusAnnotations(context.TODO(), pod, podToUpdate); err != nil {
+		if err := n.kube.PatchPodStatusAnnotations(ctx, pod, podToUpdate); err != nil {
 			return fmt.Errorf("failed to remove ovnkube pod annotation from pod %s: %v", pod.Name, err)
 		}
 		return nil
@@ -104,7 +104,7 @@ func (n *HONodeController) AddPod(pod *corev1.Pod) error {
 	return nil
 }
 
-func (n *HONodeController) DeletePod(_ *corev1.Pod) error {
+func (n *HONodeController) DeletePod(_ context.Context, _ *corev1.Pod) error {
 	return nil
 }
 

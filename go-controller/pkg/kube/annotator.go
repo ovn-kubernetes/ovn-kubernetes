@@ -16,7 +16,7 @@ import (
 type Annotator interface {
 	Set(key string, value interface{}) error
 	Delete(key string)
-	Run() error
+	Run(ctx context.Context) error
 }
 
 type nodeAnnotator struct {
@@ -66,14 +66,14 @@ func (na *nodeAnnotator) Delete(key string) {
 	na.changes[key] = nil
 }
 
-func (na *nodeAnnotator) Run() error {
+func (na *nodeAnnotator) Run(ctx context.Context) error {
 	na.Lock()
 	defer na.Unlock()
 	if len(na.changes) == 0 {
 		return nil
 	}
 
-	return na.kube.SetAnnotationsOnNode(context.TODO(), na.nodeName, na.changes)
+	return na.kube.SetAnnotationsOnNode(ctx, na.nodeName, na.changes)
 }
 
 // NewPodAnnotator returns a new annotator for Pod objects
@@ -125,7 +125,7 @@ func (pa *podAnnotator) Delete(key string) {
 	pa.changes[key] = nil
 }
 
-func (pa *podAnnotator) Run() error {
+func (pa *podAnnotator) Run(ctx context.Context) error {
 	pa.Lock()
 	defer pa.Unlock()
 
@@ -133,7 +133,7 @@ func (pa *podAnnotator) Run() error {
 		return nil
 	}
 
-	return pa.kube.SetAnnotationsOnPod(pa.namespace, pa.podName, pa.changes)
+	return pa.kube.SetAnnotationsOnPod(ctx, pa.namespace, pa.podName, pa.changes)
 }
 
 // NewNamespaceAnnotator returns a new annotator for Namespace objects
@@ -183,12 +183,12 @@ func (na *namespaceAnnotator) Delete(key string) {
 	na.changes[key] = nil
 }
 
-func (na *namespaceAnnotator) Run() error {
+func (na *namespaceAnnotator) Run(ctx context.Context) error {
 	na.Lock()
 	defer na.Unlock()
 	if len(na.changes) == 0 {
 		return nil
 	}
 
-	return na.kube.SetAnnotationsOnNamespace(na.namespaceName, na.changes)
+	return na.kube.SetAnnotationsOnNamespace(ctx, na.namespaceName, na.changes)
 }

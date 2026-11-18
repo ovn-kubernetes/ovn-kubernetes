@@ -247,19 +247,15 @@ func NewUserDefinedNetworkGateway(netInfo util.NetInfo, node *corev1.Node, nodeI
 		fmt.Sprintf("udn-%s-gateway-reconciler", udng.GetNetworkName()),
 		&controllerutil.ReconcilerConfig{
 			MaxAttempts: controllerutil.InfiniteAttempts,
-			Reconcile: func(_ context.Context, key string) error {
-				return udng.reconcileGateway(key)
-			},
+			Reconcile:   udng.reconcileGateway,
 			Threadiness: 1,
 		},
 	)
 	if netInfo.Uplink() != "" {
 		uplinkStateConfig := &controllerutil.ControllerConfig[uplinkv1alpha1.UplinkState]{
-			MaxAttempts: controllerutil.InfiniteAttempts,
-			Informer:    uplinkStateInformer.Informer(),
-			Reconcile: func(_ context.Context, key string) error {
-				return udng.reconcileUplinkState(key)
-			},
+			MaxAttempts:    controllerutil.InfiniteAttempts,
+			Informer:       uplinkStateInformer.Informer(),
+			Reconcile:      udng.reconcileUplinkState,
 			ObjNeedsUpdate: udng.uplinkStateNeedsUpdate,
 			Threadiness:    1,
 		}
@@ -567,7 +563,7 @@ func GetUDNMarkChain(pktMark string) string {
 }
 
 // delMarkChain removes the UDN packet mark nftables chain
-func (udng *UserDefinedNetworkGateway) delMarkChain() error {
+func (udng *UserDefinedNetworkGateway) delMarkChain(ctx context.Context) error {
 	nft, err := nodenft.GetNFTablesHelper()
 	if err != nil {
 		return err
@@ -580,12 +576,12 @@ func (udng *UserDefinedNetworkGateway) delMarkChain() error {
 	// we do an Add first (which is a no-op if the chain already exists) and then Delete.
 	tx.Add(chain)
 	tx.Delete(chain)
-	return nft.Run(context.TODO(), tx)
+	return nft.Run(ctx, tx)
 }
 
 // addMarkChain adds the UDN nftables chain containing a rule that marks packets
 // with the network specific value
-func (udng *UserDefinedNetworkGateway) addMarkChain() error {
+func (udng *UserDefinedNetworkGateway) addMarkChain(ctx context.Context) error {
 	counterIfDebug := ""
 	if config.Logging.Level > 4 {
 		counterIfDebug = "counter"
@@ -608,15 +604,15 @@ func (udng *UserDefinedNetworkGateway) addMarkChain() error {
 		Rule:  knftables.Concat("meta mark set", fmt.Sprintf("0x%x", udng.pktMark), counterIfDebug),
 	})
 
-	return nft.Run(context.TODO(), tx)
+	return nft.Run(ctx, tx)
 }
 
 // Start creates the gateway plumbing required by this UDN and starts its
 // reconcilers.
-func (udng *UserDefinedNetworkGateway) Start() error {
+func (udng *UserDefinedNetworkGateway) Start(ctx context.Context) error {
 	if udng.Uplink() == "" {
 		udng.operationMutex.Lock()
-		err := udng.addNetworkWithResolvedUplink(nil)
+		err := udng.addNetworkWithResolvedUplink(ctx, nil)
 		udng.operationMutex.Unlock()
 		if err != nil {
 			return err
@@ -627,6 +623,7 @@ func (udng *UserDefinedNetworkGateway) Start() error {
 	err := controllerutil.StartWithInitialSync(
 		func() error {
 			return udng.reconcileUplinkState(
+				ctx,
 				uplinkutil.StateName(udng.Uplink(), udng.node.Name),
 			)
 		},
@@ -635,7 +632,7 @@ func (udng *UserDefinedNetworkGateway) Start() error {
 	)
 	if err != nil {
 		udng.operationMutex.Lock()
-		cleanupErr := udng.unconfigureUplinkGateway()
+		cleanupErr := udng.unconfigureUplinkGateway(ctx)
 		udng.operationMutex.Unlock()
 		if cleanupErr != nil {
 			cleanupErr = fmt.Errorf("failed to clean up gateway after initial programming failure: %w", cleanupErr)
@@ -646,7 +643,7 @@ func (udng *UserDefinedNetworkGateway) Start() error {
 	return nil
 }
 
-func (udng *UserDefinedNetworkGateway) addNetworkWithResolvedUplink(
+func (udng *UserDefinedNetworkGateway) addNetworkWithResolvedUplink(ctx context.Context,
 	resolved *resolvedUplinkGateway,
 ) error {
 	if (config.IsModeDPU() || config.IsModeFull()) && udng.openflowManager == nil {
@@ -736,7 +733,7 @@ func (udng *UserDefinedNetworkGateway) addNetworkWithResolvedUplink(
 		if err = udng.applyAdvertisedRoutingState(); err != nil {
 			return err
 		}
-		if err = udng.updateAdvertisedUDNIsolationRules(); err != nil {
+		if err = udng.updateAdvertisedUDNIsolationRules(ctx); err != nil {
 			return fmt.Errorf("failed to update isolation rules for network %s: %w", udng.GetNetworkName(), err)
 		}
 	}
@@ -782,7 +779,7 @@ func (udng *UserDefinedNetworkGateway) addNetworkWithResolvedUplink(
 			return true, nil
 		}
 		postFunc := func() error {
-			if err := udng.gateway.ReconcileNetwork(udng.NetInfo); err != nil {
+			if err := udng.gateway.ReconcileNetwork(ctx, udng.NetInfo); err != nil {
 				return fmt.Errorf("failed to reconcile flows on bridge for network %s; error: %v", udng.GetNetworkName(), err)
 			}
 			if udng.Uplink() != "" {
@@ -797,13 +794,13 @@ func (udng *UserDefinedNetworkGateway) addNetworkWithResolvedUplink(
 			return newUplinkGatewayError(uplinkv1alpha1.UplinkStateReasonBridgeMappingFailed, err)
 		}
 	} else {
-		if err := udng.gateway.ReconcileNetwork(udng.NetInfo); err != nil {
+		if err := udng.gateway.ReconcileNetwork(ctx, udng.NetInfo); err != nil {
 			return fmt.Errorf("failed to reconcile flows on bridge for network %s; error: %v", udng.GetNetworkName(), err)
 		}
 	}
 
 	if config.IsModeDPUHost() || config.IsModeFull() {
-		if err := udng.addMarkChain(); err != nil {
+		if err := udng.addMarkChain(ctx); err != nil {
 			return fmt.Errorf("failed to add the service masquerade chain: %w", err)
 		}
 	}
@@ -818,15 +815,15 @@ func (udng *UserDefinedNetworkGateway) GetNetworkRuleMetadata() string {
 // Cleanup removes all gateway plumbing used by this UDN. Stop must be called
 // before Cleanup so no reconciliation can race with terminal cleanup. It is
 // invalid to use this instance after Cleanup returns successfully.
-func (udng *UserDefinedNetworkGateway) Cleanup() error {
+func (udng *UserDefinedNetworkGateway) Cleanup(ctx context.Context) error {
 	udng.operationMutex.Lock()
 	defer udng.operationMutex.Unlock()
 
 	if udng.Uplink() == "" {
-		return udng.delNetwork()
+		return udng.delNetwork(ctx)
 	}
 
-	cleanupErr := udng.unconfigureUplinkGateway()
+	cleanupErr := udng.unconfigureUplinkGateway(ctx)
 	udng.uplinkStateGatewayStatusController.ReportNetworkDeleted(
 		udng.NetInfo, udng.uplinkStateUID, udng.uplinkFingerprint, cleanupErr)
 	return cleanupErr
@@ -836,12 +833,12 @@ func (udng *UserDefinedNetworkGateway) Cleanup() error {
 // keeps this object reusable by its reconcilers. This is the non-terminal
 // counterpart of Cleanup used while an Uplink temporarily no longer selects
 // the node or is being reconfigured.
-func (udng *UserDefinedNetworkGateway) unconfigureUplinkGateway() error {
+func (udng *UserDefinedNetworkGateway) unconfigureUplinkGateway(ctx context.Context) error {
 	if !udng.uplinkGatewayCleanupRequired {
 		return nil
 	}
 	udng.uplinkGatewayPartial = true
-	if err := udng.delNetwork(); err != nil {
+	if err := udng.delNetwork(ctx); err != nil {
 		return fmt.Errorf("failed to unconfigure Uplink gateway for network %s: %w", udng.GetNetworkName(), err)
 	}
 	udng.uplinkGatewayCleanupRequired = false
@@ -856,16 +853,16 @@ func (udng *UserDefinedNetworkGateway) unconfigureUplinkGateway() error {
 // resolved fingerprint changes, or to retry a partial replacement. Mark the
 // gateway as programmed before addNetwork starts so a partial add is cleaned up
 // on the next retry.
-func (udng *UserDefinedNetworkGateway) replaceUplinkGateway(
+func (udng *UserDefinedNetworkGateway) replaceUplinkGateway(ctx context.Context,
 	resolved *resolvedUplinkGateway,
 	stateUID k8stypes.UID,
 	fingerprint uplinkGatewayFingerprint,
 ) error {
-	if err := udng.unconfigureUplinkGateway(); err != nil {
+	if err := udng.unconfigureUplinkGateway(ctx); err != nil {
 		return err
 	}
 	udng.uplinkGatewayCleanupRequired = true
-	if err := udng.addNetworkWithResolvedUplink(resolved); err != nil {
+	if err := udng.addNetworkWithResolvedUplink(ctx, resolved); err != nil {
 		return fmt.Errorf("failed to program Uplink gateway for network %s: %w", udng.GetNetworkName(), err)
 	}
 	udng.uplinkStateUID = stateUID
@@ -880,14 +877,14 @@ type uplinkStatePending struct{ error }
 // reconcileUplinkConfiguration reads the newest informer state and makes this
 // UDN's dataplane match it. The caller serializes it with all other operations
 // on this gateway.
-func (udng *UserDefinedNetworkGateway) reconcileUplinkConfiguration() (
+func (udng *UserDefinedNetworkGateway) reconcileUplinkConfiguration(ctx context.Context) (
 	k8stypes.UID,
 	uplinkGatewayFingerprint,
 	error,
 ) {
 	state, err := udng.getUplinkState()
 	if err != nil {
-		unconfigureErr := udng.unconfigureUplinkGateway()
+		unconfigureErr := udng.unconfigureUplinkGateway(ctx)
 		if unconfigureErr != nil {
 			return "", uplinkGatewayFingerprint{}, newUplinkGatewayError(
 				uplinkv1alpha1.UplinkStateReasonGatewayProgrammingFailed,
@@ -907,7 +904,7 @@ func (udng *UserDefinedNetworkGateway) reconcileUplinkConfiguration() (
 		state, udng.Uplink(), udng.node.Name,
 		config.IsModeDPU() || config.IsModeFull())
 	if err != nil {
-		unconfigureErr := udng.unconfigureUplinkGateway()
+		unconfigureErr := udng.unconfigureUplinkGateway(ctx)
 		if unconfigureErr != nil {
 			return state.UID, observedFingerprint, newUplinkGatewayError(
 				uplinkv1alpha1.UplinkStateReasonGatewayProgrammingFailed,
@@ -932,7 +929,7 @@ func (udng *UserDefinedNetworkGateway) reconcileUplinkConfiguration() (
 			udng.updateUplinkDefaultGateways(resolved, state.UID, observedFingerprint)
 	}
 	return state.UID, observedFingerprint,
-		udng.replaceUplinkGateway(resolved, state.UID, observedFingerprint)
+		udng.replaceUplinkGateway(ctx, resolved, state.UID, observedFingerprint)
 }
 
 func fingerprintsDifferOnlyInDefaultGateways(a, b uplinkGatewayFingerprint) bool {
@@ -1007,7 +1004,7 @@ func (udng *UserDefinedNetworkGateway) managedDefaultRouteKey(isV6 bool) netlink
 // state. Missing or invalid discovery input waits for informer events; errors
 // programming or cleaning up the gateway retry. operationMutex serializes
 // each attempt with initial setup, advertised-state reconciliation, and cleanup.
-func (udng *UserDefinedNetworkGateway) reconcileUplinkState(key string) error {
+func (udng *UserDefinedNetworkGateway) reconcileUplinkState(ctx context.Context, key string) error {
 	if key != uplinkutil.StateName(udng.Uplink(), udng.node.Name) {
 		return nil
 	}
@@ -1015,7 +1012,7 @@ func (udng *UserDefinedNetworkGateway) reconcileUplinkState(key string) error {
 	udng.operationMutex.Lock()
 	defer udng.operationMutex.Unlock()
 	observedUID, observedFingerprint, reconcileErr :=
-		udng.reconcileUplinkConfiguration()
+		udng.reconcileUplinkConfiguration(ctx)
 	udng.uplinkStateGatewayStatusController.ReportNetworkResult(
 		udng.NetInfo, observedUID, observedFingerprint, reconcileErr)
 	var pending *uplinkStatePending
@@ -1025,7 +1022,7 @@ func (udng *UserDefinedNetworkGateway) reconcileUplinkState(key string) error {
 	return reconcileErr
 }
 
-func (udng *UserDefinedNetworkGateway) delNetwork() error {
+func (udng *UserDefinedNetworkGateway) delNetwork(ctx context.Context) error {
 	var errs []error
 	vrfDeviceName := util.GetNetworkVRFName(udng.NetInfo)
 	if config.IsModeDPUHost() || config.IsModeFull() {
@@ -1059,7 +1056,7 @@ func (udng *UserDefinedNetworkGateway) delNetwork() error {
 	}
 	if udng.openflowManager != nil || config.IsModeDPUHost() {
 		// Network config already removed: regenerate the shared bridge flows without it.
-		if err := udng.gateway.ReconcileNetworkRemoval(); err != nil {
+		if err := udng.gateway.ReconcileNetworkRemoval(ctx); err != nil {
 			errs = append(errs, fmt.Errorf("failed to reconcile default gateway for network %s, err: %v", udng.GetNetworkName(), err))
 		}
 	}
@@ -1070,12 +1067,12 @@ func (udng *UserDefinedNetworkGateway) delNetwork() error {
 	}
 
 	if config.IsModeDPUHost() || config.IsModeFull() {
-		err := udng.deleteAdvertisedUDNIsolationRules()
+		err := udng.deleteAdvertisedUDNIsolationRules(ctx)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("failed to remove advertised UDN isolation rules for network %s: %w", udng.GetNetworkName(), err))
 		}
 
-		if err := udng.delMarkChain(); err != nil {
+		if err := udng.delMarkChain(ctx); err != nil {
 			errs = append(errs, fmt.Errorf("failed to remove mark chain for network %s, err: %v", udng.GetNetworkName(), err))
 		}
 	}
@@ -1611,11 +1608,11 @@ func (udng *UserDefinedNetworkGateway) Reconcile() {
 	udng.gatewayReconciler.Reconcile(udng.GetNetworkName())
 }
 
-func (udng *UserDefinedNetworkGateway) reconcileGateway(_ string) error {
+func (udng *UserDefinedNetworkGateway) reconcileGateway(ctx context.Context, _ string) error {
 	udng.operationMutex.Lock()
 	defer udng.operationMutex.Unlock()
 	if udng.Uplink() == "" {
-		return udng.reconcileAdvertisedState()
+		return udng.reconcileAdvertisedState(ctx)
 	}
 	if udng.uplinkStateUID == "" || !udng.uplinkGatewayCleanupRequired || udng.uplinkGatewayPartial {
 		// Uplink reconciliation applies the latest advertisement when it
@@ -1624,7 +1621,7 @@ func (udng *UserDefinedNetworkGateway) reconcileGateway(_ string) error {
 	}
 	// Reconcile and report against the UplinkState configuration last handled by
 	// this gateway, not a newer informer object that has not been handled yet.
-	reconcileErr := udng.reconcileAdvertisedState()
+	reconcileErr := udng.reconcileAdvertisedState(ctx)
 	udng.uplinkStateGatewayStatusController.ReportNetworkResult(
 		udng.NetInfo, udng.uplinkStateUID, udng.uplinkFingerprint, reconcileErr)
 	return reconcileErr
@@ -1633,7 +1630,7 @@ func (udng *UserDefinedNetworkGateway) reconcileGateway(_ string) error {
 // reconcileAdvertisedState reapplies the mutable gateway state affected by
 // RouteAdvertisements. Initial ownership and cache registration remain in
 // addNetworkWithResolvedUplink.
-func (udng *UserDefinedNetworkGateway) reconcileAdvertisedState() error {
+func (udng *UserDefinedNetworkGateway) reconcileAdvertisedState(ctx context.Context) error {
 	klog.Infof("Reconciling gateway with updates for UDN %s", udng.GetNetworkName())
 
 	if config.IsModeDPU() || config.IsModeFull() {
@@ -1684,7 +1681,7 @@ func (udng *UserDefinedNetworkGateway) reconcileAdvertisedState() error {
 	}
 
 	if config.IsModeDPUHost() || config.IsModeFull() {
-		if err := udng.updateAdvertisedUDNIsolationRules(); err != nil {
+		if err := udng.updateAdvertisedUDNIsolationRules(ctx); err != nil {
 			return fmt.Errorf("error while updating advertised UDN isolation rules for network %s: %w", udng.GetNetworkName(), err)
 		}
 	}
@@ -1933,16 +1930,16 @@ func (udng *UserDefinedNetworkGateway) removeManagedDefaultRoutesFromVRF() error
 //	   comment "advertised UDNs V4 subnets"
 //	   elements = { 10.10.0.0/16 comment "cluster_udn_l3network" }
 //	}
-func (udng *UserDefinedNetworkGateway) updateAdvertisedUDNIsolationRules() error {
+func (udng *UserDefinedNetworkGateway) updateAdvertisedUDNIsolationRules(ctx context.Context) error {
 	switch {
 	case udng.isNetworkAdvertised:
-		return udng.addAdvertisedUDNIsolationRules()
+		return udng.addAdvertisedUDNIsolationRules(ctx)
 	default:
-		return udng.deleteAdvertisedUDNIsolationRules()
+		return udng.deleteAdvertisedUDNIsolationRules(ctx)
 	}
 }
 
-func (udng *UserDefinedNetworkGateway) addAdvertisedUDNIsolationRules() error {
+func (udng *UserDefinedNetworkGateway) addAdvertisedUDNIsolationRules(ctx context.Context) error {
 	nft, err := nodenft.GetNFTablesHelper()
 	if err != nil {
 		return fmt.Errorf("failed to get nftables helper: %v", err)
@@ -1965,23 +1962,23 @@ func (udng *UserDefinedNetworkGateway) addAdvertisedUDNIsolationRules() error {
 	if tx.NumOperations() == 0 {
 		return nil
 	}
-	return nft.Run(context.TODO(), tx)
+	return nft.Run(ctx, tx)
 }
 
-func (udng *UserDefinedNetworkGateway) deleteAdvertisedUDNIsolationRules() error {
+func (udng *UserDefinedNetworkGateway) deleteAdvertisedUDNIsolationRules(ctx context.Context) error {
 	nft, err := nodenft.GetNFTablesHelper()
 	if err != nil {
 		return fmt.Errorf("failed to get nftables helper: %v", err)
 	}
 	tx := nft.NewTransaction()
 
-	existingV4, err := nft.ListElements(context.TODO(), "set", nftablesAdvertisedUDNsSetV4)
+	existingV4, err := nft.ListElements(ctx, "set", nftablesAdvertisedUDNsSetV4)
 	if err != nil {
 		if !knftables.IsNotFound(err) {
 			return fmt.Errorf("could not list existing items in %s set: %w", nftablesAdvertisedUDNsSetV4, err)
 		}
 	}
-	existingV6, err := nft.ListElements(context.TODO(), "set", nftablesAdvertisedUDNsSetV6)
+	existingV6, err := nft.ListElements(ctx, "set", nftablesAdvertisedUDNsSetV6)
 	if err != nil {
 		if !knftables.IsNotFound(err) {
 			return fmt.Errorf("could not list existing items in %s set: %w", nftablesAdvertisedUDNsSetV6, err)
@@ -1997,7 +1994,7 @@ func (udng *UserDefinedNetworkGateway) deleteAdvertisedUDNIsolationRules() error
 	if tx.NumOperations() == 0 {
 		return nil
 	}
-	return nft.Run(context.TODO(), tx)
+	return nft.Run(ctx, tx)
 }
 
 func (udng *UserDefinedNetworkGateway) updateAdvertisementStatus() {

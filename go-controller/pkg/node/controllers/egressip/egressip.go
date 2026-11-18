@@ -265,8 +265,9 @@ func (c *Controller) Run(stopCh <-chan struct{}, wg *sync.WaitGroup, threads int
 		klog.Warningf("Failed to clean up legacy node IP fwmark rules: %v", err)
 	}
 
+	ctx := context.Background()
 	// Initialize nftables chains, maps, and rules for EgressIP SNAT and secondary interface drop
-	if err := c.initNFTables(); err != nil {
+	if err := c.initNFTables(ctx); err != nil {
 		return fmt.Errorf("failed to initialize nftables for EgressIP: %w", err)
 	}
 
@@ -289,7 +290,7 @@ func (c *Controller) Run(stopCh <-chan struct{}, wg *sync.WaitGroup, threads int
 
 	err = wait.PollUntilContextTimeout(wait.ContextForChannel(stopCh), 1*time.Second, 10*time.Second, true,
 		func(_ context.Context) (done bool, err error) {
-			if err := c.migrateFromAddrLabelToAnnotation(); err != nil {
+			if err := c.migrateFromAddrLabelToAnnotation(ctx); err != nil {
 				klog.Errorf("Failed to migrate from managing EgressIP addresses using address labels to a node annotation - Retrying: %v", err)
 				return false, err
 			}
@@ -301,7 +302,7 @@ func (c *Controller) Run(stopCh <-chan struct{}, wg *sync.WaitGroup, threads int
 
 	err = wait.PollUntilContextTimeout(wait.ContextForChannel(stopCh), 1*time.Second, 10*time.Second, true,
 		func(_ context.Context) (done bool, err error) {
-			if err := c.repairNode(); err != nil {
+			if err := c.repairNode(ctx); err != nil {
 				klog.Errorf("Failed to repair node: '%v' - Retrying", err)
 				return false, err
 			}
@@ -414,8 +415,9 @@ func (c *Controller) processNextEIPWorkItem(wg *sync.WaitGroup) bool {
 		return false
 	}
 	defer c.eIPQueue.Done(key)
+	ctx := context.Background()
 	klog.V(4).Infof("Processing Egress IP %s", key)
-	if err := c.syncEIP(key); err != nil {
+	if err := c.syncEIP(ctx, key); err != nil {
 		if c.eIPQueue.NumRequeues(key) < maxRetries {
 			klog.V(4).Infof("Error found while processing Egress IP %s: %v", key, err)
 			c.eIPQueue.AddRateLimited(key)
@@ -428,7 +430,7 @@ func (c *Controller) processNextEIPWorkItem(wg *sync.WaitGroup) bool {
 	return true
 }
 
-func (c *Controller) syncEIP(eIPName string) error {
+func (c *Controller) syncEIP(ctx context.Context, eIPName string) error {
 	// 1. Lock on the existing 'state', as we are going to use it for cleanup and update.
 	// 2. Build latest 'config'. This includes listing referenced namespaces and pods.
 	// To make sure there is no race with pod and namespace handlers, referencedObjects is acquired
@@ -461,7 +463,7 @@ func (c *Controller) syncEIP(eIPName string) error {
 			existing = newState()
 			c.cache.Store(eIPName, existing)
 		}
-		if err = c.updateEIP(existing, update); err != nil {
+		if err = c.updateEIP(ctx, existing, update); err != nil {
 			return fmt.Errorf("failed to update policy from %+v to %+v: %w", existing, update, err)
 		}
 		if update == nil {
@@ -655,7 +657,7 @@ func (c *Controller) deleteRefObjects(name string) {
 }
 
 // updateEIP reconciles existing state towards update config. If update is nil, delete existing state.
-func (c *Controller) updateEIP(existing *state, update *config) error {
+func (c *Controller) updateEIP(ctx context.Context, existing *state, update *config) error {
 	// cleanup first
 	// cleanup pod specific configuration - ip rules and nftables SNAT elements
 	if len(existing.namespacesWithPodIPConfigs) > 0 {
@@ -682,7 +684,7 @@ func (c *Controller) updateEIP(existing *state, update *config) error {
 				}
 				if podIPConfigsToDelete.len() > 0 {
 					for _, podIPConfigToDelete := range podIPConfigsToDelete.elems {
-						if err := c.deleteIPConfig(podIPConfigToDelete); err != nil {
+						if err := c.deleteIPConfig(ctx, podIPConfigToDelete); err != nil {
 							existingPodConfig.insertOverwriteFailed(*podIPConfigToDelete)
 							return err
 						}
@@ -717,7 +719,7 @@ func (c *Controller) updateEIP(existing *state, update *config) error {
 			// TODO(mk): if we fail to delete address, handle it
 			return fmt.Errorf("failed to delete egress IP address %s: %w", existing.eIPConfig.addr.String(), err)
 		}
-		if err := c.deleteIPFromAnnotation(existing.eIPConfig.addr.IP.String()); err != nil {
+		if err := c.deleteIPFromAnnotation(ctx, existing.eIPConfig.addr.IP.String()); err != nil {
 			return fmt.Errorf("failed to delete egress IP address %s from annotation: %v", existing.eIPConfig.addr.String(), err)
 		}
 	}
@@ -770,13 +772,13 @@ func (c *Controller) updateEIP(existing *state, update *config) error {
 					existingNs[updatedPodNamespacedName] = existingTargetPodIPConfig
 				}
 				// applyPodConfig will apply pod specific configuration - ip rules and nftables SNAT elements
-				err := c.applyPodConfig(existingTargetPodIPConfig, updatedPodIPConfig)
+				err := c.applyPodConfig(ctx, existingTargetPodIPConfig, updatedPodIPConfig)
 				if err != nil {
 					return fmt.Errorf("failed to apply pod %s configuration: %v", updatedPodNamespacedName.String(), err)
 				}
 			}
 		}
-		if err := c.addIPToAnnotation(update.eIPConfig.addr.IP.String()); err != nil {
+		if err := c.addIPToAnnotation(ctx, update.eIPConfig.addr.IP.String()); err != nil {
 			return fmt.Errorf("failed to add egress IP address to annotation: %v", err)
 		}
 		// TODO(mk): only apply the follow when its new config or when it failed to apply
@@ -796,7 +798,7 @@ func (c *Controller) updateEIP(existing *state, update *config) error {
 	return nil
 }
 
-func (c *Controller) deleteIPConfig(podIPConfigToDelete *podIPConfig) error {
+func (c *Controller) deleteIPConfig(ctx context.Context, podIPConfigToDelete *podIPConfig) error {
 	if err := c.ruleManager.Delete(podIPConfigToDelete.ipRule); err != nil {
 		return err
 	}
@@ -804,14 +806,14 @@ func (c *Controller) deleteIPConfig(podIPConfigToDelete *podIPConfig) error {
 	if podIPConfigToDelete.v6 {
 		mapName = types.EgressIPNFTablesMapV6
 	}
-	return c.nftElementManager.Delete(&knftables.Element{
+	return c.nftElementManager.Delete(ctx, &knftables.Element{
 		Map:   mapName,
 		Key:   []string{podIPConfigToDelete.snatKey, podIPConfigToDelete.ifName},
 		Value: []string{podIPConfigToDelete.snatValue},
 	})
 }
 
-func (c *Controller) applyPodConfig(existingPodIPsConfig *podIPConfigList, updatedPodIPsConfig *podIPConfigList) error {
+func (c *Controller) applyPodConfig(ctx context.Context, existingPodIPsConfig *podIPConfigList, updatedPodIPsConfig *podIPConfigList) error {
 	if existingPodIPsConfig == nil {
 		return fmt.Errorf("unexpected nil existing config")
 	}
@@ -833,7 +835,7 @@ func (c *Controller) applyPodConfig(existingPodIPsConfig *podIPConfigList, updat
 		if newPodIPConfig.v6 {
 			mapName = types.EgressIPNFTablesMapV6
 		}
-		if err := c.nftElementManager.Add(&knftables.Element{
+		if err := c.nftElementManager.Add(ctx, &knftables.Element{
 			Map:   mapName,
 			Key:   []string{newPodIPConfig.snatKey, newPodIPConfig.ifName},
 			Value: []string{newPodIPConfig.snatValue},
@@ -863,7 +865,7 @@ type addrLink struct {
 
 // repairNode generates whats expected and what is seen on the node and removes any stale configuration. This should be
 // called at Controller startup.
-func (c *Controller) repairNode() error {
+func (c *Controller) repairNode(ctx context.Context) error {
 	// get address map for each interface -> addresses/mask
 	// also map address/mask -> interface name
 	assignedAddr := sets.New[addrLink]()
@@ -1036,7 +1038,7 @@ func (c *Controller) repairNode() error {
 		}
 	}
 	staleAddresses := assignedAddr.Difference(expectedAddrs)
-	if err := c.removeStaleAddresses(staleAddresses, assignedAddrStrToAddrs); err != nil {
+	if err := c.removeStaleAddresses(ctx, staleAddresses, assignedAddrStrToAddrs); err != nil {
 		return fmt.Errorf("failed to remove stale Egress IP addresse(s) (%+v): %v", staleAddresses, err)
 	}
 
@@ -1051,7 +1053,7 @@ func (c *Controller) repairNode() error {
 	}
 
 	// Repair nftables: recreate chains/maps/rules
-	if err := c.initNFTables(); err != nil {
+	if err := c.initNFTables(ctx); err != nil {
 		return fmt.Errorf("failed to repair nftables: %w", err)
 	}
 
@@ -1079,7 +1081,7 @@ func (c *Controller) repairNode() error {
 	if c.v6 {
 		ownedMaps = append(ownedMaps, types.EgressIPNFTablesMapV6)
 	}
-	if err := c.nftElementManager.OwnMaps(ownedMaps, expectedElems...); err != nil {
+	if err := c.nftElementManager.OwnMaps(ctx, ownedMaps, expectedElems...); err != nil {
 		return fmt.Errorf("failed to sync expected SNAT map elements (%d v4, %d v6): %v",
 			len(expectedV4Elems), len(expectedV6Elems), err)
 	}
@@ -1090,7 +1092,7 @@ func (c *Controller) repairNode() error {
 // will track assignment instead of using labels. The reason labels aren't sufficient to track assigned EIPs is because
 // labels are only supported for IPv4 in linux. This method should only be used once at startup and should be retried if failure.
 // This func should be executed before repairing a node and handlers workers are started because they depend on annot being set.
-func (c *Controller) migrateFromAddrLabelToAnnotation() error {
+func (c *Controller) migrateFromAddrLabelToAnnotation(ctx context.Context) error {
 	node, err := c.nodeLister.Get(c.nodeName)
 	if err != nil {
 		return err
@@ -1133,13 +1135,13 @@ func (c *Controller) migrateFromAddrLabelToAnnotation() error {
 			nodeToUpdate.Annotations = map[string]string{}
 		}
 		nodeToUpdate.Annotations[util.OVNNodeSecondaryHostEgressIPs] = string(patch)
-		return c.kube.PatchNodeStatusAnnotations(context.TODO(), node, nodeToUpdate)
+		return c.kube.PatchNodeStatusAnnotations(ctx, node, nodeToUpdate)
 	})
 }
 
 // addIPToAnnotation adds an address to the collection of existing addresses stored in the nodes annotation. Caller
 // may repeat addition of addresses without care for duplicate addresses being added.
-func (c *Controller) addIPToAnnotation(ip string) error {
+func (c *Controller) addIPToAnnotation(ctx context.Context, ip string) error {
 	if !isValidIP(ip) {
 		return fmt.Errorf("invalid IP %q", ip)
 	}
@@ -1169,13 +1171,13 @@ func (c *Controller) addIPToAnnotation(ip string) error {
 			nodeToUpdate.Annotations = map[string]string{}
 		}
 		nodeToUpdate.Annotations[util.OVNNodeSecondaryHostEgressIPs] = string(patch)
-		return c.kube.PatchNodeStatusAnnotations(context.TODO(), node, nodeToUpdate)
+		return c.kube.PatchNodeStatusAnnotations(ctx, node, nodeToUpdate)
 	})
 }
 
 // deleteIPFromAnnotation deletes address from annotation. If multiple users, callers must synchronise.
 // deletion of address that doesn't exist will not cause an error.
-func (c *Controller) deleteIPFromAnnotation(ip string) error {
+func (c *Controller) deleteIPFromAnnotation(ctx context.Context, ip string) error {
 	if !isValidIP(ip) {
 		return fmt.Errorf("invalid IP %q", ip)
 	}
@@ -1205,7 +1207,7 @@ func (c *Controller) deleteIPFromAnnotation(ip string) error {
 			nodeToUpdate.Annotations = map[string]string{}
 		}
 		nodeToUpdate.Annotations[util.OVNNodeSecondaryHostEgressIPs] = string(patch)
-		return c.kube.PatchNodeStatusAnnotations(context.TODO(), node, nodeToUpdate)
+		return c.kube.PatchNodeStatusAnnotations(ctx, node, nodeToUpdate)
 	})
 }
 
@@ -1245,7 +1247,7 @@ func isEIPStatusItemValid(status eipv1.EgressIPStatusItem, nodeName string) bool
 	return true
 }
 
-func (c *Controller) removeStaleAddresses(staleAddresses sets.Set[addrLink], addrStrToNetlinkAddr map[string]netlink.Addr) error {
+func (c *Controller) removeStaleAddresses(ctx context.Context, staleAddresses sets.Set[addrLink], addrStrToNetlinkAddr map[string]netlink.Addr) error {
 	for _, address := range staleAddresses.UnsortedList() {
 		nlAddr, ok := addrStrToNetlinkAddr[address.addr]
 		if !ok {
@@ -1254,7 +1256,7 @@ func (c *Controller) removeStaleAddresses(staleAddresses sets.Set[addrLink], add
 		if err := c.linkManager.DelAddress(nlAddr); err != nil {
 			return fmt.Errorf("failed to delete address from link: %v", err)
 		}
-		if err := c.deleteIPFromAnnotation(nlAddr.IP.String()); err != nil {
+		if err := c.deleteIPFromAnnotation(ctx, nlAddr.IP.String()); err != nil {
 			return fmt.Errorf("failed to delete address from annotation: %v", err)
 		}
 	}

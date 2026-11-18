@@ -102,7 +102,7 @@ func (c *ExternalGatewayMasterController) GetAdminPolicyBasedExternalRouteIPsFor
 }
 
 // updateStatusAPBExternalRoute updates the CR with the current status of the CR instance, including errors captured while processing the CR during its lifetime
-func (c *ExternalGatewayMasterController) updateStatusAPBExternalRoute(policyName string, gwIPs sets.Set[string],
+func (c *ExternalGatewayMasterController) updateStatusAPBExternalRoute(ctx context.Context, policyName string, gwIPs sets.Set[string],
 	syncError error) error {
 	if gwIPs == nil {
 		// policy doesn't exist anymore, nothing to do
@@ -144,7 +144,7 @@ func (c *ExternalGatewayMasterController) updateStatusAPBExternalRoute(policyNam
 		WithStatus(adminpolicybasedrouteapply.AdminPolicyBasedRouteStatus().
 			WithMessages(newMsg).
 			WithLastTransitionTime(metav1.Now()))
-	_, err = c.apbRoutePolicyClient.K8sV1().AdminPolicyBasedExternalRoutes().ApplyStatus(context.TODO(), applyObj, applyOptions)
+	_, err = c.apbRoutePolicyClient.K8sV1().AdminPolicyBasedExternalRoutes().ApplyStatus(ctx, applyObj, applyOptions)
 
 	if err != nil {
 		return err

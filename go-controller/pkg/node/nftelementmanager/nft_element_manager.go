@@ -44,8 +44,9 @@ func (c *Controller) Run(stopCh <-chan struct{}, syncPeriod time.Duration) {
 		case <-stopCh:
 			return
 		case <-ticker.C:
+			ctx := context.Background()
 			c.mu.Lock()
-			if err := c.fullReconcile(); err != nil {
+			if err := c.fullReconcile(ctx); err != nil {
 				klog.Errorf("NFT element manager: failed to reconcile (retry in %s): %v", syncPeriod.String(), err)
 			}
 			c.mu.Unlock()
@@ -54,28 +55,28 @@ func (c *Controller) Run(stopCh <-chan struct{}, syncPeriod time.Duration) {
 }
 
 // Add ensures an nftables element is present and stays present across reconciliation cycles
-func (c *Controller) Add(elem *knftables.Element) error {
+func (c *Controller) Add(ctx context.Context, elem *knftables.Element) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for i, existing := range c.elements {
 		if elementsEqual(existing.elem, elem) {
 			c.elements[i].elem = elem
 			c.elements[i].delete = false
-			return c.reconcile()
+			return c.reconcile(ctx)
 		}
 	}
 	c.elements = append(c.elements, element{elem: elem})
-	return c.reconcile()
+	return c.reconcile(ctx)
 }
 
 // Delete removes an nftables element and ensures it stays removed
-func (c *Controller) Delete(elem *knftables.Element) error {
+func (c *Controller) Delete(ctx context.Context, elem *knftables.Element) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for i, existing := range c.elements {
 		if elementsEqual(existing.elem, elem) {
 			c.elements[i].delete = true
-			return c.reconcile()
+			return c.reconcile(ctx)
 		}
 	}
 	return nil
@@ -85,7 +86,7 @@ func (c *Controller) Delete(elem *knftables.Element) error {
 // elements for those maps, and runs a full reconcile to prune untracked
 // elements from the owned maps. All elements must belong to one of the
 // passed maps.
-func (c *Controller) OwnMaps(ownedMaps []string, elems ...*knftables.Element) error {
+func (c *Controller) OwnMaps(ctx context.Context, ownedMaps []string, elems ...*knftables.Element) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	syncedMaps := sets.New(ownedMaps...)
@@ -114,20 +115,20 @@ func (c *Controller) OwnMaps(ownedMaps []string, elems ...*knftables.Element) er
 			c.elements = append(c.elements, element{elem: elem})
 		}
 	}
-	return c.fullReconcile()
+	return c.fullReconcile(ctx)
 }
 
 // reconcile applies tracked element adds/deletes to nftables
-func (c *Controller) reconcile() error {
-	return c.doReconcile(false)
+func (c *Controller) reconcile(ctx context.Context) error {
+	return c.doReconcile(ctx, false)
 }
 
 // fullReconcile applies tracked elements and also cleans up unrecognized elements in owned maps
-func (c *Controller) fullReconcile() error {
-	return c.doReconcile(true)
+func (c *Controller) fullReconcile(ctx context.Context) error {
+	return c.doReconcile(ctx, true)
 }
 
-func (c *Controller) doReconcile(pruneOwnedMaps bool) error {
+func (c *Controller) doReconcile(ctx context.Context, pruneOwnedMaps bool) error {
 	start := time.Now()
 	defer func() {
 		klog.V(5).Infof("Reconciling NFT elements took %v", time.Since(start))
@@ -153,7 +154,7 @@ func (c *Controller) doReconcile(pruneOwnedMaps bool) error {
 
 	if pruneOwnedMaps {
 		for mapName := range c.ownedMaps {
-			existing, err := nft.ListElements(context.TODO(), "map", mapName)
+			existing, err := nft.ListElements(ctx, "map", mapName)
 			if err != nil {
 				if knftables.IsNotFound(err) {
 					continue
@@ -170,7 +171,7 @@ func (c *Controller) doReconcile(pruneOwnedMaps bool) error {
 		}
 	}
 
-	if err := nft.Run(context.TODO(), tx); err != nil {
+	if err := nft.Run(ctx, tx); err != nil {
 		return err
 	}
 	c.elements = elementsToKeep

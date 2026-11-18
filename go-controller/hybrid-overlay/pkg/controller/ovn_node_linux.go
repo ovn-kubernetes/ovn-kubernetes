@@ -80,19 +80,19 @@ func newOVNNodeController(
 }
 
 // AddPod handles the pod add event
-func (n *NodeController) AddPod(pod *corev1.Pod) error {
+func (n *NodeController) AddPod(ctx context.Context, pod *corev1.Pod) error {
 	// nothing to do for hostnetworked pod
 	if util.PodWantsHostNetwork(pod) {
 		return nil
 	}
 	if util.PodCompleted(pod) {
 		klog.Infof("Cleaning up hybrid overlay pod %s/%s because it has completed", pod.Namespace, pod.Name)
-		return n.DeletePod(pod)
+		return n.DeletePod(ctx, pod)
 	}
 	podIPs, podMAC, err := getPodDetails(pod)
 	if err != nil {
 		klog.Warningf("Cleaning up hybrid overlay pod %s/%s because it has no OVN annotation %v", pod.Namespace, pod.Name, err)
-		return n.DeletePod(pod)
+		return n.DeletePod(ctx, pod)
 	}
 
 	// It's always safe to ignore the learn flow as we only process and add or update
@@ -125,7 +125,7 @@ func (n *NodeController) AddPod(pod *corev1.Pod) error {
 }
 
 // DeletePod handles the pod delete event
-func (n *NodeController) DeletePod(pod *corev1.Pod) error {
+func (n *NodeController) DeletePod(_ context.Context, pod *corev1.Pod) error {
 	// nothing to do for hostnetworked pods
 	if util.PodWantsHostNetwork(pod) {
 		return nil
@@ -154,16 +154,16 @@ func nameToCookie(nodeName string) string {
 
 // hybridOverlayNodeUpdate sets up or tears down VXLAN tunnels to hybrid overlay
 // nodes in the cluster
-func (n *NodeController) hybridOverlayNodeUpdate(node *corev1.Node) error {
+func (n *NodeController) hybridOverlayNodeUpdate(ctx context.Context, node *corev1.Node) error {
 	if !util.NoHostSubnet(node) {
 		// remove possible hybrid overlay remaining
-		return n.DeleteNode(node)
+		return n.DeleteNode(ctx, node)
 	}
 
 	cidr, nodeIP, drMAC, err := getNodeDetails(node)
 	if cidr == nil || nodeIP == nil || drMAC == nil {
 		klog.V(5).Infof("Cleaning up hybrid overlay resources for node %q because: %v", node.Name, err)
-		return n.DeleteNode(node)
+		return n.DeleteNode(ctx, node)
 	}
 
 	klog.Infof("Setting up hybrid overlay tunnel to node %s", node.Name)
@@ -233,7 +233,7 @@ func (n *NodeController) hybridOverlayNodeUpdate(node *corev1.Node) error {
 }
 
 // AddNode handles node additions and updates
-func (n *NodeController) AddNode(node *corev1.Node) error {
+func (n *NodeController) AddNode(ctx context.Context, node *corev1.Node) error {
 	klog.Info("Add Node ", node.Name)
 	var err error
 	if node.Name == n.nodeName {
@@ -255,7 +255,7 @@ func (n *NodeController) AddNode(node *corev1.Node) error {
 				if pod.Spec.NodeName != n.nodeName {
 					continue
 				}
-				err := n.AddPod(pod)
+				err := n.AddPod(ctx, pod)
 				if err != nil {
 					return fmt.Errorf("cannot wire pod %s/%s for hybrid overlay, %w", pod.Namespace, pod.Name, err)
 				}
@@ -277,7 +277,7 @@ func (n *NodeController) AddNode(node *corev1.Node) error {
 		}
 		// add remote node
 		klog.Infof("Add hybridOverlay remote Node %s", node.Name)
-		err = n.hybridOverlayNodeUpdate(node)
+		err = n.hybridOverlayNodeUpdate(ctx, node)
 		if err != nil {
 			return err
 		}
@@ -292,7 +292,7 @@ func (n *NodeController) deleteFlowsByCookie(cookie string) {
 }
 
 // DeleteNode handles node deletions
-func (n *NodeController) DeleteNode(node *corev1.Node) error {
+func (n *NodeController) DeleteNode(_ context.Context, node *corev1.Node) error {
 	if node.Name == n.nodeName {
 		return nil
 	}

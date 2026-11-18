@@ -132,7 +132,7 @@ func (oc *DefaultNetworkController) syncPods(ctx context.Context, pods []interfa
 		// Allocation also happens during Add/Update Node events. Allocate any address
 		// retained from a previous run before pod events can claim it.
 		if _, ok := node.Annotations[hotypes.HybridOverlayDRIP]; ok {
-			if err := oc.allocateHybridOverlayDRIP(node); err != nil {
+			if err := oc.allocateHybridOverlayDRIP(ctx, node); err != nil {
 				return fmt.Errorf("cannot allocate hybridOverlay DRIP on node %s (%v)", node.Name, err)
 			}
 		}

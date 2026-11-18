@@ -380,7 +380,7 @@ var _ = Describe("UserDefinedNodeNetworkController: UserDefinedPrimaryNetwork Ga
 				VLANID:      ptr.To(uint(0)),
 			}}).Return(nil)
 		nodeAnnotatorMock.On("Set", mock.Anything, mock.Anything).Return(nil)
-		nodeAnnotatorMock.On("Run").Return(nil)
+		nodeAnnotatorMock.On("Run", mock.Anything).Return(nil)
 		kubeMock.On("SetAnnotationsOnNode", mock.Anything, node.Name, map[string]interface{}{
 			"k8s.ovn.org/node-masquerade-subnet": "{\"ipv4\":\"169.254.0.0/17\",\"ipv6\":\"fd69::/112\"}",
 		}).Return(nil)
@@ -438,7 +438,7 @@ var _ = Describe("UserDefinedNodeNetworkController: UserDefinedPrimaryNetwork Ga
 			Expect(err).NotTo(HaveOccurred())
 
 			// make preparations for creating openflow manager in DNCC which can be used for SNCC
-			localGw, err := newGateway(
+			localGw, err := newGateway(context.Background(),
 				nodeName,
 				ovntest.MustParseIPNets(v4NodeSubnet, v6NodeSubnet),
 				gatewayNextHops,

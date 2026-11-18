@@ -4,6 +4,7 @@
 package controller
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"reflect"
@@ -25,10 +26,10 @@ import (
 
 // The nodeController interface is implemented by the os-specific code
 type nodeController interface {
-	AddPod(*corev1.Pod) error
-	DeletePod(*corev1.Pod) error
-	AddNode(*corev1.Node) error
-	DeleteNode(*corev1.Node) error
+	AddPod(context.Context, *corev1.Pod) error
+	DeletePod(context.Context, *corev1.Pod) error
+	AddNode(context.Context, *corev1.Node) error
+	DeleteNode(context.Context, *corev1.Node) error
 	RunFlowSync(<-chan struct{})
 	EnsureHybridOverlayBridge(node *corev1.Node) error
 }
@@ -110,19 +111,19 @@ func NewNode(
 	}
 	n := &Node{controller: controller}
 	n.nodeEventHandler, err = eventHandlerCreateFunction("node", nodeInformer,
-		func(obj interface{}) error {
+		func(ctx context.Context, obj interface{}) error {
 			node, ok := obj.(*corev1.Node)
 			if !ok {
 				return fmt.Errorf("object is not a node")
 			}
-			return n.controller.AddNode(node)
+			return n.controller.AddNode(ctx, node)
 		},
-		func(obj interface{}) error {
+		func(ctx context.Context, obj interface{}) error {
 			node, ok := obj.(*corev1.Node)
 			if !ok {
 				return fmt.Errorf("object is not a node")
 			}
-			return n.controller.DeleteNode(node)
+			return n.controller.DeleteNode(ctx, node)
 		},
 		nodeChanged,
 	)
@@ -130,7 +131,7 @@ func NewNode(
 		return nil, err
 	}
 	n.podEventHandler, err = eventHandlerCreateFunction("pod", podInformer,
-		func(obj interface{}) error {
+		func(ctx context.Context, obj interface{}) error {
 			pod, ok := obj.(*corev1.Pod)
 			if !ok {
 				return fmt.Errorf("object is not a pod")
@@ -138,14 +139,14 @@ func NewNode(
 			if pod.Spec.NodeName != nodeName {
 				return nil
 			}
-			return n.controller.AddPod(pod)
+			return n.controller.AddPod(ctx, pod)
 		},
-		func(obj interface{}) error {
+		func(ctx context.Context, obj interface{}) error {
 			pod, ok := obj.(*corev1.Pod)
 			if !ok {
 				return fmt.Errorf("object is not a pod")
 			}
-			return n.controller.DeletePod(pod)
+			return n.controller.DeletePod(ctx, pod)
 		},
 		podChanged,
 	)

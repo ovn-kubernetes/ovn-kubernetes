@@ -876,7 +876,7 @@ func TestUplinkStateGatewayStatusControllerDropsQueuedOldConfiguration(t *testin
 		t.Fatalf("failed to update cached UplinkState: %v", err)
 	}
 
-	if err := controller.publishGatewayCondition(uplinkName); err != nil {
+	if err := controller.publishGatewayCondition(context.Background(), uplinkName); err != nil {
 		t.Fatalf("stale publication returned an error: %v", err)
 	}
 	for _, action := range client.Actions() {
@@ -1134,7 +1134,7 @@ func TestUplinkStateGatewayStatusControllerRejectsMismatchedStateIdentity(t *tes
 	uplinkState := controller.ensureUplinkStateLocked(uplinkName)
 	uplinkState.stateUID = state.UID
 	controller.mutex.Unlock()
-	err := controller.publishGatewayCondition(uplinkName)
+	err := controller.publishGatewayCondition(context.Background(), uplinkName)
 	if err == nil || !strings.Contains(err.Error(), "reports uplinkName") {
 		t.Fatalf("expected identity validation error, got %v", err)
 	}

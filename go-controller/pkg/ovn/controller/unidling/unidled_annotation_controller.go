@@ -4,6 +4,7 @@
 package unidling
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -84,6 +85,7 @@ func IsOnGracePeriod(svc *corev1.Service) bool {
 }
 
 func (uac *unidledAtController) onServiceUpdate(old, new interface{}) {
+	ctx := context.Background()
 	oldSvc := old.(*corev1.Service)
 	newSvc := new.(*corev1.Service)
 
@@ -92,7 +94,7 @@ func (uac *unidledAtController) onServiceUpdate(old, new interface{}) {
 
 	if oldSvcIdleAt && !newSvcIdleAt {
 		// Service has been unidled, fill the unidled-at annotation with timing
-		err := uac.setUnidleAtAnnotation(newSvc)
+		err := uac.setUnidleAtAnnotation(ctx, newSvc)
 		if err != nil {
 			utilruntime.HandleError(err)
 		}
@@ -102,7 +104,7 @@ func (uac *unidledAtController) onServiceUpdate(old, new interface{}) {
 
 	if !oldSvcIdleAt && newSvcIdleAt {
 		// Service has been idled, remove unidled-at annotation
-		err := uac.removeUnidleAtAnnotation(newSvc)
+		err := uac.removeUnidleAtAnnotation(ctx, newSvc)
 		if err != nil {
 			utilruntime.HandleError(err)
 		}
@@ -112,10 +114,10 @@ func (uac *unidledAtController) onServiceUpdate(old, new interface{}) {
 
 }
 
-func (uac *unidledAtController) setUnidleAtAnnotation(svc *corev1.Service) error {
+func (uac *unidledAtController) setUnidleAtAnnotation(ctx context.Context, svc *corev1.Service) error {
 
 	nowStr := time.Now().Format(time.RFC3339)
-	err := uac.kube.SetAnnotationsOnService(svc.Namespace, svc.Name, map[string]interface{}{
+	err := uac.kube.SetAnnotationsOnService(ctx, svc.Namespace, svc.Name, map[string]interface{}{
 		UnidledAtAnnotation: nowStr,
 	})
 	if err != nil {
@@ -125,7 +127,7 @@ func (uac *unidledAtController) setUnidleAtAnnotation(svc *corev1.Service) error
 	return nil
 }
 
-func (uac *unidledAtController) removeUnidleAtAnnotation(svc *corev1.Service) error {
+func (uac *unidledAtController) removeUnidleAtAnnotation(ctx context.Context, svc *corev1.Service) error {
 
 	if svc.Annotations == nil {
 		return nil
@@ -137,7 +139,7 @@ func (uac *unidledAtController) removeUnidleAtAnnotation(svc *corev1.Service) er
 		return nil
 	}
 
-	err := uac.kube.SetAnnotationsOnService(svc.Namespace, svc.Name, map[string]interface{}{
+	err := uac.kube.SetAnnotationsOnService(ctx, svc.Namespace, svc.Name, map[string]interface{}{
 		UnidledAtAnnotation: nil,
 	})
 	if err != nil {

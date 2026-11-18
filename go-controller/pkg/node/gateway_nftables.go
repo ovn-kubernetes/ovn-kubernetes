@@ -53,7 +53,7 @@ const (
 // FIXME: This function is only called if config.NodeportEnable is true, but it and
 // getGatewayNFTRules are also used for `internalTrafficPolicy: Local` handling, which
 // should not be gated behind config.NodeportEnable.
-func initGatewayNFTables() error {
+func initGatewayNFTables(ctx context.Context) error {
 	nft, err := nodenft.GetNFTablesHelper()
 	if err != nil {
 		return err
@@ -296,7 +296,7 @@ func initGatewayNFTables() error {
 		),
 	})
 
-	if err := nft.Run(context.TODO(), tx); err != nil {
+	if err := nft.Run(ctx, tx); err != nil {
 		return fmt.Errorf("could not set up service nftables rules: %w", err)
 	}
 
@@ -758,15 +758,15 @@ func shouldAddUDNServiceMarkRules(netInfo util.NetInfo, nodeName string) bool {
 
 // reconcileUDNServiceMarkRules also removes old entries when an advertisement
 // changes the service's routing domain without changing the Service object.
-func reconcileUDNServiceMarkRules(service *corev1.Service, netInfo util.NetInfo, nodeName string, netConfig *bridgeconfig.BridgeUDNConfiguration) error {
+func reconcileUDNServiceMarkRules(ctx context.Context, service *corev1.Service, netInfo util.NetInfo, nodeName string, netConfig *bridgeconfig.BridgeUDNConfiguration) error {
 	if !netInfo.IsPrimaryNetwork() {
 		return nil
 	}
 	var err error
 	if shouldAddUDNServiceMarkRules(netInfo, nodeName) {
-		err = nodenft.AddObjects(getUDNNFTRules(service, netConfig))
+		err = nodenft.AddObjects(ctx, getUDNNFTRules(service, netConfig))
 	} else {
-		err = nodenft.DeleteElementsIfMatching(getUDNNFTRules(service, netConfig))
+		err = nodenft.DeleteElementsIfMatching(ctx, getUDNNFTRules(service, netConfig))
 	}
 	if err != nil {
 		return fmt.Errorf("failed to reconcile UDN service mark rules for service %s/%s: %w",
@@ -1005,7 +1005,7 @@ func getUDNMasqueradeNFTRules(ipFamily utilnet.IPFamily) ([]*knftables.Rule, err
 
 // initLocalGatewayNFTNATRules sets up nftables rules for local gateway NAT functionality
 // This function supports dual-stack by accepting multiple CIDRs and generating rules for all IP families
-func initLocalGatewayNFTNATRules(cidrs ...*net.IPNet) error {
+func initLocalGatewayNFTNATRules(ctx context.Context, cidrs ...*net.IPNet) error {
 	nft, err := nodenft.GetNFTablesHelper()
 	if err != nil {
 		return fmt.Errorf("failed to get nftables helper: %w", err)
@@ -1087,7 +1087,7 @@ func initLocalGatewayNFTNATRules(cidrs ...*net.IPNet) error {
 		tx.Add(jumpToUDNRule)
 	}
 
-	err = nft.Run(context.TODO(), tx)
+	err = nft.Run(ctx, tx)
 	if err != nil {
 		return fmt.Errorf("failed to setup local gateway NAT nftables rules: %w", err)
 	}
@@ -1100,7 +1100,7 @@ func initLocalGatewayNFTNATRules(cidrs ...*net.IPNet) error {
 // If the rules already exist, they are updated.
 // If isAdvertisedNetwork is true, the masquerade rules also get a destination match
 // that matches the remote node IP set.
-func addOrUpdateLocalGatewayPodSubnetNFTRules(isAdvertisedNetwork bool, cidrs ...*net.IPNet) error {
+func addOrUpdateLocalGatewayPodSubnetNFTRules(ctx context.Context, isAdvertisedNetwork bool, cidrs ...*net.IPNet) error {
 	nft, err := nodenft.GetNFTablesHelper()
 	if err != nil {
 		return fmt.Errorf("failed to get nftables helper: %w", err)
@@ -1131,7 +1131,7 @@ func addOrUpdateLocalGatewayPodSubnetNFTRules(isAdvertisedNetwork bool, cidrs ..
 		}
 	}
 
-	if err := nft.Run(context.TODO(), tx); err != nil {
+	if err := nft.Run(ctx, tx); err != nil {
 		return fmt.Errorf("failed to add pod subnet NAT rules: %w", err)
 	}
 
@@ -1140,7 +1140,7 @@ func addOrUpdateLocalGatewayPodSubnetNFTRules(isAdvertisedNetwork bool, cidrs ..
 
 // delLocalGatewayPodSubnetNFTRules removes nftables rules for pod subnet masquerading for multiple CIDRs
 // Since we use a separate chain, we can simply flush it to remove all pod subnet rules.
-func delLocalGatewayPodSubnetNFTRules() error {
+func delLocalGatewayPodSubnetNFTRules(ctx context.Context) error {
 	nft, err := nodenft.GetNFTablesHelper()
 	if err != nil {
 		return fmt.Errorf("failed to get nftables helper: %w", err)
@@ -1160,7 +1160,7 @@ func delLocalGatewayPodSubnetNFTRules() error {
 	// This removes all pod subnet masquerade rules at once
 	tx.Flush(&knftables.Chain{Name: nftablesPodSubnetMasqChain})
 
-	if err := nft.Run(context.TODO(), tx); err != nil && !knftables.IsNotFound(err) {
+	if err := nft.Run(ctx, tx); err != nil && !knftables.IsNotFound(err) {
 		return fmt.Errorf("failed to delete pod subnet NAT rules: %w", err)
 	}
 

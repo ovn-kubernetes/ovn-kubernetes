@@ -268,7 +268,7 @@ func initController(namespaces []corev1.Namespace, pods []corev1.Pod, egressIPs 
 
 	// Pre-populate nftables map elements for repair tests
 	if len(node.nftElements) > 0 {
-		if err := c.initNFTables(); err != nil {
+		if err := c.initNFTables(context.Background()); err != nil {
 			return nil, nil, err
 		}
 		nft, err := nodenft.GetNFTablesHelper()
@@ -339,7 +339,7 @@ func runController(testNS ns.NetNS, c *Controller) (cleanupFn, error) {
 		if err := c.ruleManager.OwnPriority(rulePriority); err != nil {
 			return err
 		}
-		return c.initNFTables()
+		return c.initNFTables(context.Background())
 	})
 	if err != nil {
 		return nil, err
@@ -1127,7 +1127,7 @@ var _ = ginkgo.Describe("label to annotations migration", func() {
 
 	ginkgo.It("creates annotation", func() {
 		gomega.Expect(testNS.Do(func(ns.NetNS) error {
-			return c.migrateFromAddrLabelToAnnotation()
+			return c.migrateFromAddrLabelToAnnotation(context.Background())
 		})).Should(gomega.Succeed())
 		gomega.Eventually(func() bool {
 			assignedEIPs, err := c.getAnnotation()
@@ -1227,7 +1227,7 @@ var _ = ginkgo.DescribeTable("repair node", func(expectedStateFollowingClean []e
 	runSubControllers(testNS, c, wg, stopCh)
 	// for now, we expect it to always succeed
 	err = testNS.Do(func(ns.NetNS) error {
-		return c.repairNode()
+		return c.repairNode(context.Background())
 	})
 	gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 	// check node

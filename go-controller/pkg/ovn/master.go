@@ -529,7 +529,7 @@ func nodeNeedsSync(syncs *nodeSyncs) bool {
 		syncs.syncReroute
 }
 
-func (oc *DefaultNetworkController) addUpdateLocalNodeEvent(_ context.Context, node *corev1.Node, nSyncs *nodeSyncs) error {
+func (oc *DefaultNetworkController) addUpdateLocalNodeEvent(ctx context.Context, node *corev1.Node, nSyncs *nodeSyncs) error {
 	var hostSubnets []*net.IPNet
 	var errs []error
 	var err error
@@ -570,7 +570,7 @@ func (oc *DefaultNetworkController) addUpdateLocalNodeEvent(_ context.Context, n
 
 	// since the nodeSync objects are created knowing if hybridOverlay is enabled this should work
 	if nSyncs.syncHo && config.HybridOverlay.Enabled {
-		if err = oc.allocateHybridOverlayDRIP(node); err != nil {
+		if err = oc.allocateHybridOverlayDRIP(ctx, node); err != nil {
 			errs = append(errs, err)
 			oc.hybridOverlayFailed.Store(node.Name, true)
 		}
@@ -636,7 +636,7 @@ func (oc *DefaultNetworkController) addUpdateLocalNodeEvent(_ context.Context, n
 				}
 			}
 		}
-		if err := annotator.Run(); err != nil {
+		if err := annotator.Run(ctx); err != nil {
 			errs = append(errs, fmt.Errorf("failed to set hybrid overlay annotations for node %s: %v", node.Name, err))
 		}
 	}

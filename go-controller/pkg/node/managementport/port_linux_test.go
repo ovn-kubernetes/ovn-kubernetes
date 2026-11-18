@@ -359,7 +359,7 @@ func testManagementPort(ctx *cli.Context, fexec *ovntest.FakeExec, testNS ns.Net
 	})
 	Expect(err).NotTo(HaveOccurred())
 
-	err = nodeAnnotator.Run()
+	err = nodeAnnotator.Run(context.Background())
 	Expect(err).NotTo(HaveOccurred())
 
 	checkMgmtPortTestNFTables(configs, mgtPort)
@@ -512,7 +512,7 @@ func testManagementPortDPU(ctx *cli.Context, fexec *ovntest.FakeExec, testNS ns.
 	})
 	Expect(err).NotTo(HaveOccurred())
 
-	err = nodeAnnotator.Run()
+	err = nodeAnnotator.Run(context.Background())
 	Expect(err).NotTo(HaveOccurred())
 	Eventually(fexec.CalledMatchesExpected).Should(BeTrue(), fexec.ErrorDesc)
 }
@@ -990,9 +990,9 @@ var _ = Describe("Management Port tests", func() {
 					ipv4:    &fakeMgmtPortIPFamilyConfig,
 					netInfo: netInfo,
 				}
-				err := SetupManagementPortNFTSets()
+				err := SetupManagementPortNFTSets(context.Background())
 				Expect(err).NotTo(HaveOccurred())
-				err = setupManagementPortNFTChain(types.K8sMgmtIntfName, &fakeMgmtPortConfig)
+				err = setupManagementPortNFTChain(context.Background(), types.K8sMgmtIntfName, &fakeMgmtPortConfig)
 				Expect(err).NotTo(HaveOccurred())
 
 				finalExpectedNFT := nft.Dump()
@@ -1017,7 +1017,7 @@ var _ = Describe("Management Port tests", func() {
 				err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 				Expect(err).NotTo(HaveOccurred())
 
-				err = setupManagementPortNFTChain(types.K8sMgmtIntfName, &fakeMgmtPortConfig)
+				err = setupManagementPortNFTChain(context.Background(), types.K8sMgmtIntfName, &fakeMgmtPortConfig)
 				Expect(err).NotTo(HaveOccurred())
 				err = nodenft.MatchNFTRules(finalExpectedNFT, nft.Dump())
 				Expect(err).NotTo(HaveOccurred())

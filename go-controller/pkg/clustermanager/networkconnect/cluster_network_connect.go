@@ -133,14 +133,14 @@ func (c *Controller) reconcileClusterNetworkConnect(ctx context.Context, key str
 	if err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("failed to get CNC %s: %w", cncName, err)
 	}
-	err = c.syncClusterNetworkConnect(cncName, cnc)
+	err = c.syncClusterNetworkConnect(ctx, cncName, cnc)
 	if cnc != nil {
 		c.updateStatus(ctx, cnc, err)
 	}
 	return err
 }
 
-func (c *Controller) syncClusterNetworkConnect(cncName string, cnc *networkconnectv1.ClusterNetworkConnect) error {
+func (c *Controller) syncClusterNetworkConnect(ctx context.Context, cncName string, cnc *networkconnectv1.ClusterNetworkConnect) error {
 	c.Lock()
 	defer c.Unlock()
 	cncState, cncExists := c.cncCache[cncName]
@@ -211,7 +211,7 @@ func (c *Controller) syncClusterNetworkConnect(cncName string, cnc *networkconne
 		if err != nil {
 			return fmt.Errorf("failed to allocate tunnel key for CNC %s: %w", cncName, err)
 		}
-		err = util.UpdateNetworkConnectRouterTunnelKeyAnnotation(cnc.Name, c.cncClient, tunnelKeys[0])
+		err = util.UpdateNetworkConnectRouterTunnelKeyAnnotation(ctx, cnc.Name, c.cncClient, tunnelKeys[0])
 		if err != nil {
 			return fmt.Errorf("failed to update network connect router tunnel key annotation for CNC %s: %w", cncName, err)
 		}
@@ -245,7 +245,7 @@ func (c *Controller) syncClusterNetworkConnect(cncName string, cnc *networkconne
 		networksNeedingRelease.UnsortedList())
 	// we need to update the annotation only if there are networks that are newly matched or newly released
 	if len(networksNeedingAllocation) > 0 || len(networksNeedingRelease) > 0 {
-		err = util.UpdateNetworkConnectSubnetAnnotation(cnc, c.cncClient, allocatedSubnets)
+		err = util.UpdateNetworkConnectSubnetAnnotation(ctx, cnc, c.cncClient, allocatedSubnets)
 		if err != nil {
 			return fmt.Errorf("failed to update network connect subnet annotation for CNC %s: %w", cncName, err)
 		}

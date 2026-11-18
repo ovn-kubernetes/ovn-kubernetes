@@ -256,11 +256,11 @@ func (c *Controller) Stop() {
 	)
 }
 
-func (c *Controller) reconcileUplink(_ context.Context, key string) error {
+func (c *Controller) reconcileUplink(ctx context.Context, key string) error {
 	uplink, err := c.uplinkLister.Get(key)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			return c.deleteUplinkState(uplinkutil.StateName(key, c.nodeName))
+			return c.deleteUplinkState(ctx, uplinkutil.StateName(key, c.nodeName))
 		}
 		return fmt.Errorf("failed to get Uplink %s: %w", key, err)
 	}
@@ -272,10 +272,10 @@ func (c *Controller) reconcileUplink(_ context.Context, key string) error {
 
 	nodeConfig, nodeConfigErr := selectedNodeConfigForNode(uplink, node)
 	if nodeConfigErr == nil && nodeConfig == nil {
-		return c.deleteUplinkState(uplinkutil.StateName(uplink.Name, c.nodeName))
+		return c.deleteUplinkState(ctx, uplinkutil.StateName(uplink.Name, c.nodeName))
 	}
 
-	state, err := c.ensureUplinkState(uplink, nodeConfig, nodeConfigErr)
+	state, err := c.ensureUplinkState(ctx, uplink, nodeConfig, nodeConfigErr)
 	if err != nil {
 		return err
 	}
@@ -284,6 +284,7 @@ func (c *Controller) reconcileUplink(_ context.Context, key string) error {
 	}
 	if nodeConfigErr != nil {
 		return errors.Join(nodeConfigErr, c.updateUplinkStateStatus(
+			ctx,
 			state,
 			string(state.Status.HostInterfaceName),
 			nil,
@@ -308,7 +309,7 @@ func (c *Controller) reconcileNode(_ context.Context, key string) error {
 	return nil
 }
 
-func (c *Controller) reconcileUplinkState(_ context.Context, key string) error {
+func (c *Controller) reconcileUplinkState(ctx context.Context, key string) error {
 	state, err := c.uplinkStateLister.Get(key)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
@@ -333,6 +334,7 @@ func (c *Controller) reconcileUplinkState(_ context.Context, key string) error {
 	nodeConfig, err := selectedNodeConfigForNode(uplink, node)
 	if err != nil {
 		return errors.Join(err, c.updateUplinkStateStatus(
+			ctx,
 			state,
 			string(state.Status.HostInterfaceName),
 			nil,
@@ -343,7 +345,7 @@ func (c *Controller) reconcileUplinkState(_ context.Context, key string) error {
 		))
 	}
 	if nodeConfig == nil {
-		return c.deleteUplinkState(state.Name)
+		return c.deleteUplinkState(ctx, state.Name)
 	}
 
 	hostInterfaceName := string(nodeConfig.HostInterfaceName)
@@ -352,6 +354,7 @@ func (c *Controller) reconcileUplinkState(_ context.Context, key string) error {
 		hostState, err = hostInterfaceStateFromStatus(state, hostInterfaceName)
 		if err != nil {
 			return errors.Join(err, c.updateUplinkStateStatus(
+				ctx,
 				state,
 				hostInterfaceName,
 				nil,
@@ -365,6 +368,7 @@ func (c *Controller) reconcileUplinkState(_ context.Context, key string) error {
 		hostState, err = c.hostDiscoverer.Discover(hostInterfaceName)
 		if err != nil {
 			return errors.Join(err, c.updateUplinkStateStatus(
+				ctx,
 				state,
 				hostInterfaceName,
 				nil,
@@ -382,6 +386,7 @@ func (c *Controller) reconcileUplinkState(_ context.Context, key string) error {
 		// validation and the Resolved condition belong to the DPU side.
 		c.repollMissingDefaultGateways(state.Name, hostInterfaceName, hostState)
 		return c.updateUplinkStateStatus(
+			ctx,
 			state,
 			hostInterfaceName,
 			hostState,
@@ -395,6 +400,7 @@ func (c *Controller) reconcileUplinkState(_ context.Context, key string) error {
 	defaultBridgeName, err := defaultGatewayBridgeName(node)
 	if err != nil {
 		return errors.Join(err, c.updateUplinkStateStatus(
+			ctx,
 			state,
 			hostInterfaceName,
 			hostState,
@@ -435,6 +441,7 @@ func (c *Controller) reconcileUplinkState(_ context.Context, key string) error {
 		}
 		if err != nil {
 			return errors.Join(err, c.updateUplinkStateStatus(
+				ctx,
 				state,
 				hostInterfaceName,
 				hostState,
@@ -446,6 +453,7 @@ func (c *Controller) reconcileUplinkState(_ context.Context, key string) error {
 		}
 		if err := c.validateBridgeUplink(bridgeName, hostInterfaceName, defaultBridgeName, false); err != nil {
 			return errors.Join(err, c.updateUplinkStateStatus(
+				ctx,
 				state,
 				hostInterfaceName,
 				hostState,
@@ -456,6 +464,7 @@ func (c *Controller) reconcileUplinkState(_ context.Context, key string) error {
 			))
 		}
 		return c.updateResolvedUplinkStateStatus(
+			ctx,
 			state,
 			hostInterfaceName,
 			hostState,
@@ -467,6 +476,7 @@ func (c *Controller) reconcileUplinkState(_ context.Context, key string) error {
 	bridgeName, err := c.bridgeResolver.Resolve(hostInterfaceName)
 	if err != nil {
 		return errors.Join(err, c.updateUplinkStateStatus(
+			ctx,
 			state,
 			hostInterfaceName,
 			hostState,
@@ -478,6 +488,7 @@ func (c *Controller) reconcileUplinkState(_ context.Context, key string) error {
 	}
 	if err := c.validateBridgeUplink(bridgeName, hostInterfaceName, defaultBridgeName, true); err != nil {
 		return errors.Join(err, c.updateUplinkStateStatus(
+			ctx,
 			state,
 			hostInterfaceName,
 			hostState,
@@ -490,6 +501,7 @@ func (c *Controller) reconcileUplinkState(_ context.Context, key string) error {
 
 	c.repollMissingDefaultGateways(state.Name, hostInterfaceName, hostState)
 	return c.updateResolvedUplinkStateStatus(
+		ctx,
 		state,
 		hostInterfaceName,
 		hostState,
@@ -651,6 +663,7 @@ func validateDefaultGatewayBridge(bridgeName, defaultGatewayBridgeName string) e
 }
 
 func (c *Controller) updateResolvedUplinkStateStatus(
+	ctx context.Context,
 	state *uplinkv1alpha1.UplinkState,
 	hostInterfaceName string,
 	hostState *hostInterfaceState,
@@ -658,6 +671,7 @@ func (c *Controller) updateResolvedUplinkStateStatus(
 	message string,
 ) error {
 	return c.updateUplinkStateStatus(
+		ctx,
 		state,
 		hostInterfaceName,
 		hostState,
@@ -681,6 +695,7 @@ func (c *Controller) updateResolvedUplinkStateStatus(
 // TODO: subscribe to netlink and OVSDB events and reconcile on relevant
 // changes instead of polling through retries.
 func (c *Controller) updateUplinkStateStatus(
+	ctx context.Context,
 	state *uplinkv1alpha1.UplinkState,
 	hostInterfaceName string,
 	hostState *hostInterfaceState,
@@ -731,7 +746,7 @@ func (c *Controller) updateUplinkStateStatus(
 	}
 
 	_, err := c.uplinkClient.K8sV1alpha1().UplinkStates().Apply(
-		context.Background(),
+		ctx,
 		uplinkapply.UplinkState(state.Name).WithStatus(
 			statusApply,
 		),
@@ -852,6 +867,7 @@ func statusCondition(
 }
 
 func (c *Controller) ensureUplinkState(
+	ctx context.Context,
 	uplink *uplinkv1alpha1.Uplink,
 	nodeConfig *uplinkv1alpha1.UplinkNodeConfig,
 	nodeConfigErr error,
@@ -864,7 +880,7 @@ func (c *Controller) ensureUplinkState(
 		}
 		state = desiredUplinkState(uplink, c.nodeName, name, nodeConfig, nodeConfigErr)
 		created, err := c.uplinkClient.K8sV1alpha1().UplinkStates().Create(
-			context.Background(),
+			ctx,
 			state,
 			metav1.CreateOptions{},
 		)
@@ -875,7 +891,7 @@ func (c *Controller) ensureUplinkState(
 			return nil, fmt.Errorf("failed to create UplinkState %s: %w", name, err)
 		}
 		state, err = c.uplinkClient.K8sV1alpha1().UplinkStates().Get(
-			context.Background(),
+			ctx,
 			name,
 			metav1.GetOptions{},
 		)
@@ -898,7 +914,7 @@ func (c *Controller) ensureUplinkState(
 		copy.Annotations = desired.Annotations
 		copy.OwnerReferences = desired.OwnerReferences
 		if _, err := c.uplinkClient.K8sV1alpha1().UplinkStates().Update(
-			context.Background(),
+			ctx,
 			copy,
 			metav1.UpdateOptions{},
 		); err != nil {
@@ -953,9 +969,9 @@ func desiredUplinkState(
 	return state
 }
 
-func (c *Controller) deleteUplinkState(name string) error {
+func (c *Controller) deleteUplinkState(ctx context.Context, name string) error {
 	err := c.uplinkClient.K8sV1alpha1().UplinkStates().Delete(
-		context.Background(),
+		ctx,
 		name,
 		metav1.DeleteOptions{},
 	)

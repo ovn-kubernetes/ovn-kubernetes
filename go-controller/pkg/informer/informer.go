@@ -7,6 +7,7 @@
 package informer
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"time"
@@ -44,9 +45,9 @@ type eventHandler struct {
 	// workqueue is the queue we use to store work
 	workqueue workqueue.TypedRateLimitingInterface[string]
 	// add is the handler function that gets called when something has been added/updated
-	add func(obj interface{}) error
+	add func(ctx context.Context, obj interface{}) error
 	// delete is handler function that gets called when something has been deleted
-	delete func(obj interface{}) error
+	delete func(ctx context.Context, obj interface{}) error
 	// updateFilter is the function that we use to evaluate whether an update
 	// should be enqueued or not. This is required to avoid an unrelated annotation
 	// change triggering hundreds of OVN commands being run
@@ -71,7 +72,7 @@ func DiscardAllUpdates(_, _ interface{}) bool {
 type EventHandlerCreateFunction func(
 	name string,
 	informer cache.SharedIndexInformer,
-	addFunc, deleteFunc func(obj interface{}) error,
+	addFunc, deleteFunc func(ctx context.Context, obj interface{}) error,
 	updateFilterFunc UpdateFilterFunction,
 ) (EventHandler, error)
 
@@ -87,7 +88,7 @@ type EventHandlerCreateFunction func(
 func NewDefaultEventHandler(
 	name string,
 	informer cache.SharedIndexInformer,
-	addFunc, deleteFunc func(obj interface{}) error,
+	addFunc, deleteFunc func(ctx context.Context, obj interface{}) error,
 	updateFilterFunc UpdateFilterFunction,
 ) (EventHandler, error) {
 	e := &eventHandler{
@@ -143,7 +144,7 @@ func NewDefaultEventHandler(
 func NewTestEventHandler(
 	name string,
 	informer cache.SharedIndexInformer,
-	addFunc, deleteFunc func(obj interface{}) error,
+	addFunc, deleteFunc func(ctx context.Context, obj interface{}) error,
 	updateFilterFunc UpdateFilterFunction,
 ) (EventHandler, error) {
 	e := &eventHandler{
@@ -298,9 +299,11 @@ func (e *eventHandler) processNextWorkItem() bool {
 		// make sure we call Done on the object once we've finshed processing
 		defer e.workqueue.Done(key)
 
+		ctx := context.Background()
+
 		// Run the syncHandler, passing it the namespace/name string of the
 		// resource to be synced.
-		if err := e.syncHandler(key); err != nil {
+		if err := e.syncHandler(ctx, key); err != nil {
 			// Put the item back on the workqueue to handle any transient errors
 			// if it hasn't already been requeued more times than our MaxRetries
 			if e.workqueue.NumRequeues(key) < MaxRetries {
@@ -330,7 +333,7 @@ func (e *eventHandler) processNextWorkItem() bool {
 
 // syncHandler fetches an item from the informer's cache
 // and dispatches to the relevant handler function
-func (e *eventHandler) syncHandler(key string) error {
+func (e *eventHandler) syncHandler(ctx context.Context, key string) error {
 	// get the object from the informer cache
 	obj, exists, err := e.informer.GetIndexer().GetByKey(key)
 	if err != nil {
@@ -348,14 +351,14 @@ func (e *eventHandler) syncHandler(key string) error {
 			return fmt.Errorf("key %s doesn't exist in deletedIndexer: %v", key, err)
 		}
 		// call the eventHandler's delete function for this object
-		if err := e.delete(obj); err != nil {
+		if err := e.delete(ctx, obj); err != nil {
 			return err
 		}
 		// finally, remove the deleted object from the deletedIndexer
 		return e.deletedIndexer.Delete(obj)
 	}
 	// call the eventHandler's add function in the case of add/update
-	return e.add(obj)
+	return e.add(ctx, obj)
 }
 
 func WaitForCacheSyncWithTimeout(stopCh <-chan struct{}, cacheSyncs ...cache.InformerSynced) bool {

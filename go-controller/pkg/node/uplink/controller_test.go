@@ -757,6 +757,7 @@ func TestNodeUplinkControllerSkipsUnchangedStatus(t *testing.T) {
 			controller, client := newTestController(t, fakeHostDiscoverer{}, fakeBridgeResolver{}, state)
 
 			g.Expect(controller.updateUplinkStateStatus(
+				context.Background(),
 				state,
 				"breth0",
 				newStatusTestHostState(),
@@ -813,6 +814,7 @@ func TestNodeUplinkControllerAppliesOwnedStatusClears(t *testing.T) {
 			controller, client := newTestController(t, fakeHostDiscoverer{}, fakeBridgeResolver{}, state)
 
 			g.Expect(controller.updateUplinkStateStatus(
+				context.Background(),
 				state,
 				"breth0",
 				test.hostState,
@@ -1670,7 +1672,7 @@ func TestEnsureUplinkStateGetsExistingObjectAfterCreateRace(t *testing.T) {
 	fakeClient := client.UplinkClient.(*uplinkfake.Clientset)
 	fakeClient.ClearActions()
 
-	state, err := controller.ensureUplinkState(uplink, nodeConfig, nil)
+	state, err := controller.ensureUplinkState(context.Background(), uplink, nodeConfig, nil)
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(state.Spec.UplinkName).To(gomega.Equal("br-blue"))
 	g.Expect(state.Spec.NodeName).To(gomega.Equal("node-a"))

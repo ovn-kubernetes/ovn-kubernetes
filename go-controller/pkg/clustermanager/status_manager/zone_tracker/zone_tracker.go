@@ -30,13 +30,13 @@ type ZoneTracker struct {
 	zones sets.Set[string]
 
 	// onZonesUpdate will be called on every zone change
-	onZonesUpdate func(newZones sets.Set[string])
+	onZonesUpdate func(ctx context.Context, newZones sets.Set[string])
 
 	nodeLister     corelisters.NodeLister
 	nodeController controller.Controller
 }
 
-func NewZoneTracker(nodeInformer coreinformers.NodeInformer, onZonesUpdate func(newZones sets.Set[string])) *ZoneTracker {
+func NewZoneTracker(nodeInformer coreinformers.NodeInformer, onZonesUpdate func(ctx context.Context, newZones sets.Set[string])) *ZoneTracker {
 	zt := &ZoneTracker{
 		zonesLock:     sync.RWMutex{},
 		zones:         sets.New[string](),
@@ -48,17 +48,16 @@ func NewZoneTracker(nodeInformer coreinformers.NodeInformer, onZonesUpdate func(
 		Informer:       nodeInformer.Informer(),
 		Lister:         nodeInformer.Lister().List,
 		ObjNeedsUpdate: zt.needsUpdate,
-		Reconcile: func(_ context.Context, nodeName string) error {
-			return zt.reconcileNode(nodeName)
-		},
-		Threadiness: 1,
+		Reconcile:      zt.reconcileNode,
+		Threadiness:    1,
 	}
 	zt.nodeController = controller.NewController[corev1.Node]("zone_tracker", controllerConfig)
 	return zt
 }
 
 func (zt *ZoneTracker) Start() error {
-	if err := controller.StartWithInitialSync(zt.initialSync, zt.nodeController); err != nil {
+	ctx := context.Background()
+	if err := controller.StartWithInitialSync(func() error { return zt.initialSync(ctx) }, zt.nodeController); err != nil {
 		return fmt.Errorf("failed to start zone tracker: %w", err)
 	}
 	return nil
@@ -75,23 +74,23 @@ func (zt *ZoneTracker) needsUpdate(oldNode, newNode *corev1.Node) bool {
 	return util.NoHostSubnet(oldNode) != util.NoHostSubnet(newNode)
 }
 
-func (zt *ZoneTracker) initialSync() error {
+func (zt *ZoneTracker) initialSync(ctx context.Context) error {
 	nodes, err := zt.nodeLister.List(labels.Everything())
 	if err != nil {
 		return fmt.Errorf("failed to list objects: %w", err)
 	}
 	for _, node := range nodes {
-		if err := zt.reconcileNode(node.Name); err != nil {
+		if err := zt.reconcileNode(ctx, node.Name); err != nil {
 			return err
 		}
 	}
 	zt.zonesLock.Lock()
 	defer zt.zonesLock.Unlock()
-	zt.notifySubscriber()
+	zt.notifySubscriber(ctx)
 	return nil
 }
 
-func (zt *ZoneTracker) reconcileNode(nodeName string) error {
+func (zt *ZoneTracker) reconcileNode(ctx context.Context, nodeName string) error {
 	node, err := zt.nodeLister.Get(nodeName)
 	// It´s unlikely that we have an error different that "Not Found Object"
 	// because we are getting the object from the informer´s cache
@@ -113,11 +112,11 @@ func (zt *ZoneTracker) reconcileNode(nodeName string) error {
 	} else {
 		zt.zones.Delete(nodeName)
 	}
-	zt.notifySubscriber()
+	zt.notifySubscriber(ctx)
 	return nil
 }
 
 // notifySubscriber must be called with zonesLock
-func (zt *ZoneTracker) notifySubscriber() {
-	zt.onZonesUpdate(sets.New[string](zt.zones.UnsortedList()...))
+func (zt *ZoneTracker) notifySubscriber(ctx context.Context) {
+	zt.onZonesUpdate(ctx, sets.New[string](zt.zones.UnsortedList()...))
 }

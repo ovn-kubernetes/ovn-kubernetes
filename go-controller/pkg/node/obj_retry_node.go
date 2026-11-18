@@ -152,7 +152,7 @@ func (h *nodeEventHandler) GetResourceFromInformerCache(key string) (interface{}
 // the function was executed from iterateRetryResources, AddResource adds the
 // specified object to the cluster according to its type and returns the error,
 // if any, yielded during object creation.
-func (h *nodeEventHandler) AddResource(_ context.Context, obj interface{}, _ bool) error {
+func (h *nodeEventHandler) AddResource(ctx context.Context, obj interface{}, _ bool) error {
 	switch h.objType {
 	case factory.EndpointSliceForStaleConntrackRemovalType:
 		// no action needed upon add event
@@ -164,7 +164,7 @@ func (h *nodeEventHandler) AddResource(_ context.Context, obj interface{}, _ boo
 		if node.Name == h.nc.name {
 			if config.IsModeDPUHost() || config.IsModeFull() {
 				if util.NodeDontSNATSubnetAnnotationExist(node) {
-					err := managementport.UpdateNoSNATSubnetsSets(node, util.ParseNodeDontSNATSubnetsList)
+					err := managementport.UpdateNoSNATSubnetsSets(ctx, node, util.ParseNodeDontSNATSubnetsList)
 					if err != nil {
 						return fmt.Errorf("error updating no snat subnets sets: %w", err)
 					}
@@ -177,7 +177,7 @@ func (h *nodeEventHandler) AddResource(_ context.Context, obj interface{}, _ boo
 					if err != nil {
 						return fmt.Errorf("failed to get host addresses for node %s: %w", node.Name, err)
 					}
-					if err := syncNoOverlaySNATExemptNFTSets(hostAddrs); err != nil {
+					if err := syncNoOverlaySNATExemptNFTSets(ctx, hostAddrs); err != nil {
 						return fmt.Errorf("failed to sync no-overlay SNAT exemption nftables sets: %w", err)
 					}
 				}
@@ -185,7 +185,7 @@ func (h *nodeEventHandler) AddResource(_ context.Context, obj interface{}, _ boo
 
 			return nil
 		}
-		return h.nc.addOrUpdateNode(node)
+		return h.nc.addOrUpdateNode(ctx, node)
 
 	default:
 		return fmt.Errorf("no add function for object type %s", h.objType)
@@ -196,7 +196,7 @@ func (h *nodeEventHandler) AddResource(_ context.Context, obj interface{}, _ boo
 // the specified object in the cluster to its version in newObj according to its type
 // and returns the error, if any, yielded during the object update. The inRetryCache
 // boolean argument is to indicate if the given resource is in the retryCache or not.
-func (h *nodeEventHandler) UpdateResource(_ context.Context, oldObj, newObj interface{}, _ bool) error {
+func (h *nodeEventHandler) UpdateResource(ctx context.Context, oldObj, newObj interface{}, _ bool) error {
 	switch h.objType {
 	case factory.EndpointSliceForStaleConntrackRemovalType:
 		oldEndpointSlice := oldObj.(*discovery.EndpointSlice)
@@ -213,7 +213,7 @@ func (h *nodeEventHandler) UpdateResource(_ context.Context, oldObj, newObj inte
 			if (config.IsModeDPUHost() || config.IsModeFull()) && !reflect.DeepEqual(oldNode.Annotations, newNode.Annotations) {
 				// if node's dont SNAT subnet annotation changed sync nftables
 				if util.NodeDontSNATSubnetAnnotationChanged(oldNode, newNode) {
-					err := managementport.UpdateNoSNATSubnetsSets(newNode, util.ParseNodeDontSNATSubnetsList)
+					err := managementport.UpdateNoSNATSubnetsSets(ctx, newNode, util.ParseNodeDontSNATSubnetsList)
 					if err != nil {
 						return fmt.Errorf("error updating no snat subnets sets: %w", err)
 					}
@@ -227,7 +227,7 @@ func (h *nodeEventHandler) UpdateResource(_ context.Context, oldObj, newObj inte
 						if err != nil {
 							return fmt.Errorf("failed to get host addresses for node %s: %w", newNode.Name, err)
 						}
-						if err := syncNoOverlaySNATExemptNFTSets(hostAddrs); err != nil {
+						if err := syncNoOverlaySNATExemptNFTSets(ctx, hostAddrs); err != nil {
 							return fmt.Errorf("failed to sync no-overlay SNAT exemption nftables sets: %w", err)
 						}
 					}
@@ -242,7 +242,7 @@ func (h *nodeEventHandler) UpdateResource(_ context.Context, oldObj, newObj inte
 			// than registering a separate node informer handler.
 			if config.OvnKubeNode.Mode == types.NodeModeDPU && util.NodePrimaryDPUHostAddrAnnotationChanged(oldNode, newNode) {
 				if gw, ok := h.nc.Gateway.(*gateway); ok && gw.nodeIPManager != nil {
-					if err := gw.nodeIPManager.updateGatewayAddressAnnotations(); err != nil {
+					if err := gw.nodeIPManager.updateGatewayAddressAnnotations(ctx); err != nil {
 						return fmt.Errorf("failed to update gateway annotations after primary-dpu-host-addr change for node %s: %w", newNode.Name, err)
 					}
 				}
@@ -284,11 +284,11 @@ func (h *nodeEventHandler) UpdateResource(_ context.Context, oldObj, newObj inte
 				}
 			}
 
-			if err := removePMTUDNodeNFTRules(ipsToRemove); err != nil {
+			if err := removePMTUDNodeNFTRules(ctx, ipsToRemove); err != nil {
 				return fmt.Errorf("error removing node %q stale NFT rules during update: %w", oldNode.Name, err)
 			}
 		}
-		return h.nc.addOrUpdateNode(newNode)
+		return h.nc.addOrUpdateNode(ctx, newNode)
 
 	default:
 		return fmt.Errorf("no update function for object type %s", h.objType)
@@ -299,16 +299,16 @@ func (h *nodeEventHandler) UpdateResource(_ context.Context, oldObj, newObj inte
 // deletes the object from the cluster according to the delete logic of its resource type.
 // cachedObj is the internal cache entry for this object, used for now for pods and network
 // policies.
-func (h *nodeEventHandler) DeleteResource(_ context.Context, obj, _ interface{}) error {
+func (h *nodeEventHandler) DeleteResource(ctx context.Context, obj, _ interface{}) error {
 	switch h.objType {
 	case factory.EndpointSliceForStaleConntrackRemovalType:
 		endpointslice := obj.(*discovery.EndpointSlice)
 		return h.nc.reconcileConntrackUponEndpointSliceEvents(endpointslice, nil)
 
 	case factory.NodeType:
-		h.nc.deleteNode(obj.(*corev1.Node))
+		h.nc.deleteNode(ctx, obj.(*corev1.Node))
 		if config.IsModeDPUHost() || config.IsModeFull() {
-			_ = managementport.UpdateNoSNATSubnetsSets(obj.(*corev1.Node), func(_ *corev1.Node) ([]string, error) {
+			_ = managementport.UpdateNoSNATSubnetsSets(ctx, obj.(*corev1.Node), func(_ *corev1.Node) ([]string, error) {
 				return []string{}, nil
 			})
 		}
@@ -320,7 +320,7 @@ func (h *nodeEventHandler) DeleteResource(_ context.Context, obj, _ interface{})
 	}
 }
 
-func (h *nodeEventHandler) SyncFunc(_ context.Context, objs []interface{}) error {
+func (h *nodeEventHandler) SyncFunc(ctx context.Context, objs []interface{}) error {
 	var syncFunc func([]interface{}) error
 
 	if h.syncFunc != nil {
@@ -333,7 +333,7 @@ func (h *nodeEventHandler) SyncFunc(_ context.Context, objs []interface{}) error
 			// no sync needed
 			syncFunc = nil
 		case factory.NodeType:
-			syncFunc = h.nc.syncNodes
+			syncFunc = func(objs []interface{}) error { return h.nc.syncNodes(ctx, objs) }
 
 		default:
 			return fmt.Errorf("no sync function for object type %s", h.objType)

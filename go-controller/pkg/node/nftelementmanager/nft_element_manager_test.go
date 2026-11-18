@@ -93,7 +93,7 @@ var _ = ginkgo.Describe("NFT Element Manager", func() {
 
 	ginkgo.Context("Add", func() {
 		ginkgo.It("adds an element to nftables", func() {
-			err := ctrl.Add(&knftables.Element{
+			err := ctrl.Add(context.Background(), &knftables.Element{
 				Map:   testMapV4,
 				Key:   []string{"10.0.0.1", "eth0"},
 				Value: []string{"192.168.1.1"},
@@ -111,21 +111,21 @@ var _ = ginkgo.Describe("NFT Element Manager", func() {
 				Key:   []string{"10.0.0.1", "eth0"},
 				Value: []string{"192.168.1.1"},
 			}
-			gomega.Expect(ctrl.Add(elem)).To(gomega.Succeed())
-			gomega.Expect(ctrl.Add(elem)).To(gomega.Succeed())
+			gomega.Expect(ctrl.Add(context.Background(), elem)).To(gomega.Succeed())
+			gomega.Expect(ctrl.Add(context.Background(), elem)).To(gomega.Succeed())
 
 			elems := listElements(fake, testMapV4)
 			gomega.Expect(elems).To(gomega.HaveLen(1))
 		})
 
 		ginkgo.It("updates value for the same key", func() {
-			gomega.Expect(ctrl.Add(&knftables.Element{
+			gomega.Expect(ctrl.Add(context.Background(), &knftables.Element{
 				Map:   testMapV4,
 				Key:   []string{"10.0.0.1", "eth0"},
 				Value: []string{"192.168.1.1"},
 			})).To(gomega.Succeed())
 
-			gomega.Expect(ctrl.Add(&knftables.Element{
+			gomega.Expect(ctrl.Add(context.Background(), &knftables.Element{
 				Map:   testMapV4,
 				Key:   []string{"10.0.0.1", "eth0"},
 				Value: []string{"192.168.1.2"},
@@ -143,19 +143,19 @@ var _ = ginkgo.Describe("NFT Element Manager", func() {
 				Key:   []string{"10.0.0.1", "eth0"},
 				Value: []string{"192.168.1.1"},
 			}
-			gomega.Expect(ctrl.Add(elem)).To(gomega.Succeed())
+			gomega.Expect(ctrl.Add(context.Background(), elem)).To(gomega.Succeed())
 
 			elems := listElements(fake, testMapV4)
 			gomega.Expect(elems).To(gomega.HaveLen(1))
 
-			gomega.Expect(ctrl.Delete(elem)).To(gomega.Succeed())
+			gomega.Expect(ctrl.Delete(context.Background(), elem)).To(gomega.Succeed())
 
 			elems = listElements(fake, testMapV4)
 			gomega.Expect(elems).To(gomega.BeEmpty())
 		})
 
 		ginkgo.It("is a no-op for untracked elements", func() {
-			err := ctrl.Delete(&knftables.Element{
+			err := ctrl.Delete(context.Background(), &knftables.Element{
 				Map:   testMapV4,
 				Key:   []string{"10.0.0.1", "eth0"},
 				Value: []string{"192.168.1.1"},
@@ -166,7 +166,7 @@ var _ = ginkgo.Describe("NFT Element Manager", func() {
 
 	ginkgo.Context("OwnMaps", func() {
 		ginkgo.It("adds elements and owns the map", func() {
-			err := ctrl.OwnMaps([]string{testMapV4},
+			err := ctrl.OwnMaps(context.Background(), []string{testMapV4},
 				&knftables.Element{Map: testMapV4, Key: []string{"10.0.0.1", "eth0"}, Value: []string{"192.168.1.1"}},
 				&knftables.Element{Map: testMapV4, Key: []string{"10.0.0.2", "eth0"}, Value: []string{"192.168.1.1"}},
 			)
@@ -186,7 +186,7 @@ var _ = ginkgo.Describe("NFT Element Manager", func() {
 			gomega.Expect(elems).To(gomega.HaveLen(1))
 
 			// OwnMaps with only the legitimate element
-			err := ctrl.OwnMaps([]string{testMapV4},
+			err := ctrl.OwnMaps(context.Background(), []string{testMapV4},
 				&knftables.Element{Map: testMapV4, Key: []string{"10.0.0.1", "eth0"}, Value: []string{"192.168.1.1"}},
 			)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -199,12 +199,12 @@ var _ = ginkgo.Describe("NFT Element Manager", func() {
 
 		ginkgo.It("does not prune elements from other maps", func() {
 			// Add an element to mapV4 via Add
-			gomega.Expect(ctrl.Add(&knftables.Element{
+			gomega.Expect(ctrl.Add(context.Background(), &knftables.Element{
 				Map: testMapV4, Key: []string{"10.0.0.1", "eth0"}, Value: []string{"192.168.1.1"},
 			})).To(gomega.Succeed())
 
 			// OwnMaps for mapV6 only — mapV4 elements should be untouched
-			err := ctrl.OwnMaps([]string{testMapV6},
+			err := ctrl.OwnMaps(context.Background(), []string{testMapV6},
 				&knftables.Element{Map: testMapV6, Key: []string{"fd00::1", "eth0"}, Value: []string{"fd00::100"}},
 			)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -218,7 +218,7 @@ var _ = ginkgo.Describe("NFT Element Manager", func() {
 		})
 
 		ginkgo.It("rejects elements that do not belong to passed maps", func() {
-			err := ctrl.OwnMaps([]string{testMapV4},
+			err := ctrl.OwnMaps(context.Background(), []string{testMapV4},
 				&knftables.Element{Map: testMapV6, Key: []string{"fd00::1", "eth0"}, Value: []string{"fd00::100"}},
 			)
 			gomega.Expect(err).To(gomega.HaveOccurred())
@@ -229,7 +229,7 @@ var _ = ginkgo.Describe("NFT Element Manager", func() {
 	ginkgo.Context("fullReconcile", func() {
 		ginkgo.It("prunes stale elements from owned maps", func() {
 			// Own the map and add a legitimate element
-			gomega.Expect(ctrl.OwnMaps([]string{testMapV4},
+			gomega.Expect(ctrl.OwnMaps(context.Background(), []string{testMapV4},
 				&knftables.Element{Map: testMapV4, Key: []string{"10.0.0.1", "eth0"}, Value: []string{"192.168.1.1"}},
 			)).To(gomega.Succeed())
 
@@ -243,7 +243,7 @@ var _ = ginkgo.Describe("NFT Element Manager", func() {
 
 			// Trigger full reconcile
 			ctrl.mu.Lock()
-			err := ctrl.fullReconcile()
+			err := ctrl.fullReconcile(context.Background())
 			ctrl.mu.Unlock()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -260,7 +260,7 @@ var _ = ginkgo.Describe("NFT Element Manager", func() {
 
 			// fullReconcile with no owned maps
 			ctrl.mu.Lock()
-			err := ctrl.fullReconcile()
+			err := ctrl.fullReconcile(context.Background())
 			ctrl.mu.Unlock()
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
