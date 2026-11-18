@@ -5,12 +5,14 @@ package networkqos
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
 	"slices"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -18,8 +20,11 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
+	k8stesting "k8s.io/client-go/testing"
 	"k8s.io/klog/v2"
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
@@ -27,6 +32,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	nqostype "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1"
 	networkqosclientset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1/apis/clientset/versioned"
+	nqosfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1/apis/clientset/versioned/fake"
 	crdtypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
@@ -198,11 +204,11 @@ func tableEntrySetup() {
 						},
 						Ports: []*nqostype.Port{
 							{
-								Protocol: "tcp",
+								Protocol: "TCP",
 								Port:     &port8080,
 							},
 							{
-								Protocol: "tcp",
+								Protocol: "TCP",
 								Port:     &port8081,
 							},
 						},
@@ -236,19 +242,19 @@ func tableEntrySetup() {
 						},
 						Ports: []*nqostype.Port{
 							{
-								Protocol: "tcp",
+								Protocol: "TCP",
 								Port:     &port8080,
 							},
 							{
-								Protocol: "tcp",
+								Protocol: "TCP",
 								Port:     &port8081,
 							},
 							{
-								Protocol: "udp",
+								Protocol: "UDP",
 								Port:     &port9090,
 							},
 							{
-								Protocol: "udp",
+								Protocol: "UDP",
 								Port:     &port8080,
 							},
 						},
@@ -387,6 +393,147 @@ var _ = Describe("NetworkQoS Controller", func() {
 			eventuallySwitchHasNoQoS("node1", qos)
 		}
 	})
+
+	Context("with a classifier that cannot be programmed", func() {
+		const (
+			policyName      = "rejected-policy"
+			invalidProtocol = "TCP || ip4"
+		)
+		var policy *nqostype.NetworkQoS
+
+		setInvalidProtocol := func(nqos *nqostype.NetworkQoS) {
+			nqos.Spec.Egress[0].Classifier.Ports[0].Protocol = invalidProtocol
+		}
+		invalidProtocolMessage := fmt.Sprintf("unsupported protocol %q", invalidProtocol)
+
+		eventuallyNotReady := func(message string) {
+			GinkgoHelper()
+			Eventually(func(g Gomega) {
+				nqos, err := fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Get(context.Background(), policyName, metav1.GetOptions{})
+				g.Expect(err).NotTo(HaveOccurred(), "failed to get NetworkQoS %s/%s", nqosNamespace, policyName)
+				cond := meta.FindStatusCondition(nqos.Status.Conditions, conditionTypeReady+"node1")
+				g.Expect(cond).NotTo(BeNil(), "NetworkQoS %s/%s has no ready condition", nqosNamespace, policyName)
+				g.Expect(cond.Status).To(Equal(metav1.ConditionFalse), "NetworkQoS %s/%s must not be ready", nqosNamespace, policyName)
+				g.Expect(cond.Message).To(ContainSubstring(message),
+					"ready condition of NetworkQoS %s/%s must name the rejected value", nqosNamespace, policyName)
+			}).WithTimeout(10*time.Second).WithPolling(100*time.Millisecond).Should(Succeed(), "NetworkQoS %s/%s was not rejected", nqosNamespace, policyName)
+		}
+
+		BeforeEach(func() {
+			ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: nqosNamespace}}
+			pod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "source", Namespace: nqosNamespace,
+					Annotations: map[string]string{
+						"k8s.ovn.org/pod-networks": `{"default":{"ip_addresses":["10.128.0.3/24"],"mac_address":"0a:58:0a:80:00:03"}}`,
+					},
+				},
+				Spec: corev1.PodSpec{NodeName: "node1"},
+			}
+			clientset := util.GetOVNClientset(ns, pod)
+			fakeKubeClient, fakeNQoSClient = clientset.KubeClient, clientset.NetworkQoSClient
+			initEnv(clientset, &libovsdbtest.TestSetup{NBData: []libovsdbtest.TestData{
+				&nbdb.LogicalSwitch{Name: "node1"},
+			}})
+			initNetworkQoSController(&util.DefaultNetInfo{}, nil, defaultAddrsetFactory, defaultControllerName)
+
+			policy = &nqostype.NetworkQoS{
+				ObjectMeta: metav1.ObjectMeta{Name: policyName, Namespace: nqosNamespace},
+				Spec: nqostype.Spec{
+					Priority: 100,
+					Egress: []nqostype.Rule{{
+						DSCP: 50,
+						Classifier: nqostype.Classifier{
+							To:    []nqostype.Destination{{IPBlock: &networkingv1.IPBlock{CIDR: "128.116.0.0/17"}}},
+							Ports: []*nqostype.Port{{Protocol: "TCP"}},
+						},
+					}},
+				},
+			}
+		})
+
+		DescribeTable("does not program a QoS rule for a new policy",
+			func(invalidate func(*nqostype.NetworkQoS), message string) {
+				invalidate(policy)
+				_, err := fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Create(context.Background(), policy, metav1.CreateOptions{})
+				Expect(err).NotTo(HaveOccurred(), "failed to create NetworkQoS %s/%s", nqosNamespace, policyName)
+
+				eventuallyNotReady(message)
+				qos, err := findQoS(defaultControllerName, nqosNamespace, policyName, 0)
+				Expect(err).NotTo(HaveOccurred(), "failed to look up the QoS rule of NetworkQoS %s/%s", nqosNamespace, policyName)
+				Expect(qos).To(BeNil(), "unexpected QoS rule for rejected NetworkQoS %s/%s", nqosNamespace, policyName)
+			},
+			Entry("with an unsupported port protocol", setInvalidProtocol, invalidProtocolMessage),
+		)
+
+		It("reports a new policy as not ready once a failed status update is retried", func() {
+			var failed atomic.Bool
+			fakeNQoSClient.(*nqosfake.Clientset).PrependReactor("patch", "networkqoses", func(k8stesting.Action) (bool, runtime.Object, error) {
+				if failed.CompareAndSwap(false, true) {
+					return true, nil, errors.New("status patch failed")
+				}
+				return false, nil, nil
+			})
+			setInvalidProtocol(policy)
+			_, err := fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Create(context.Background(), policy, metav1.CreateOptions{})
+			Expect(err).NotTo(HaveOccurred(), "failed to create NetworkQoS %s/%s", nqosNamespace, policyName)
+
+			eventuallyNotReady(invalidProtocolMessage)
+			Expect(failed.Load()).To(BeTrue(), "the first status update was expected to fail")
+		})
+
+		DescribeTable("removes the QoS rule of a policy updated to a rejected value",
+			func(invalidate func(*nqostype.NetworkQoS), message string, podSelector metav1.LabelSelector) {
+				By("creating a policy that can be programmed")
+				created, err := fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Create(context.Background(), policy, metav1.CreateOptions{})
+				Expect(err).NotTo(HaveOccurred(), "failed to create NetworkQoS %s/%s", nqosNamespace, policyName)
+				qos := eventuallyExpectQoS(defaultControllerName, nqosNamespace, policyName, 0)
+				Expect(qos.Match).To(HaveSuffix(" && tcp"), "unexpected match of the QoS rule")
+				eventuallySwitchHasQoS("node1", qos)
+
+				By("updating the policy to the rejected value")
+				// the fake clientset does not bump the resource version, which the update handler compares
+				created.ResourceVersion = time.Now().String()
+				invalidate(created)
+				created.Spec.PodSelector = podSelector
+				_, err = fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Update(context.Background(), created, metav1.UpdateOptions{})
+				Expect(err).NotTo(HaveOccurred(), "failed to update NetworkQoS %s/%s", nqosNamespace, policyName)
+
+				eventuallyNotReady(message)
+				eventuallyExpectNoQoS(defaultControllerName, nqosNamespace, policyName, 0)
+				eventuallySwitchHasNoQoS("node1", qos)
+			},
+			Entry("with an unsupported port protocol", setInvalidProtocol, invalidProtocolMessage, metav1.LabelSelector{}),
+			Entry("with an unsupported port protocol and a pod selector that does not parse", setInvalidProtocol, invalidProtocolMessage,
+				metav1.LabelSelector{MatchLabels: map[string]string{"app": "not a label value"}}),
+		)
+	})
+
+	DescribeTable("validateClassifierPorts",
+		func(protocol string, valid bool) {
+			rules := []nqostype.Rule{
+				{Classifier: nqostype.Classifier{Ports: []*nqostype.Port{{Protocol: "TCP"}}}},
+				{Classifier: nqostype.Classifier{Ports: []*nqostype.Port{{Protocol: "UDP"}, {Protocol: protocol}}}},
+			}
+			err := validateClassifierPorts(rules)
+			if valid {
+				Expect(err).NotTo(HaveOccurred(), "protocol %q must be accepted", protocol)
+				return
+			}
+			Expect(err).To(MatchError(ContainSubstring(fmt.Sprintf("egress[1].classifier.ports[1]: unsupported protocol %q", protocol))),
+				"protocol %q must be rejected", protocol)
+		},
+		Entry("TCP", "TCP", true),
+		Entry("UDP", "UDP", true),
+		Entry("SCTP", "SCTP", true),
+		Entry("unset", "", true),
+		Entry("lowercase", "tcp", false),
+		Entry("unknown protocol", "ICMP", false),
+		Entry("supported name as a prefix", "TCP || ip4", false),
+		Entry("supported name in the middle", "ip4 || UDP || ip6", false),
+		Entry("supported name as a suffix", "ip4 || SCTP", false),
+		Entry("surrounding space", " TCP", false),
+	)
 
 	DescribeTable("When starting controller with NetworkQoS, Pod and Node objects",
 		func() {

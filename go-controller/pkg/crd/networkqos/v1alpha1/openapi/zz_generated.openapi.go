@@ -343,7 +343,7 @@ func schema_pkg_crd_networkqos_v1alpha1_Port(ref common.ReferenceCallback) commo
 				Properties: map[string]spec.Schema{
 					"protocol": {
 						SchemaProps: spec.SchemaProps{
-							Description: "protocol (tcp, udp, sctp) that the traffic must match.",
+							Description: "protocol (TCP, UDP, SCTP) that the traffic must match.",
 							Default:     "",
 							Type:        []string{"string"},
 							Format:      "",

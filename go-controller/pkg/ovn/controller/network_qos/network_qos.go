@@ -86,7 +86,7 @@ func (c *Controller) syncNetworkQoS(key string) error {
 	if err := c.ensureNetworkQos(nqos); err != nil {
 		c.nqosCache.Delete(key)
 		// we can ignore the error if status update doesn't succeed; best effort
-		c.updateNQOSStatusToNotReady(nqos.Namespace, nqos.Name, "failed to reconcile", err)
+		_ = c.updateNQOSStatusToNotReady(nqos.Namespace, nqos.Name, "failed to reconcile", err)
 		return err
 	}
 	recordNetworkQoSReconcileDuration(c.controllerName, time.Since(startTime).Milliseconds())
@@ -104,9 +104,13 @@ func (c *Controller) ensureNetworkQos(nqos *networkqosapi.NetworkQoS) error {
 		namespace: nqos.Namespace,
 	}
 
+	if err := validateClassifierPorts(nqos.Spec.Egress); err != nil {
+		return c.rejectNetworkQos(nqos, "invalid classifier port", err)
+	}
+
 	if len(nqos.Spec.PodSelector.MatchLabels) > 0 || len(nqos.Spec.PodSelector.MatchExpressions) > 0 {
 		if podSelector, err := metav1.LabelSelectorAsSelector(&nqos.Spec.PodSelector); err != nil {
-			c.updateNQOSStatusToNotReady(nqos.Namespace, nqos.Name, "failed to parse source pod selector", err)
+			_ = c.updateNQOSStatusToNotReady(nqos.Namespace, nqos.Name, "failed to parse source pod selector", err)
 			return nil
 		} else {
 			desiredNQOSState.PodSelector = podSelector
@@ -175,6 +179,36 @@ func (c *Controller) ensureNetworkQos(nqos *networkqosapi.NetworkQoS) error {
 	return nil
 }
 
+// rejectNetworkQos removes the QoS rules programmed from an earlier version of
+// the given NetworkQoS and reports it as not ready with the given reason and
+// error. It returns an error if either step fails, so that it is retried.
+// This function need to be called with a lock held.
+func (c *Controller) rejectNetworkQos(nqos *networkqosapi.NetworkQoS, reason string, err error) error {
+	if clearErr := c.clearNetworkQos(nqos.Namespace, nqos.Name); clearErr != nil {
+		return fmt.Errorf("failed to remove the QoS rules of NetworkQoS %s/%s: %w", nqos.Namespace, nqos.Name, clearErr)
+	}
+	return c.updateNQOSStatusToNotReady(nqos.Namespace, nqos.Name, reason, err)
+}
+
+// validateClassifierPorts returns an error if a classifier port of the given
+// rules names a protocol other than TCP, UDP or SCTP. The protocol is copied
+// into the OVN QoS match, where any other string is either refused by OVN or
+// read as further match terms.
+func validateClassifierPorts(rules []networkqosapi.Rule) error {
+	for ruleIndex, rule := range rules {
+		for portIndex, port := range rule.Classifier.Ports {
+			if port.Protocol == "" {
+				continue
+			}
+			if util.ValidateProtocol(corev1.Protocol(port.Protocol)) != nil {
+				return fmt.Errorf("egress[%d].classifier.ports[%d]: unsupported protocol %q, must be one of TCP, UDP, SCTP",
+					ruleIndex, portIndex, port.Protocol)
+			}
+		}
+	}
+	return nil
+}
+
 // clearNetworkQos will handle the logic for deleting all db objects related
 // to the provided nqos which got deleted. it looks up object in OVN by comparing
 // the nqos name with the metadata in externalIDs.
@@ -217,7 +251,9 @@ func (c *Controller) updateNQOSStatusToReady(namespace, name string) error {
 	return nil
 }
 
-func (c *Controller) updateNQOSStatusToNotReady(namespace, name, reason string, err error) {
+// updateNQOSStatusToNotReady sets the ready condition of this zone to false
+// and returns an error if the status could not be patched.
+func (c *Controller) updateNQOSStatusToNotReady(namespace, name, reason string, err error) error {
 	msg := reason
 	if err != nil {
 		msg = fmt.Sprintf("NetworkQoS %s/%s - %s, error details: %v", namespace, name, reason, err)
@@ -233,10 +269,11 @@ func (c *Controller) updateNQOSStatusToNotReady(namespace, name, reason string, 
 	err = c.updateNQOStatusCondition(cond, namespace, name)
 	if err != nil {
 		klog.Warningf("%s: failed to update the status of NetworkQoS %s/%s, err: %v", c.controllerName, namespace, name, err)
-	} else {
-		klog.V(6).Infof("%s: successfully patched status of NetworkQoS %s/%s with condition type %v/%v in %v seconds", c.controllerName, namespace, name, conditionTypeReady+c.nodeName, metav1.ConditionTrue, time.Since(startTime).Seconds())
-		recordStatusPatchDuration(c.controllerName, time.Since(startTime).Milliseconds())
+		return fmt.Errorf("failed to update the status of NetworkQoS %s/%s: %w", namespace, name, err)
 	}
+	klog.V(6).Infof("%s: successfully patched status of NetworkQoS %s/%s with condition type %v/%v in %v seconds", c.controllerName, namespace, name, conditionTypeReady+c.nodeName, metav1.ConditionFalse, time.Since(startTime).Seconds())
+	recordStatusPatchDuration(c.controllerName, time.Since(startTime).Milliseconds())
+	return nil
 }
 
 func (c *Controller) updateNQOStatusCondition(newCondition metav1.Condition, namespace, name string) error {

@@ -128,8 +128,8 @@ type Bandwidth struct {
 // Port specifies destination protocol and port on which NetworkQoS
 // rule is applied
 type Port struct {
-	// protocol (tcp, udp, sctp) that the traffic must match.
-	// +kubebuilder:validation:Pattern=^TCP|UDP|SCTP$
+	// protocol (TCP, UDP, SCTP) that the traffic must match.
+	// +kubebuilder:validation:Enum=TCP;UDP;SCTP
 	// +optional
 	Protocol string `json:"protocol"`
 
