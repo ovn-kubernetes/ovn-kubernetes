@@ -464,6 +464,11 @@ and will egress the cluster towards the provider network; and if the provider
 network is able to route it back to the cluster by virtue of learned BGP routes,
 the traffic will still be dropped to upkeep the CUDN isolation promise.
 
+Isolation between the pods of advertised CUDNs is enforced on every node
+against the subnets of all the advertised networks of the cluster. This also
+holds with [dynamic UDN allocation](../user-defined-networks/dynamic-udn.md),
+where a node only renders the networks that have workloads on it.
+
 OVN-Kubernetes relaxes the default advertised UDN isolation behavior when the
 configuration flag `advertised-udn-isolation-mode` is set to `loose`. In this
 configuration, traffic addressing the subnet of a different CUDN will egress the

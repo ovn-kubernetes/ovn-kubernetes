@@ -11,7 +11,6 @@ import (
 
 	cnitypes "github.com/containernetworking/cni/pkg/types"
 
-	"k8s.io/apimachinery/pkg/util/sets"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/klog/v2"
@@ -78,6 +77,10 @@ type ControllerManager struct {
 	eIPController *ovn.EgressIPController
 
 	addressSetManager *addresssetmanager.AddressSetManager
+
+	// advertisedNetworkSubnetsController maintains the address set used to
+	// isolate advertised networks from each other
+	advertisedNetworkSubnetsController *ovn.AdvertisedNetworkSubnetsController
 }
 
 func (cm *ControllerManager) NewNetworkController(nInfo util.NetInfo) (networkmanager.NetworkController, error) {
@@ -170,12 +173,8 @@ func (cm *ControllerManager) GetDefaultNetworkController() networkmanager.Reconc
 func (cm *ControllerManager) CleanupStaleNetworks(validNetworks ...util.NetInfo) error {
 	ctx := context.Background()
 	existingNetworksMap := map[string]string{}
-	validNetworksSubnets := sets.New[string]()
 	for _, network := range validNetworks {
 		existingNetworksMap[network.GetNetworkName()] = network.TopologyType()
-		for _, subnet := range network.Subnets() {
-			validNetworksSubnets.Insert(subnet.CIDR.String())
-		}
 	}
 
 	// Get all the existing user-defined network logical entities (primary and secondary).
@@ -231,13 +230,6 @@ func (cm *ControllerManager) CleanupStaleNetworks(validNetworks ...util.NetInfo)
 		if err != nil {
 			klog.Errorf("Failed to delete stale OVN logical entities for network %s: %v", netName, err)
 		}
-	}
-
-	// Remove stale subnets from the advertised networks address set used for isolation.
-	// Network reconciliation will take care of removing the subnets for existing networks that are no longer
-	// advertised.
-	if err := ovn.CleanupStaleAdvertisedNetworkSubnets(cm.nbClient, validNetworksSubnets); err != nil {
-		return fmt.Errorf("failed to cleanup stale advertised subnets: %w", err)
 	}
 	return nil
 }
@@ -451,6 +443,17 @@ func (cm *ControllerManager) Start(ctx context.Context) error {
 		if err := ovn.ConfigureAdvertisedNetworkIsolation(cm.nbClient); err != nil {
 			return fmt.Errorf("failed to initialize advertised network isolation: %w", err)
 		}
+		// only strict isolation attaches the drop ACL matching the address set
+		if config.OVNKubernetesFeature.AdvertisedUDNIsolationMode == config.AdvertisedUDNIsolationModeStrict {
+			cm.advertisedNetworkSubnetsController = ovn.NewAdvertisedNetworkSubnetsController(
+				addressset.NewOvnAddressSetFactory(cm.nbClient, config.IPv4Mode, config.IPv6Mode),
+				cm.watchFactory.NADInformer().Lister(),
+				cm.networkManager.Interface(),
+			)
+			if err := cm.advertisedNetworkSubnetsController.Start(); err != nil {
+				return fmt.Errorf("failed to start advertised network subnets controller: %w", err)
+			}
+		}
 	}
 
 	// Start NAD/network manager before the default network controller so NAD
@@ -506,6 +509,10 @@ func (cm *ControllerManager) Stop() {
 
 	if cm.addressSetManager != nil {
 		cm.addressSetManager.Stop()
+	}
+
+	if cm.advertisedNetworkSubnetsController != nil {
+		cm.advertisedNetworkSubnetsController.Stop()
 	}
 }
 
