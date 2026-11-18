@@ -351,7 +351,7 @@ func (nc *DefaultNodeNetworkController) initGatewayMainStart(gw *gateway, waiter
 
 	var err error
 	if config.Gateway.NodeportEnable && config.IsModeFull() {
-		loadBalancerHealthChecker = newLoadBalancerHealthChecker(nc.name, nc.watchFactory)
+		loadBalancerHealthChecker = newLoadBalancerHealthChecker(nc.name, nc.watchFactory, nc.networkManager)
 		portClaimWatcher, err = newPortClaimWatcher(nc.recorder)
 		if err != nil {
 			return err
@@ -511,7 +511,7 @@ func (nc *DefaultNodeNetworkController) initGatewayDPUHost() error {
 			}
 		}
 		gw.nodePortWatcherNFTables = newNodePortWatcherNFTables(nc.networkManager)
-		gw.loadBalancerHealthChecker = newLoadBalancerHealthChecker(nc.name, nc.watchFactory)
+		gw.loadBalancerHealthChecker = newLoadBalancerHealthChecker(nc.name, nc.watchFactory, nc.networkManager)
 		portClaimWatcher, err := newPortClaimWatcher(nc.recorder)
 		if err != nil {
 			return err
