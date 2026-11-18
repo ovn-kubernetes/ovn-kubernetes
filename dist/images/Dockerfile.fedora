@@ -14,7 +14,7 @@
 ARG OVN_FROM=koji
 ARG BUILDER_IMAGE
 ARG OVN_KUBERNETES_DIR=.
-ARG FEDORA_BASE_IMAGE=quay.io/fedora/fedora:44
+ARG FEDORA_BASE_IMAGE=quay.io/fedora/fedora:45
 
 #############################################
 # Stage to get OVN and OVS RPMs from source #
@@ -82,7 +82,7 @@ RUN git log -n 1
 # Stage to download OVN RPMs from koji #
 ########################################
 FROM ${FEDORA_BASE_IMAGE} AS kojidownloader
-ARG ovnver=ovn-26.09.0-33.fc44
+ARG ovnver=ovn-26.09.0-33.fc45
 
 USER root
 
@@ -181,7 +181,7 @@ RUN INSTALL_PKGS=" \
     dnf clean all && rm -rf /var/cache/dnf/*
 RUN ln -s /usr/bin/python3 /usr/libexec/platform-python
 
-RUN rpm -Uhv --nodeps --force /*.rpm
+RUN rpm -Uhv --nodeps --nosignature --force /*.rpm
 
 # Built in ../../go_controller, then the binaries are copied here.
 # put things where they are in the pkg

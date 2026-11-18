@@ -205,9 +205,13 @@ You need:
      --platform linux/amd64 \
      -v "$(pwd):/coredumps:ro" \
      --name ovn-debug \
-     quay.io/fedora/fedora:44 \
+     quay.io/fedora/fedora:45 \
      bash
    ```
+
+   Adjust the floating tag (45 above) to match the distribution
+   version identified in the package shipping the binary that dumped
+   core.
 
 2. **Inside the container, install debugging tools**:
 
@@ -222,26 +226,30 @@ You need:
    strings /coredumps/binaries/ovn-northd | grep -E '{"type":"rpm".*ovn' | head -1
    ```
 
-   Example output: `{"type":"rpm","name":"ovn","version":"26.03.2-122.fc44"...}`
+   Example output: `{"type":"rpm","name":"ovn","version":"26.09.0-33.fc45"...}`
 
 4. **Download and install OVN packages from koji**:
 
    ```bash
    # Download the exact build (replace version as needed)
-   koji download-build ovn-26.03.2-122.fc44 --arch=x86_64
+   koji download-build ovn-26.09.0-33.fc45 --arch=x86_64
 
    # Install with dependency resolution
-   dnf install -y ./ovn-*.rpm
+   dnf install -y --no-gpgchecks ./ovn-*.rpm
    ```
+
+   (GPG checks have to be disabled because the packages aren't
+   signed.)
 
 5. **Download and install debuginfo packages**:
 
    ```bash
    # Download all debuginfo packages for this OVN build
-   koji download-build ovn-26.03.2-122.fc44 --debuginfo --arch=x86_64
+   koji download-build ovn-26.09.0-33.fc45 --debuginfo --arch=x86_64
 
    # Install all debuginfo packages (important: install ALL of them)
-   dnf install -y ./ovn-debuginfo-*.rpm \
+   dnf install -y --no-gpgchecks \
+                  ./ovn-debuginfo-*.rpm \
                   ./ovn-debugsource-*.rpm \
                   ./ovn-central-debuginfo-*.rpm \
                   ./ovn-host-debuginfo-*.rpm \
