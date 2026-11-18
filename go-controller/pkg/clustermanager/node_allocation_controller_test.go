@@ -64,7 +64,7 @@ func TestSyncNodeIDsOutOfRange(t *testing.T) {
 					}
 				}
 			}, 5*time.Second, 10*time.Millisecond).Should(gomega.Succeed())
-			nodes := []interface{}{invalidNode, healthyNode}
+			nodes := []*corev1.Node{invalidNode, healthyNode}
 			replacement := allocator.GetID("invalid")
 			if replacement < 2 || replacement > types.MaxNodeIDs || replacement == 2 {
 				t.Fatalf("invalid replacement: %d", replacement)
@@ -86,56 +86,32 @@ func TestSyncNodeIDsOutOfRange(t *testing.T) {
 	}
 }
 
-func TestNeedsNodeAllocation(t *testing.T) {
-	oldHybridOverlay := config.HybridOverlay.Enabled
-	config.HybridOverlay.Enabled = false
-	t.Cleanup(func() { config.HybridOverlay.Enabled = oldHybridOverlay })
-	for _, tc := range []struct {
-		name, nodeID                    string
-		missingID, missingTransit, want bool
-	}{
-		{name: "missing ID", missingID: true, want: true},
-		{name: "empty ID", want: true},
-		{name: "malformed ID", nodeID: "invalid", want: true},
-		{name: "negative ID", nodeID: "-2", want: true},
-		{name: "reserved zero ID", nodeID: "0", want: true},
-		{name: "reserved one ID", nodeID: "1", want: true},
-		{name: "ID above limit", nodeID: strconv.Itoa(types.MaxNodeIDs + 1), want: true},
-		{name: "oversized ID", nodeID: "1099511627776", want: true},
-		{name: "minimum valid ID", nodeID: strconv.Itoa(types.MinNodeID)},
-		{name: "maximum valid ID", nodeID: strconv.Itoa(types.MaxNodeIDs)},
-		{name: "missing transit address", nodeID: "2", missingTransit: true, want: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{
-				util.OvnNodeID: tc.nodeID, util.OvnTransitSwitchPortAddr: "existing",
-			}}}
-			if tc.missingID {
-				delete(node.Annotations, util.OvnNodeID)
-			}
-			if tc.missingTransit {
-				delete(node.Annotations, util.OvnTransitSwitchPortAddr)
-			}
-			if got := needsNodeAllocation(node); got != tc.want {
-				t.Fatalf("needsNodeAllocation() = %t, want %t", got, tc.want)
-			}
-		})
-	}
-}
-
-func TestNodeAllocationUpdateRepairsInvalidID(t *testing.T) {
+func TestNodeAllocationRepairsAnnotations(t *testing.T) {
 	oldV4, oldV6, oldHybridOverlay := config.IPv4Mode, config.IPv6Mode, config.HybridOverlay.Enabled
 	config.IPv4Mode, config.IPv6Mode, config.HybridOverlay.Enabled = true, true, false
 	t.Cleanup(func() {
 		config.IPv4Mode, config.IPv6Mode, config.HybridOverlay.Enabled = oldV4, oldV6, oldHybridOverlay
 	})
-	for _, invalidID := range []string{"", "invalid", "-2", "0", "1", strconv.Itoa(types.MaxNodeIDs + 1), "1099511627776"} {
-		t.Run(invalidID, func(t *testing.T) {
-			node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node1", Annotations: map[string]string{
-				util.OvnNodeID: invalidID,
-				// Both annotations must exist to reproduce the update being skipped.
-				util.OvnTransitSwitchPortAddr: `{"ipv4":"100.88.0.99/16","ipv6":"fd97::99/64"}`,
-			}}}
+	const staleTransit = `{"ipv4":"100.88.0.99/16","ipv6":"fd97::99/64"}`
+	for _, tc := range []struct {
+		name        string
+		annotations map[string]string
+	}{
+		{name: "no annotations"},
+		{name: "missing ID", annotations: map[string]string{util.OvnTransitSwitchPortAddr: staleTransit}},
+		{name: "empty ID", annotations: map[string]string{util.OvnNodeID: "", util.OvnTransitSwitchPortAddr: staleTransit}},
+		{name: "malformed ID", annotations: map[string]string{util.OvnNodeID: "invalid", util.OvnTransitSwitchPortAddr: staleTransit}},
+		{name: "negative ID", annotations: map[string]string{util.OvnNodeID: "-2", util.OvnTransitSwitchPortAddr: staleTransit}},
+		{name: "reserved zero ID", annotations: map[string]string{util.OvnNodeID: "0", util.OvnTransitSwitchPortAddr: staleTransit}},
+		{name: "reserved one ID", annotations: map[string]string{util.OvnNodeID: "1", util.OvnTransitSwitchPortAddr: staleTransit}},
+		{name: "ID above limit", annotations: map[string]string{util.OvnNodeID: strconv.Itoa(types.MaxNodeIDs + 1), util.OvnTransitSwitchPortAddr: staleTransit}},
+		{name: "oversized ID", annotations: map[string]string{util.OvnNodeID: "1099511627776", util.OvnTransitSwitchPortAddr: staleTransit}},
+		{name: "missing transit address", annotations: map[string]string{util.OvnNodeID: "2"}},
+		// what a node is left with when a single-stack cluster becomes dual-stack
+		{name: "single-stack transit address", annotations: map[string]string{util.OvnNodeID: "2", util.OvnTransitSwitchPortAddr: `{"ipv4":"100.88.0.2/16"}`}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node1", Annotations: tc.annotations}}
 			client := fake.NewClientset(node)
 			allocator := id.NewIDAllocator("NodeIDs", types.MaxNodeIDs+1)
 			for name, reserved := range map[string]int{"zero": 0, "one": 1} {
@@ -152,12 +128,11 @@ func TestNodeAllocationUpdateRepairsInvalidID(t *testing.T) {
 				t.Fatalf("create IPv6 generator: %v", err)
 			}
 			nac := &nodeAllocationController{kube: &kube.Kube{KClient: client}, nodeIDAllocator: allocator, transitSwitchIPv4Generator: v4, transitSwitchIPv6Generator: v6}
-			handler := &nodeAllocationControllerEventHandler{objType: factory.NodeType, nac: nac}
-			if err := nac.syncNodeIDs([]interface{}{node}); err != nil {
+			if err := nac.syncNodeIDs([]*corev1.Node{node}); err != nil {
 				t.Fatalf("restore node ID allocations: %v", err)
 			}
-			if err := handler.UpdateResource(context.Background(), node, node, false); err != nil {
-				t.Fatalf("reconcile invalid node ID update: %v", err)
+			if err := nac.allocateNode(context.Background(), node); err != nil {
+				t.Fatalf("allocate node: %v", err)
 			}
 			updated, err := client.CoreV1().Nodes().Get(context.Background(), node.Name, metav1.GetOptions{})
 			if err != nil {
@@ -191,4 +166,89 @@ func TestNodeAllocationUpdateRepairsInvalidID(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestNodeAllocationLeavesUpToDateNodeAlone(t *testing.T) {
+	oldV4, oldV6, oldHybridOverlay := config.IPv4Mode, config.IPv6Mode, config.HybridOverlay.Enabled
+	config.IPv4Mode, config.IPv6Mode, config.HybridOverlay.Enabled = true, true, false
+	t.Cleanup(func() {
+		config.IPv4Mode, config.IPv6Mode, config.HybridOverlay.Enabled = oldV4, oldV6, oldHybridOverlay
+	})
+	g := gomega.NewWithT(t)
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node1", Annotations: map[string]string{
+		util.OvnNodeID:                "2",
+		util.OvnTransitSwitchPortAddr: `{"ipv4":"100.88.0.2/16","ipv6":"fd97::2/64"}`,
+	}}}
+	client := fake.NewClientset(node)
+	allocator := id.NewIDAllocator("NodeIDs", types.MaxNodeIDs+1)
+	v4, err := ipgenerator.NewIPGenerator("100.88.0.0/16")
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	v6, err := ipgenerator.NewIPGenerator("fd97::/64")
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	nac := &nodeAllocationController{kube: &kube.Kube{KClient: client}, nodeIDAllocator: allocator, transitSwitchIPv4Generator: v4, transitSwitchIPv6Generator: v6}
+	g.Expect(nac.syncNodeIDs([]*corev1.Node{node})).To(gomega.Succeed())
+
+	g.Expect(nac.allocateNode(context.Background(), node)).To(gomega.Succeed())
+	g.Expect(allocator.GetID(node.Name)).To(gomega.Equal(2))
+	g.Expect(client.Actions()).To(gomega.BeEmpty())
+}
+
+func TestNodeAllocationReplacesDuplicateID(t *testing.T) {
+	oldV4, oldV6, oldHybridOverlay := config.IPv4Mode, config.IPv6Mode, config.HybridOverlay.Enabled
+	config.IPv4Mode, config.IPv6Mode, config.HybridOverlay.Enabled = true, false, false
+	t.Cleanup(func() {
+		config.IPv4Mode, config.IPv6Mode, config.HybridOverlay.Enabled = oldV4, oldV6, oldHybridOverlay
+	})
+	g := gomega.NewWithT(t)
+	annotations := map[string]string{
+		util.OvnNodeID:                "2",
+		util.OvnTransitSwitchPortAddr: `{"ipv4":"100.88.0.2/16"}`,
+	}
+	node1 := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node1", Annotations: annotations}}
+	node2 := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node2", Annotations: annotations}}
+	client := fake.NewClientset(node1, node2)
+	allocator := id.NewIDAllocator("NodeIDs", types.MaxNodeIDs+1)
+	g.Expect(allocator.ReserveID("zero", 0)).To(gomega.Succeed())
+	g.Expect(allocator.ReserveID("one", 1)).To(gomega.Succeed())
+	v4, err := ipgenerator.NewIPGenerator("100.88.0.0/16")
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	nac := &nodeAllocationController{kube: &kube.Kube{KClient: client}, nodeIDAllocator: allocator, transitSwitchIPv4Generator: v4}
+	g.Expect(nac.syncNodeIDs([]*corev1.Node{node1, node2})).To(gomega.Succeed())
+
+	g.Expect(nac.allocateNode(context.Background(), node1)).To(gomega.Succeed())
+	g.Expect(nac.allocateNode(context.Background(), node2)).To(gomega.Succeed())
+
+	updated1, err := client.CoreV1().Nodes().Get(context.Background(), node1.Name, metav1.GetOptions{})
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(updated1.Annotations).To(gomega.Equal(annotations))
+
+	updated2, err := client.CoreV1().Nodes().Get(context.Background(), node2.Name, metav1.GetOptions{})
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	newID, err := util.GetNodeID(updated2)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(newID).NotTo(gomega.Equal(2))
+	g.Expect(newID).To(gomega.Equal(allocator.GetID(node2.Name)))
+	g.Expect(updated2.Annotations[util.OvnTransitSwitchPortAddr]).NotTo(gomega.Equal(annotations[util.OvnTransitSwitchPortAddr]))
+}
+
+func TestNodeAllocationNeedsUpdate(t *testing.T) {
+	g := gomega.NewWithT(t)
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node1", Annotations: map[string]string{
+		util.OvnNodeID:                "2",
+		util.OvnTransitSwitchPortAddr: `{"ipv4":"100.88.0.2/16"}`,
+	}}}
+	g.Expect(nodeAllocationNeedsUpdate(nil, node)).To(gomega.BeTrue())
+	g.Expect(nodeAllocationNeedsUpdate(node, node)).To(gomega.BeFalse())
+
+	unrelated := node.DeepCopy()
+	unrelated.Annotations["unrelated"] = "changed"
+	g.Expect(nodeAllocationNeedsUpdate(node, unrelated)).To(gomega.BeFalse())
+
+	noID := node.DeepCopy()
+	delete(noID.Annotations, util.OvnNodeID)
+	g.Expect(nodeAllocationNeedsUpdate(node, noID)).To(gomega.BeTrue())
+
+	noTransit := node.DeepCopy()
+	delete(noTransit.Annotations, util.OvnTransitSwitchPortAddr)
+	g.Expect(nodeAllocationNeedsUpdate(node, noTransit)).To(gomega.BeTrue())
 }
