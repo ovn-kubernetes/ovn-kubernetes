@@ -100,6 +100,10 @@ type egressNodeAvailabilityHandlerViaHealthCheck struct {
 	modeWasLegacy  bool
 	modeWasChecked bool
 	oldGRPCPort    string
+	// droppedPorts tracks, per node, the port a drop rule was installed on so
+	// that it can be removed again even if the health check mode changed in
+	// the meantime.
+	droppedPorts map[string]string
 }
 
 // checkMode checks what kind of update this handler needs to do to set the
@@ -181,7 +185,23 @@ func (h *egressNodeAvailabilityHandlerViaHealthCheck) setMode(nodeName string, r
 		}
 		framework.Logf("%s health check traffic on port %s on node %s", op, port, nodeName)
 		allowOrDropNodeInputTrafficOnPort(op, nodeName, "tcp", port)
+		if reject {
+			if h.droppedPorts == nil {
+				h.droppedPorts = map[string]string{}
+			}
+			h.droppedPorts[nodeName] = port
+			return
+		}
 	}
+	// A drop rule is installed on the port of the health check mode in use at
+	// the time. That mode, and hence the port, may have changed since, so the
+	// allow above does not necessarily remove it. This also covers the nodes
+	// restored after the first one, for which checkMode returns no port.
+	if dropped, found := h.droppedPorts[nodeName]; found && dropped != port {
+		framework.Logf("Allow health check traffic on port %s on node %s", dropped, nodeName)
+		allowOrDropNodeInputTrafficOnPort("Allow", nodeName, "tcp", dropped)
+	}
+	delete(h.droppedPorts, nodeName)
 }
 
 func (h *egressNodeAvailabilityHandlerViaHealthCheck) Enable(nodeName string) {
