@@ -115,8 +115,8 @@ var _ = ginkgo.Describe("BGP: When default podNetwork is advertised", feature.Ro
 			}
 			ginkgo.By("Selecting 3 schedulable nodes")
 			nodes, err = e2enode.GetBoundedReadySchedulableNodes(context.TODO(), f.ClientSet, 3)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			gomega.Expect(len(nodes.Items)).To(gomega.BeNumerically(">", 2))
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "listing three ready schedulable nodes")
+			gomega.Expect(len(nodes.Items)).To(gomega.BeNumerically(">", 2), "the test needs three ready schedulable nodes")
 
 			ginkgo.By("Selecting node for client pod")
 			clientPodNodeName = nodes.Items[1].Name
@@ -134,7 +134,7 @@ var _ = ginkgo.Describe("BGP: When default podNetwork is advertised", feature.Ro
 			}
 			e2epod.NewPodClient(f).CreateSync(context.TODO(), clientPod)
 
-			gomega.Expect(len(serverContainerIPs)).To(gomega.BeNumerically(">", 0))
+			gomega.Expect(len(serverContainerIPs)).To(gomega.BeNumerically(">", 0), "the external BGP server must have at least one IP")
 		})
 		// -----------------               ------------------                         ---------------------
 		// |               | 172.26.0.0/16 |                |       172.18.0.0/16     | ovn-control-plane |
@@ -282,12 +282,12 @@ var _ = ginkgo.Describe("BGP: When default podNetwork is advertised", feature.Ro
 						framework.ExpectNoError(err, "failed to get BGP routes from node")
 						framework.Logf("Routes in node %s", routes)
 						return strings.Contains(routes, frrContainerIPv4)
-					}, 30*time.Second).Should(gomega.BeTrue())
+					}, 30*time.Second).Should(gomega.BeTrue(), "node %s must import the external server IPv4 route via %s", node.Name, frrContainerIPv4)
 				}
 				if isIPv6Supported(f.ClientSet) {
 					ipVer := " -6"
 					nodeIPv6LLA, err := GetNodeIPv6LinkLocalAddressForEth0(routerContainerName)
-					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+					gomega.Expect(err).NotTo(gomega.HaveOccurred(), "getting the FRR router IPv6 link-local address")
 					bgpRouteCommand := strings.Split(fmt.Sprintf("ip%s route show %s", ipVer, externalServerV6CIDR), " ")
 					framework.Logf("Checking for server's route in node %s", node.Name)
 					gomega.Eventually(func() bool {
@@ -295,7 +295,7 @@ var _ = ginkgo.Describe("BGP: When default podNetwork is advertised", feature.Ro
 						framework.ExpectNoError(err, "failed to get BGP routes from node")
 						framework.Logf("Routes in node %s", routes)
 						return strings.Contains(routes, nodeIPv6LLA)
-					}, 30*time.Second).Should(gomega.BeTrue())
+					}, 30*time.Second).Should(gomega.BeTrue(), "node %s must import the external server IPv6 route via %s", node.Name, nodeIPv6LLA)
 				}
 			}
 
@@ -307,7 +307,7 @@ var _ = ginkgo.Describe("BGP: When default podNetwork is advertised", feature.Ro
 					return ""
 				}
 				return podNetworkValue
-			}, 5*time.Second, time.Second).Should(gomega.Equal("PodNetwork"))
+			}, 5*time.Second, time.Second).Should(gomega.Equal("PodNetwork"), "RouteAdvertisements %s must advertise PodNetwork", defaultNetworkRAName)
 
 			gomega.Eventually(func() string {
 				reason, err := e2ekubectl.RunKubectl("", "get", "ra", defaultNetworkRAName, "-o", "jsonpath={.status.conditions[?(@.type=='Accepted')].reason}")
@@ -315,7 +315,7 @@ var _ = ginkgo.Describe("BGP: When default podNetwork is advertised", feature.Ro
 					return ""
 				}
 				return reason
-			}, 30*time.Second, time.Second).Should(gomega.Equal("Accepted"))
+			}, 30*time.Second, time.Second).Should(gomega.Equal("Accepted"), "RouteAdvertisements %s must be Accepted", defaultNetworkRAName)
 
 			ginkgo.By("all 3 node's podSubnet routes are exported correctly to external FRR router by frr-k8s speakers")
 			// sample
@@ -342,7 +342,7 @@ var _ = ginkgo.Describe("BGP: When default podNetwork is advertised", feature.Ro
 			}
 
 			clientNode, err := f.ClientSet.CoreV1().Nodes().Get(context.TODO(), clientPod.Spec.NodeName, metav1.GetOptions{})
-			framework.ExpectNoError(err)
+			framework.ExpectNoError(err, "getting client pod node %s", clientPod.Spec.NodeName)
 
 			// Get the nodeIPs for the node where the client pod is running
 			var nodeIPv4, nodeIPv6 string
@@ -402,10 +402,10 @@ var _ = ginkgo.Describe("BGP: When default podNetwork is advertised", feature.Ro
 						}
 					}
 				})
-			framework.ExpectNoError(err)
+			framework.ExpectNoError(err, "creating the host-networked server pod on node %s", nodes.Items[2].Name)
 
 			hostNetworkedPodNode, err := f.ClientSet.CoreV1().Nodes().Get(context.TODO(), hostNetworkedPod.Spec.NodeName, metav1.GetOptions{})
-			framework.ExpectNoError(err)
+			framework.ExpectNoError(err, "getting host-networked server pod node %s", hostNetworkedPod.Spec.NodeName)
 
 			// reset before collecting for a different node
 			nodeIPv4, nodeIPv6 = "", ""
@@ -490,9 +490,9 @@ var _ = ginkgo.Describe("BGP: When default podNetwork is advertised", feature.Ro
 			}, 30*time.Second, 2*time.Second).Should(gomega.Succeed(), "With default network being advertised initially, pod to second node test failed")
 
 			raClient, err := raclientset.NewForConfig(f.ClientConfig())
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "creating the RouteAdvertisements client")
 			originalRA, err := raClient.K8sV1().RouteAdvertisements().Get(context.TODO(), defaultNetworkRAName, metav1.GetOptions{})
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "reading RouteAdvertisements %s before deleting it", defaultNetworkRAName)
 
 			// Defer adding the original default-network RA back to restore the original
 			// test setup, including its FRR configuration selector.
@@ -503,7 +503,7 @@ var _ = ginkgo.Describe("BGP: When default podNetwork is advertised", feature.Ro
 
 			defer func() {
 				ra, err = raClient.K8sV1().RouteAdvertisements().Create(context.TODO(), ra, metav1.CreateOptions{})
-				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "recreating RouteAdvertisements %s", defaultNetworkRAName)
 
 				// Wait for RouteAdvertisement to be accepted, but don't fail the test if it times out
 				// We'll handle the failure with AbortSuite instead
@@ -587,11 +587,11 @@ var _ = ginkgo.Describe("BGP: When default podNetwork is advertised", feature.Ro
 
 			ginkgo.By("Delete route advertisement")
 			_, err = e2ekubectl.RunKubectl("", "delete", "ra", defaultNetworkRAName, "--ignore-not-found=true")
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "deleting RouteAdvertisements %s", defaultNetworkRAName)
 
 			// Make sure default RA is deleted
 			_, err = e2ekubectl.RunKubectl("", "get", "ra", defaultNetworkRAName)
-			gomega.Expect(err).To(gomega.HaveOccurred())
+			gomega.Expect(err).To(gomega.HaveOccurred(), "RouteAdvertisements %s must be gone after deletion", defaultNetworkRAName)
 
 			ginkgo.By("After default network is toggled to unadvertised, run test towards the external agnhost echo server from client pod again, egressing packets should be SNATed to pod's host nodeIP")
 			gomega.Eventually(func() error {
