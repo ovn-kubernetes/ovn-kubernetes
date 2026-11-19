@@ -69,7 +69,7 @@ var _ = ginkgo.Describe("BGP: UDN service marks after advertisement updates", fe
 					}),
 				},
 			}
-			framework.ExpectNoError(createUserDefinedNetwork(f, ictx, ns, name, true, spec, map[string]string{labelKey: suffix, labelKey + "-network": name}))
+			framework.ExpectNoError(createUserDefinedNetwork(ctx, f, ictx, ns, name, true, spec, map[string]string{labelKey: suffix, labelKey + "-network": name}))
 			ginkgo.DeferCleanup(func() error {
 				ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 				defer cancel()

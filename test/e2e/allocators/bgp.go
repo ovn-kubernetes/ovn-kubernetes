@@ -4,7 +4,9 @@
 package allocators
 
 import (
+	"context"
 	"sync"
+	"time"
 
 	"k8s.io/kubernetes/test/e2e/framework"
 
@@ -53,6 +55,20 @@ type BGPAllocation struct {
 // integer allocated with AllocateInt. Deallocation is registered as a cleanup
 // function.
 func AllocateBGP(f *framework.Framework, cleanup infraapi.ContextCleanUp) (BGPAllocation, error) {
+	allocation, release, err := ReserveBGP(context.Background(), f)
+	if err == nil {
+		cleanup.AddCleanUpFn(func() error {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			defer cancel()
+			return release(ctx)
+		})
+	}
+	return allocation, err
+}
+
+// ReserveBGP lets a test release its allocation after resources using the
+// subnets have disappeared. Other parallel specs can reuse it immediately.
+func ReserveBGP(ctx context.Context, f *framework.Framework) (BGPAllocation, func(context.Context) error, error) {
 	bgpOnce.Do(func() {
 		v4Exclusions, v6Exclusions := infrastructureNetworkExclusions()
 		bgpPeer4 = newSubnetSpec(bgpPeerSubnets, v4Exclusions)
@@ -74,14 +90,11 @@ func AllocateBGP(f *framework.Framework, cleanup infraapi.ContextCleanUp) (BGPAl
 		(vniMax-vniOffset+1)/2,
 	)
 
-	n, err := AllocateInt(f, bgpKey, maxUsable)
+	n, err := allocateInt(ctx, f, bgpKey, maxUsable)
 	if err != nil {
-		return BGPAllocation{}, err
+		return BGPAllocation{}, nil, err
 	}
-
-	cleanup.AddCleanUpFn(func() error {
-		return DeallocateInt(f, bgpKey, n)
-	})
+	release := func(ctx context.Context) error { return deallocateInt(ctx, f, bgpKey, n) }
 
 	bgpV4Idx := bgpPeer4.nthFree(n)
 	bgpV6Idx := bgpPeer6.nthFree(n)
@@ -113,5 +126,5 @@ func AllocateBGP(f *framework.Framework, cleanup infraapi.ContextCleanUp) (BGPAl
 		MACVRFVID:      macvrfVID,
 		IPVRFVNI:       ipvrfVNI,
 		IPVRFVID:       ipvrfVID,
-	}, nil
+	}, release, nil
 }

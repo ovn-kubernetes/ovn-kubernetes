@@ -6,6 +6,7 @@ package e2e
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/rand"
 	"net"
@@ -1085,9 +1086,12 @@ func wrappedTestFramework(basename string) *framework.Framework {
 		nodes, err := f.ClientSet.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
 		framework.ExpectNoError(err)
 		for _, node := range nodes.Items {
-			// ensure e2e-dbs directory with test case exists
 			_, err = infraprovider.Get().ExecK8NodeCommand(node.Name, []string{"mkdir", "-p", logDir})
-			framework.ExpectNoError(err)
+			if errors.Is(err, infraapi.NotFound) {
+				framework.Logf("Skipping database collection for node %s: no backing container", node.Name)
+				continue
+			}
+			framework.ExpectNoError(err, "create database dump directory on node %s", node.Name)
 
 			// Loop through potential OVSDB db locations
 			for _, ovsdbLocation := range ovsdbLocations {

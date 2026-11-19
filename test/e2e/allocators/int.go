@@ -39,11 +39,13 @@ const (
 // orchestration handling the parallelization does not provide any context where
 // this allocation can happen. De-allocate with DeallocateInt.
 func AllocateInt(f *framework.Framework, key string, max int) (int, error) {
+	return allocateInt(context.Background(), f, key, max)
+}
+
+func allocateInt(ctx context.Context, f *framework.Framework, key string, max int) (int, error) {
 	if max < 1 {
 		return 0, fmt.Errorf("max must be at least 1, got %d", max)
 	}
-
-	ctx := context.Background()
 
 	ns := &v1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: configMapNamespace}}
 	_, err := f.ClientSet.CoreV1().Namespaces().Create(ctx, ns, metav1.CreateOptions{})
@@ -104,7 +106,10 @@ func AllocateInt(f *framework.Framework, key string, max int) (int, error) {
 
 // DeallocateInt deallocates an integer previously allocated with AllocateInt.
 func DeallocateInt(f *framework.Framework, key string, index int) error {
-	ctx := context.Background()
+	return deallocateInt(context.Background(), f, key, index)
+}
+
+func deallocateInt(ctx context.Context, f *framework.Framework, key string, index int) error {
 	client := f.ClientSet.CoreV1().ConfigMaps(configMapNamespace)
 
 	return retry.RetryOnConflict(allocatorBackoff, func() error {
