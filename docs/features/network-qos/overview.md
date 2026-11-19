@@ -18,3 +18,4 @@ The `NetworkQoS` also has `status` field which is populated by ovn-k which helps
 
 ## Sources
 - [OKEP-4380: Network QoS Support](../../okeps/okep-4380-network-qos.md)
+- [NetworkQoS Level Driven Controller Design](../../design/network-qos-level-driven.md)

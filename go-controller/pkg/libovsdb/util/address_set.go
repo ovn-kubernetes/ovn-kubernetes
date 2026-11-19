@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/klog/v2"
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 	"github.com/ovn-kubernetes/libovsdb/ovsdb"
@@ -26,12 +27,19 @@ func DeleteAddrSetsWithoutACLRefAnyController(dbOwnerType *libovsdbops.ObjectIDs
 }
 
 // DeleteAddrSetsWithoutMatchRef deletes address sets related to predicateIDs
-// when they are not referenced from ACL, NAT, or logical router policy matches.
+// when they are not referenced from ACL, NAT, logical router policy or QoS matches.
 func DeleteAddrSetsWithoutMatchRef(predicateIDs *libovsdbops.DbObjectIDs, nbClient libovsdbclient.Client) error {
-	addrSets, err := libovsdbops.FindAddressSetsWithPredicate(
-		nbClient,
-		libovsdbops.GetPredicate[*nbdb.AddressSet](predicateIDs, nil),
-	)
+	return deleteAddrSetsWithoutMatchRef(nbClient, libovsdbops.GetPredicate[*nbdb.AddressSet](predicateIDs, nil))
+}
+
+// DeleteAddrSetsWithoutMatchRefAnyController deletes the address sets of the given owner type,
+// across all controllers, that no ACL, NAT, logical router policy or QoS match refers to.
+func DeleteAddrSetsWithoutMatchRefAnyController(dbOwnerType *libovsdbops.ObjectIDsType, nbClient libovsdbclient.Client) error {
+	return deleteAddrSetsWithoutMatchRef(nbClient, libovsdbops.GetAnyControllerPredicate[*nbdb.AddressSet](dbOwnerType, nil))
+}
+
+func deleteAddrSetsWithoutMatchRef(nbClient libovsdbclient.Client, predicate func(*nbdb.AddressSet) bool) error {
+	addrSets, err := libovsdbops.FindAddressSetsWithPredicate(nbClient, predicate)
 	if err != nil {
 		return fmt.Errorf("failed to find address sets with predicate: %w", err)
 	}
@@ -51,6 +59,8 @@ func DeleteAddrSetsWithoutMatchRef(predicateIDs *libovsdbops.DbObjectIDs, nbClie
 	staleAddressSets := make([]*nbdb.AddressSet, 0, len(addrSets))
 	for _, addrSet := range addrSets {
 		if !referencedNames.Has(addrSet.Name) {
+			klog.V(5).Infof("Deleting address set %s (%s), which no match refers to", addrSet.Name,
+				addrSet.ExternalIDs[libovsdbops.PrimaryIDKey.String()])
 			staleAddressSets = append(staleAddressSets, addrSet)
 		}
 	}
@@ -95,6 +105,14 @@ func addressSetNamesReferencedInMatches(nbClient libovsdbclient.Client, addressS
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to find logical router policies referencing address sets: %w", err)
+	}
+
+	_, err = libovsdbops.FindQoSesWithPredicate(nbClient, func(qos *nbdb.QoS) bool {
+		recordReferences(qos.Match)
+		return false
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to find QoSes referencing address sets: %w", err)
 	}
 
 	return referencedNames, nil

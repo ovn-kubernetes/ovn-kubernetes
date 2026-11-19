@@ -64,7 +64,7 @@ type egressIPQoSRuleName string
 
 const (
 	NodeIPAddrSetName             egressIPAddrSetName = addresssetmanager.ClusterNodeIPsAddrSetName
-	EgressIPServedPodsAddrSetName egressIPAddrSetName = "egressip-served-pods"
+	EgressIPServedPodsAddrSetName egressIPAddrSetName = addresssetmanager.EgressIPServedPodsAddrSetName
 	// the possible values for LRP DB objects for EIPs
 	IPFamilyValueV4         egressIPFamilyValue         = "ip4"
 	IPFamilyValueV6         egressIPFamilyValue         = "ip6"
@@ -79,11 +79,7 @@ const (
 )
 
 func getEgressIPAddrSetDbIDs(name egressIPAddrSetName, network, controller string) *libovsdbops.DbObjectIDs {
-	return libovsdbops.NewDbObjectIDs(libovsdbops.AddressSetEgressIP, controller, map[libovsdbops.ExternalIDKey]string{
-		// egress ip creates cluster-wide address sets with egressIpAddrSetName
-		libovsdbops.ObjectNameKey: string(name),
-		libovsdbops.NetworkKey:    network,
-	})
+	return addresssetmanager.GetEgressIPAddrSetDbIDs(string(name), network, controller)
 }
 
 func getEgressIPLRPReRouteDbIDs(egressIPName, podNamespace, podName string, ipFamily egressIPFamilyValue, network, controller string) *libovsdbops.DbObjectIDs {
