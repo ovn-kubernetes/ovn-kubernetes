@@ -26,6 +26,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	k8stesting "k8s.io/client-go/testing"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/ptr"
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
@@ -595,6 +596,28 @@ var _ = Describe("NetworkQoS Controller", func() {
 			&ipBlock{CIDR: "10.0.0.0/8", Except: []string{"10.0.0.1"}}, ""),
 		Entry("mixed families", "128.116.0.0/17", []string{"fd00::1"}, nil,
 			`invalid except[0]: "fd00::1" is not in the IP family of cidr "128.116.0.0/17"`),
+	)
+
+	DescribeTable("ToQosMatchString",
+		func(classifier *Classifier, expected string) {
+			Expect(classifier.ToQosMatchString(true, false)).To(Equal(expected), "unexpected classifier match")
+		},
+		Entry("no destination and no port", &Classifier{}, ""),
+		Entry("a destination and no port",
+			&Classifier{Destinations: []*Destination{{IpBlock: &ipBlock{CIDR: "128.116.0.0/17"}}}},
+			"ip4.dst == 128.116.0.0/17"),
+		Entry("a destination and a port",
+			&Classifier{
+				Destinations: []*Destination{{IpBlock: &ipBlock{CIDR: "128.116.0.0/17"}}},
+				Ports:        []*nqostype.Port{{Protocol: "TCP", Port: ptr.To(int32(8080))}},
+			},
+			"ip4.dst == 128.116.0.0/17 && tcp && tcp.dst == 8080"),
+		Entry("no destination and a port",
+			&Classifier{Ports: []*nqostype.Port{{Protocol: "TCP", Port: ptr.To(int32(8080))}}},
+			"tcp && tcp.dst == 8080"),
+		Entry("no destination and two protocols",
+			&Classifier{Ports: []*nqostype.Port{{Protocol: "TCP", Port: ptr.To(int32(8080))}, {Protocol: "UDP"}}},
+			"((tcp && tcp.dst == 8080) || (udp))"),
 	)
 
 	DescribeTable("When starting controller with NetworkQoS, Pod and Node objects",

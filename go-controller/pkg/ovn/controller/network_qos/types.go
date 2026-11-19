@@ -331,12 +331,20 @@ func (c *Classifier) ToQosMatchString(ipv4Enabled, ipv6Enabled bool) string {
 		}
 		portMatches = append(portMatches, match)
 	}
+	portMatch := ""
 	if len(portMatches) == 1 {
-		output = fmt.Sprintf("%s && %s", output, portMatches[0])
+		portMatch = portMatches[0]
 	} else if len(portMatches) > 1 {
-		output = fmt.Sprintf("%s && ((%s))", output, strings.Join(portMatches, ") || ("))
+		portMatch = fmt.Sprintf("((%s))", strings.Join(portMatches, ") || ("))
 	}
-	return output
+	// a classifier may come without destinations or without ports
+	switch {
+	case output == "":
+		return portMatch
+	case portMatch == "":
+		return output
+	}
+	return fmt.Sprintf("%s && %s", output, portMatch)
 }
 
 // ipBlock is an IP block whose entries have been parsed and reformatted, so
