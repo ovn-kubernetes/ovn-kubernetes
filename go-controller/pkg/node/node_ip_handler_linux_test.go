@@ -30,7 +30,6 @@ import (
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
 	libovsdbtest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/libovsdb"
 	mgmtportmock "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/managementport"
-	netlink_mocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/vishvananda/netlink"
 	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	utilMocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/mocks"
@@ -446,56 +445,81 @@ var _ = Describe("addressManager.updateOVNEncapIPAndReconnect", func() {
 })
 
 var _ = Describe("refreshGatewayIfIndex", func() {
-	const nodeName = "node1"
+	var (
+		tc     *testCtx
+		nlMock *utilMocks.NetLinkOps
+	)
 
+	BeforeEach(func() {
+		Expect(config.PrepareTestConfig()).To(Succeed(), "reset configuration before testing gateway index refresh")
+		config.OvnKubeNode.Mode = ovntypes.NodeModeDPUHost
+		tc = configureKubeOVNContext("node1", false)
+		DeferCleanup(tc.watchFactory.Shutdown)
+		DeferCleanup(tc.ovsCleanup.Cleanup)
+
+		nlMock = utilMocks.NewNetLinkOps(GinkgoT())
+		util.SetNetLinkOpMockInst(nlMock)
+		DeferCleanup(util.ResetNetLinkOpMockInst)
+		tc.ipManager.gatewayIfIndex = 42
+	})
+
+	// An unconfigured gateway must leave the previously cached index unchanged.
 	It("does nothing when Gateway.Interface is empty", func() {
-		Expect(config.PrepareTestConfig()).To(Succeed())
+		By("refreshing the cached index without a configured gateway interface")
 		config.Gateway.Interface = ""
-		tc := configureKubeOVNContext(nodeName, false)
-		defer tc.watchFactory.Shutdown()
-		defer tc.ovsCleanup.Cleanup()
 
-		tc.ipManager.gatewayIfIndex = 42
 		tc.ipManager.refreshGatewayIfIndex()
-		Expect(tc.ipManager.gatewayIfIndex).To(Equal(42))
+
+		Expect(tc.ipManager.gatewayIfIndex).To(Equal(42), "an unconfigured gateway should preserve the cached index")
 	})
 
+	// A failed gateway lookup must discard an index that may now be stale.
 	It("resets index to 0 when interface is not found", func() {
-		Expect(config.PrepareTestConfig()).To(Succeed())
+		By("refreshing the cached index after the gateway interface disappears")
 		config.Gateway.Interface = "nonexistent0"
-		tc := configureKubeOVNContext(nodeName, false)
-		defer tc.watchFactory.Shutdown()
-		defer tc.ovsCleanup.Cleanup()
+		nlMock.On("LinkByName", "nonexistent0").Return(nil, fmt.Errorf("not found")).Once()
 
-		nlMock := new(utilMocks.NetLinkOps)
-		util.SetNetLinkOpMockInst(nlMock)
-		defer util.ResetNetLinkOpMockInst()
-
-		nlMock.On("LinkByName", "nonexistent0").Return(nil, fmt.Errorf("not found"))
-
-		tc.ipManager.gatewayIfIndex = 42
 		tc.ipManager.refreshGatewayIfIndex()
-		Expect(tc.ipManager.gatewayIfIndex).To(Equal(0))
+
+		Expect(tc.ipManager.gatewayIfIndex).To(BeZero(), "a missing gateway interface should clear the cached index")
 	})
 
+	// A successful gateway lookup must cache the interface's current index.
 	It("sets index from link when interface exists", func() {
-		Expect(config.PrepareTestConfig()).To(Succeed())
+		By("resolving the configured gateway interface and caching its index")
 		config.Gateway.Interface = "breth0"
-		tc := configureKubeOVNContext(nodeName, false)
-		defer tc.watchFactory.Shutdown()
-		defer tc.ovsCleanup.Cleanup()
-
-		nlMock := new(utilMocks.NetLinkOps)
-		linkMock := new(netlink_mocks.Link)
-		util.SetNetLinkOpMockInst(nlMock)
-		defer util.ResetNetLinkOpMockInst()
-
-		nlMock.On("LinkByName", "breth0").Return(linkMock, nil)
-		linkMock.On("Attrs").Return(&netlink.LinkAttrs{Index: 77, Name: "breth0"})
-
+		nlMock.On("LinkByName", "breth0").Return(&netlink.Dummy{
+			LinkAttrs: netlink.LinkAttrs{Index: 77, Name: "breth0"},
+		}, nil).Once()
 		tc.ipManager.gatewayIfIndex = 0
+
 		tc.ipManager.refreshGatewayIfIndex()
-		Expect(tc.ipManager.gatewayIfIndex).To(Equal(77))
+
+		Expect(tc.ipManager.gatewayIfIndex).To(Equal(77), "the gateway index should match the resolved interface")
+	})
+
+	// Full mode must not update the cache shared by its informer and event loop.
+	It("does not refresh the index in full mode", func() {
+		By("attempting a gateway index refresh in full mode")
+		config.OvnKubeNode.Mode = ovntypes.NodeModeFull
+		config.Gateway.Interface = "breth0"
+
+		tc.ipManager.refreshGatewayIfIndex()
+
+		Expect(tc.ipManager.gatewayIfIndex).To(Equal(42), "full mode should preserve the cached gateway index")
+		Expect(nlMock.Calls).To(BeEmpty(), "full mode should not query the gateway interface")
+	})
+
+	// DPU mode does not consume the gateway index cache.
+	It("does not refresh the index in DPU mode", func() {
+		By("attempting a gateway index refresh in DPU mode")
+		config.OvnKubeNode.Mode = ovntypes.NodeModeDPU
+		config.Gateway.Interface = "breth0"
+
+		tc.ipManager.refreshGatewayIfIndex()
+
+		Expect(tc.ipManager.gatewayIfIndex).To(Equal(42), "DPU mode should preserve the cached gateway index")
+		Expect(nlMock.Calls).To(BeEmpty(), "DPU mode should not query the gateway interface")
 	})
 })
 
