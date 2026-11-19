@@ -28,11 +28,13 @@ var (
 	// - 172.29.0.0/16 		(DPU-sim BGP server network)
 	// - 172.30.0.0/16 		(Kubernetes services)
 	// - 169.254.169.0/29 	(masquerade subnet)
+	// - 198.18.231.0/24 	(Service PMTUD client network)
 	// - fd01::/48    		(cluster default network)
 	// - fd02::/112	   		(Kubernetes services)
 	// - fd98::/64     		(default join subnet)
 	// - fd69::/125			(masquerade subnet)
 	// - fd97::/64		    (transit subnet)
+	// - fd00:1319:3655::/64 (Service PMTUD client network)
 
 	// UDN subnets, 1024 available
 	udnSubnets  = "10.0.0.0/10/20"

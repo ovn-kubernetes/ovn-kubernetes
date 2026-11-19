@@ -892,6 +892,9 @@ jobs:
           make -C test control-plane WHAT="Kubevirt Virtual Machines|Localnet DHCP IPAM"
         elif [[ "${{ matrix.target }}" == network-segmentation* ]]; then
           make -C test control-plane WHAT="Network Segmentation"
+          # Host ICMP source selection is node-wide; run this PMTUD regression
+          # separately from the parallel network-segmentation suite in both gateway modes.
+          PARALLEL=false make -C test control-plane WHAT="Network Segmentation Service host-generated PMTUD"
           make -C test control-plane WHAT="ClusterNetworkConnect"
         elif [ "${{ matrix.target }}" == "evpn" ]; then
           make -C test control-plane WHAT="EVPN"
