@@ -20,6 +20,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/ptr"
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
@@ -403,6 +404,19 @@ var _ = Describe("NetworkQoS Controller", func() {
 		Entry("an IPv6 address",
 			&Classifier{Destinations: []*Destination{{IpBlock: &nqostype.IPBlock{CIDR: "fd00:1::5"}}}},
 			"ip6.dst == fd00:1::5"),
+		Entry("no destination and no port", &Classifier{}, ""),
+		Entry("a destination and a port",
+			&Classifier{
+				Destinations: []*Destination{{IpBlock: &nqostype.IPBlock{CIDR: "128.116.0.0/17"}}},
+				Ports:        []*nqostype.Port{{Protocol: "TCP", Port: ptr.To(int32(8080))}},
+			},
+			"ip4.dst == 128.116.0.0/17 && tcp && tcp.dst == 8080"),
+		Entry("no destination and a port",
+			&Classifier{Ports: []*nqostype.Port{{Protocol: "TCP", Port: ptr.To(int32(8080))}}},
+			"tcp && tcp.dst == 8080"),
+		Entry("no destination and two protocols",
+			&Classifier{Ports: []*nqostype.Port{{Protocol: "TCP", Port: ptr.To(int32(8080))}, {Protocol: "UDP"}}},
+			"((tcp && tcp.dst == 8080) || (udp))"),
 	)
 
 	DescribeTable("When starting controller with NetworkQoS, Pod and Node objects",
