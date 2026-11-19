@@ -248,8 +248,21 @@ func (pbr *PolicyBasedRoutesManager) createPolicyBasedRoutes(match, priority, ne
 	}
 
 	p := func(item *nbdb.LogicalRouterPolicy) bool {
-		// the match criteria being passed around already features the LRP name scoped to the network
 		return item.Priority == lrp.Priority && item.Match == lrp.Match
+	}
+
+	// Host-CIDR policies can have identical matches across Layer2 UDNs with the
+	// same pod subnet. Preserve their shared policy row by looking up globally
+	// and passing its UUID; the create/update helper scopes predicates to one router.
+	policies, err := libovsdbops.FindLogicalRouterPoliciesWithPredicate(pbr.nbClient, p)
+	if err != nil {
+		return fmt.Errorf("error finding policy with priority %s and match %q: %v", priority, match, err)
+	}
+	if len(policies) > 1 {
+		return fmt.Errorf("found multiple policies with priority %s and match %q", priority, match)
+	}
+	if len(policies) == 1 {
+		lrp.UUID = policies[0].UUID
 	}
 
 	err = libovsdbops.CreateOrUpdateLogicalRouterPolicyWithPredicate(pbr.nbClient, pbr.clusterRouterName, &lrp, p,
