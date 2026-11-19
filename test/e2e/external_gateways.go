@@ -1619,12 +1619,7 @@ spec:
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	gomega.Expect(stdout).To(gomega.Equal(fmt.Sprintf("adminpolicybasedexternalroute.k8s.ovn.org/%s created\n", policyName)))
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	gwIPs := sets.List(sets.New(gateways...))
-	gomega.Eventually(func() string {
-		lastMsg, err := e2ekubectl.RunKubectl("", "get", "apbexternalroute", policyName, "-ojsonpath={.status.messages[-1:]}")
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		return lastMsg
-	}, time.Minute, 1).Should(gomega.ContainSubstring(fmt.Sprintf("configured external gateway IPs: %s", strings.Join(gwIPs, ","))))
+	expectAPBExternalRouteConfiguredIPs(policyName, time.Minute, gateways...)
 	gomega.Eventually(func() string {
 		status, err := e2ekubectl.RunKubectl("", "get", "apbexternalroute", policyName, "-ojsonpath={.status.status}")
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1640,12 +1635,7 @@ func checkAPBExternalRouteStatus(policyName string) {
 
 func createAPBExternalRouteCRWithStaticHop(policyName, namespaceName string, bfd bool, gateways ...string) {
 	createAPBExternalRouteCRWithStaticHopAndStatus(policyName, namespaceName, bfd, "Success", gateways...)
-	gwIPs := sets.List(sets.New(gateways...))
-	gomega.Eventually(func() string {
-		lastMsg, err := e2ekubectl.RunKubectl("", "get", "apbexternalroute", policyName, "-ojsonpath={.status.messages[-1:]}")
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		return lastMsg
-	}, time.Minute, 1).Should(gomega.ContainSubstring(fmt.Sprintf("configured external gateway IPs: %s", strings.Join(gwIPs, ","))))
+	expectAPBExternalRouteConfiguredIPs(policyName, time.Minute, gateways...)
 }
 
 func createAPBExternalRouteCRWithStaticHopAndStatus(policyName, namespaceName string, bfd bool, status string, gateways ...string) {
@@ -1692,11 +1682,7 @@ spec:
 `, policyName, namespaceName, formatStaticHops(bfd, gateways...))
 	_, err = e2ekubectl.RunKubectlInput(namespaceName, data, "apply", "-f", "-")
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	gomega.Eventually(func() string {
-		lastMsg, err := e2ekubectl.RunKubectl("", "get", "apbexternalroute", policyName, "-ojsonpath={.status.messages[-1:]}")
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		return lastMsg
-	}, 10).Should(gomega.ContainSubstring(fmt.Sprintf("configured external gateway IPs: %s", strings.Join(gateways, ","))))
+	expectAPBExternalRouteConfiguredIPs(policyName, 10*time.Second, gateways...)
 
 	gomega.Eventually(func() string {
 		s, err := e2ekubectl.RunKubectl("", "get", "apbexternalroute", policyName, "-ojsonpath={.status.status}")
@@ -1709,6 +1695,30 @@ spec:
 		return t
 	}, 10, 1).ShouldNot(gomega.Equal(lastUpdatetime))
 
+}
+
+// expectAPBExternalRouteConfiguredIPs waits until the APB status message reports each
+// expected gateway IP as a complete list member. Substring matching is unsafe (e.g.
+// "10.0.0.1" matches inside "10.0.0.10"); dual-stack messages may also list a
+// superset of families, so membership against the parsed list is required.
+func expectAPBExternalRouteConfiguredIPs(policyName string, timeout time.Duration, gateways ...string) {
+	expected := sets.New(gateways...)
+	gomega.Eventually(func(g gomega.Gomega) {
+		lastMsg, err := e2ekubectl.RunKubectl("", "get", "apbexternalroute", policyName, "-ojsonpath={.status.messages[-1:]}")
+		g.Expect(err).NotTo(gomega.HaveOccurred(), "failed to get APB external route %s status messages", policyName)
+		_, list, found := strings.Cut(lastMsg, "configured external gateway IPs:")
+		g.Expect(found).To(gomega.BeTrue(), "missing configured gateway IPs in %q", lastMsg)
+		configured := sets.New[string]()
+		for ip := range strings.SplitSeq(list, ",") {
+			ip = strings.TrimSpace(ip)
+			if ip == "" {
+				continue
+			}
+			configured.Insert(ip)
+		}
+		g.Expect(configured.HasAll(expected.UnsortedList()...)).To(gomega.BeTrue(),
+			"missing gateway IPs in %q; configured=%v expected=%v", lastMsg, sets.List(configured), sets.List(expected))
+	}).WithTimeout(timeout).WithPolling(time.Second).Should(gomega.Succeed())
 }
 
 func deleteAPBExternalRouteCR(policyName string) {
