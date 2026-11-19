@@ -333,3 +333,5 @@ If **all** specified classifier conditions match, the packet gets the DSCP mark 
 A `NetworkQoS` stored with any other protocol value, for example one admitted by an earlier version of the CRD or by a cluster whose CRD was not updated along with OVN-Kubernetes, is not programmed: its existing QoS rules are removed and its `Ready-In-Zone-<node>` status condition is set to `False` with a message naming the rejected port.
 
 The `NetworkQoS` CRD does not check the `cidr` and `except` values of an `ipBlock`, so a value that is not an IP address or an IP prefix is admitted and then handled the same way: the `NetworkQoS` is not programmed, its existing QoS rules are removed and its `Ready-In-Zone-<node>` status condition is set to `False` with a message naming the rejected destination. A prefix with host bits set, such as `10.1.2.3/8`, is programmed as `10.0.0.0/8`. An IPv4-mapped IPv6 value, such as `::ffff:10.1.2.3`, is programmed as IPv4, here `10.1.2.3`.
+
+While a zone reports a `Ready-In-Zone-<node>` condition that is `False`, the `STATUS` column of `kubectl get networkqoses` shows `NetworkQoS Destinations not correctly applied`.
