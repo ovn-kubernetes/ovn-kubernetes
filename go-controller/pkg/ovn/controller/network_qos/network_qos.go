@@ -6,12 +6,14 @@ package networkqos
 import (
 	"context"
 	"fmt"
+	"net"
 	"sync"
 	"time"
 
 	nadv1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -21,6 +23,7 @@ import (
 	metaapplyv1 "k8s.io/client-go/applyconfigurations/meta/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
+	utilnet "k8s.io/utils/net"
 	"k8s.io/utils/ptr"
 
 	networkqosapi "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1"
@@ -107,6 +110,10 @@ func (c *Controller) ensureNetworkQos(nqos *networkqosapi.NetworkQoS) error {
 	if err := validateClassifierPorts(nqos.Spec.Egress); err != nil {
 		return c.rejectNetworkQos(nqos, "invalid classifier port", err)
 	}
+	ipBlocks, parseErr := parseClassifierIPBlocks(nqos.Spec.Egress)
+	if parseErr != nil {
+		return c.rejectNetworkQos(nqos, "invalid classifier ipBlock", parseErr)
+	}
 
 	if len(nqos.Spec.PodSelector.MatchLabels) > 0 || len(nqos.Spec.PodSelector.MatchExpressions) > 0 {
 		if podSelector, err := metav1.LabelSelectorAsSelector(&nqos.Spec.PodSelector); err != nil {
@@ -138,7 +145,7 @@ func (c *Controller) ensureNetworkQos(nqos *networkqosapi.NetworkQoS) error {
 				return fmt.Errorf("specifying both ipBlock and podSelector/namespaceSelector is not allowed")
 			}
 			destState := &Destination{}
-			destState.IpBlock = destSpec.IPBlock.DeepCopy()
+			destState.IpBlock = ipBlocks[destSpec.IPBlock]
 			if destSpec.NamespaceSelector != nil && (len(destSpec.NamespaceSelector.MatchLabels) > 0 || len(destSpec.NamespaceSelector.MatchExpressions) > 0) {
 				if selector, err := metav1.LabelSelectorAsSelector(destSpec.NamespaceSelector); err != nil {
 					return fmt.Errorf("error parsing destination namespace selector: %v", err)
@@ -207,6 +214,59 @@ func validateClassifierPorts(rules []networkqosapi.Rule) error {
 		}
 	}
 	return nil
+}
+
+// parseClassifierIPBlocks parses the IP blocks of the classifier destinations
+// of the given rules and returns them by the IP block they were parsed from.
+// It returns an error if a cidr or an except entry is not an IP address or an
+// IP prefix. Both are copied into the OVN QoS match, where any other string is
+// either refused by OVN or read as further match terms. An IP block with an
+// empty cidr is left out: its destination matches any address.
+func parseClassifierIPBlocks(rules []networkqosapi.Rule) (map[*networkingv1.IPBlock]*ipBlock, error) {
+	ipBlocks := map[*networkingv1.IPBlock]*ipBlock{}
+	for ruleIndex, rule := range rules {
+		for destIndex, dest := range rule.Classifier.To {
+			if dest.IPBlock == nil || dest.IPBlock.CIDR == "" {
+				continue
+			}
+			parsed, err := parseIPBlock(dest.IPBlock.CIDR, dest.IPBlock.Except)
+			if err != nil {
+				return nil, fmt.Errorf("egress[%d].classifier.to[%d].ipBlock: %w", ruleIndex, destIndex, err)
+			}
+			ipBlocks[dest.IPBlock] = parsed
+		}
+	}
+	return ipBlocks, nil
+}
+
+// parseIPBlock parses cidr and except, each an IP address or an IP prefix,
+// into an ipBlock. All entries must belong to the same IP family.
+func parseIPBlock(cidr string, except []string) (*ipBlock, error) {
+	ipNet, err := util.ParseCIDROrIP(cidr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid cidr: %w", err)
+	}
+	block := &ipBlock{CIDR: ipBlockEntry(ipNet), IsIPv6: utilnet.IsIPv6CIDR(ipNet)}
+	for i, entry := range except {
+		entryNet, entryErr := util.ParseCIDROrIP(entry)
+		if entryErr != nil {
+			return nil, fmt.Errorf("invalid except[%d]: %w", i, entryErr)
+		}
+		if utilnet.IsIPv6CIDR(entryNet) != block.IsIPv6 {
+			return nil, fmt.Errorf("invalid except[%d]: %q is not in the IP family of cidr %q", i, entry, cidr)
+		}
+		block.Except = append(block.Except, ipBlockEntry(entryNet))
+	}
+	return block, nil
+}
+
+// ipBlockEntry returns the form of ipNet that goes into an OVN match. A
+// single-host prefix is returned as a bare address.
+func ipBlockEntry(ipNet *net.IPNet) string {
+	if ones, bits := ipNet.Mask.Size(); ones == bits {
+		return ipNet.IP.String()
+	}
+	return ipNet.String()
 }
 
 // clearNetworkQos will handle the logic for deleting all db objects related

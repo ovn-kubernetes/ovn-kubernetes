@@ -508,3 +508,40 @@ func TestIsUsableEthernetMAC(t *testing.T) {
 		})
 	}
 }
+
+func TestParseCIDROrIP(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+		wantErr  bool
+	}{
+		{input: "10.0.0.1", expected: "10.0.0.1/32"},
+		{input: "10.0.0.0/8", expected: "10.0.0.0/8"},
+		{input: "10.1.2.3/8", expected: "10.0.0.0/8"},
+		{input: "fd00::1", expected: "fd00::1/128"},
+		{input: "FD00:0000::/64", expected: "fd00::/64"},
+		{input: "fd00::1/64", expected: "fd00::/64"},
+		{input: "::ffff:10.0.0.1", expected: "10.0.0.1/32"},
+		{input: "::ffff:10.1.2.3/104", expected: "10.0.0.0/8"},
+		{input: "010.0.0.1", wantErr: true},
+		{input: "fe80::1%eth0", wantErr: true},
+		{input: "", wantErr: true},
+		{input: "/24", wantErr: true},
+		{input: "10.0.0.0/33", wantErr: true},
+		{input: " 10.0.0.0/8", wantErr: true},
+		{input: "10.0.0.0/8 || ip4.dst == 0.0.0.0/0", wantErr: true},
+		{input: "10.0.0.1 && tcp", wantErr: true},
+		{input: "$as_name", wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.input, func(t *testing.T) {
+			got, err := ParseCIDROrIP(tc.input)
+			if tc.wantErr {
+				require.Error(t, err, "%q must be rejected", tc.input)
+				return
+			}
+			require.NoError(t, err, "%q must be accepted", tc.input)
+			assert.Equal(t, tc.expected, got.String(), "unexpected CIDR for %q", tc.input)
+		})
+	}
+}

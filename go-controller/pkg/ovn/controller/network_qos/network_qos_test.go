@@ -398,6 +398,8 @@ var _ = Describe("NetworkQoS Controller", func() {
 		const (
 			policyName      = "rejected-policy"
 			invalidProtocol = "TCP || ip4"
+			invalidCIDR     = "128.116.0.0/17 || ip4.dst == 0.0.0.0/0"
+			invalidExcept   = "128.116.0.0} || ip4.dst == {0.0.0.0/0"
 		)
 		var policy *nqostype.NetworkQoS
 
@@ -405,6 +407,14 @@ var _ = Describe("NetworkQoS Controller", func() {
 			nqos.Spec.Egress[0].Classifier.Ports[0].Protocol = invalidProtocol
 		}
 		invalidProtocolMessage := fmt.Sprintf("unsupported protocol %q", invalidProtocol)
+		setInvalidCIDR := func(nqos *nqostype.NetworkQoS) {
+			nqos.Spec.Egress[0].Classifier.To[0].IPBlock.CIDR = invalidCIDR
+		}
+		invalidCIDRMessage := fmt.Sprintf("egress[0].classifier.to[0].ipBlock: invalid cidr: %q is neither a CIDR nor an IP address", invalidCIDR)
+		setInvalidExcept := func(nqos *nqostype.NetworkQoS) {
+			nqos.Spec.Egress[0].Classifier.To[0].IPBlock.Except = []string{"128.116.0.1", invalidExcept}
+		}
+		invalidExceptMessage := fmt.Sprintf("egress[0].classifier.to[0].ipBlock: invalid except[1]: %q is neither a CIDR nor an IP address", invalidExcept)
 
 		eventuallyNotReady := func(message string) {
 			GinkgoHelper()
@@ -464,6 +474,8 @@ var _ = Describe("NetworkQoS Controller", func() {
 				Expect(qos).To(BeNil(), "unexpected QoS rule for rejected NetworkQoS %s/%s", nqosNamespace, policyName)
 			},
 			Entry("with an unsupported port protocol", setInvalidProtocol, invalidProtocolMessage),
+			Entry("with an ipBlock cidr that does not parse", setInvalidCIDR, invalidCIDRMessage),
+			Entry("with an ipBlock except entry that does not parse", setInvalidExcept, invalidExceptMessage),
 		)
 
 		It("reports a new policy as not ready once a failed status update is retried", func() {
@@ -506,6 +518,29 @@ var _ = Describe("NetworkQoS Controller", func() {
 			Entry("with an unsupported port protocol", setInvalidProtocol, invalidProtocolMessage, metav1.LabelSelector{}),
 			Entry("with an unsupported port protocol and a pod selector that does not parse", setInvalidProtocol, invalidProtocolMessage,
 				metav1.LabelSelector{MatchLabels: map[string]string{"app": "not a label value"}}),
+			Entry("with an ipBlock cidr that does not parse", setInvalidCIDR, invalidCIDRMessage, metav1.LabelSelector{}),
+			Entry("with an ipBlock cidr that does not parse and a pod selector that does not parse", setInvalidCIDR, invalidCIDRMessage,
+				metav1.LabelSelector{MatchLabels: map[string]string{"app": "not a label value"}}),
+			Entry("with an ipBlock except entry that does not parse", setInvalidExcept, invalidExceptMessage, metav1.LabelSelector{}),
+		)
+
+		DescribeTable("programs the canonical form of an ipBlock",
+			func(ipBlock networkingv1.IPBlock, destinationMatch string) {
+				policy.Spec.Egress[0].Classifier.To[0].IPBlock = &ipBlock
+				_, err := fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Create(context.Background(), policy, metav1.CreateOptions{})
+				Expect(err).NotTo(HaveOccurred(), "failed to create NetworkQoS %s/%s", nqosNamespace, policyName)
+
+				qos := eventuallyExpectQoS(defaultControllerName, nqosNamespace, policyName, 0)
+				Expect(qos.Match).To(HaveSuffix(" && "+destinationMatch+" && tcp"), "unexpected match of the QoS rule")
+			},
+			Entry("IPv4 prefix with host bits set and exceptions",
+				networkingv1.IPBlock{CIDR: "128.116.3.4/17", Except: []string{"128.116.1.9/24", "128.116.0.1"}},
+				"ip4.dst == 128.116.0.0/17 && ip4.dst != {128.116.1.0/24,128.116.0.1}"),
+			Entry("IPv6 prefix with host bits set and exceptions",
+				networkingv1.IPBlock{CIDR: "FD00:0:0:1::5/64", Except: []string{"fd00:0:0:1:0::9"}},
+				"ip6.dst == fd00:0:0:1::/64 && ip6.dst != {fd00:0:0:1::9}"),
+			Entry("IPv6 address", networkingv1.IPBlock{CIDR: "fd00::1"}, "ip6.dst == fd00::1"),
+			Entry("empty cidr, which matches any destination", networkingv1.IPBlock{}, "(ip4.dst == 0.0.0.0/0 || ip6.dst == ::/0)"),
 		)
 	})
 
@@ -533,6 +568,33 @@ var _ = Describe("NetworkQoS Controller", func() {
 		Entry("supported name in the middle", "ip4 || UDP || ip6", false),
 		Entry("supported name as a suffix", "ip4 || SCTP", false),
 		Entry("surrounding space", " TCP", false),
+	)
+
+	DescribeTable("parseIPBlock",
+		func(cidr string, except []string, expected *ipBlock, expectedErr string) {
+			got, err := parseIPBlock(cidr, except)
+			if expectedErr != "" {
+				Expect(err).To(MatchError(expectedErr), "cidr %q, except %q must be rejected", cidr, except)
+				return
+			}
+			Expect(err).NotTo(HaveOccurred(), "cidr %q, except %q must be accepted", cidr, except)
+			Expect(got).To(Equal(expected), "unexpected IP block for cidr %q, except %q", cidr, except)
+		},
+		Entry("cidr only", "128.116.0.0/17", nil, &ipBlock{CIDR: "128.116.0.0/17"}, ""),
+		Entry("address and prefix exceptions", "128.116.0.0/17", []string{"128.116.0.0", "128.116.1.0/24"},
+			&ipBlock{CIDR: "128.116.0.0/17", Except: []string{"128.116.0.0", "128.116.1.0/24"}}, ""),
+		Entry("single-host prefixes become addresses", "128.116.0.1/32", []string{"128.116.0.1/32"},
+			&ipBlock{CIDR: "128.116.0.1", Except: []string{"128.116.0.1"}}, ""),
+		Entry("entries are reformatted", "FD00:0:0:1::1/64", []string{"fd00:0:0:1:0::1"},
+			&ipBlock{CIDR: "fd00:0:0:1::/64", Except: []string{"fd00:0:0:1::1"}, IsIPv6: true}, ""),
+		Entry("invalid cidr", "128.116.0.0/17 || ip4.dst == 0.0.0.0/0", nil, nil,
+			`invalid cidr: "128.116.0.0/17 || ip4.dst == 0.0.0.0/0" is neither a CIDR nor an IP address`),
+		Entry("invalid except", "128.116.0.0/17", []string{"128.116.0.1", "128.116.0.0} || ip4.dst == {0.0.0.0/0"}, nil,
+			`invalid except[1]: "128.116.0.0} || ip4.dst == {0.0.0.0/0" is neither a CIDR nor an IP address`),
+		Entry("IPv4-mapped IPv6 entries become IPv4", "::ffff:10.1.2.3/104", []string{"::ffff:10.0.0.1"},
+			&ipBlock{CIDR: "10.0.0.0/8", Except: []string{"10.0.0.1"}}, ""),
+		Entry("mixed families", "128.116.0.0/17", []string{"fd00::1"}, nil,
+			`invalid except[0]: "fd00::1" is not in the IP family of cidr "128.116.0.0/17"`),
 	)
 
 	DescribeTable("When starting controller with NetworkQoS, Pod and Node objects",

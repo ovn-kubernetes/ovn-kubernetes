@@ -13,11 +13,9 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	knet "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
-	utilnet "k8s.io/utils/net"
 
 	networkqosv1alpha1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
@@ -268,9 +266,9 @@ func (c *Classifier) ToQosMatchString(ipv4Enabled, ipv6Enabled bool) string {
 		match := "ip4.dst == 0.0.0.0/0 || ip6.dst == ::/0"
 		if dest.DestAddrSet != nil {
 			match = addressSetToMatchString(dest.DestAddrSet, trafficDirDest, ipv4Enabled, ipv6Enabled)
-		} else if dest.IpBlock != nil && dest.IpBlock.CIDR != "" {
+		} else if dest.IpBlock != nil {
 			ipVersion := "ip4"
-			if utilnet.IsIPv6CIDRString(dest.IpBlock.CIDR) {
+			if dest.IpBlock.IsIPv6 {
 				ipVersion = "ip6"
 			}
 			if len(dest.IpBlock.Except) == 0 {
@@ -341,8 +339,19 @@ func (c *Classifier) ToQosMatchString(ipv4Enabled, ipv6Enabled bool) string {
 	return output
 }
 
+// ipBlock is an IP block whose entries have been parsed and reformatted, so
+// that they can be copied into an OVN match as they are.
+type ipBlock struct {
+	// CIDR is the block itself, an IP address or an IP prefix.
+	CIDR string
+	// Except are the IP addresses or IP prefixes carved out of CIDR.
+	Except []string
+	// IsIPv6 is the IP family shared by CIDR and Except.
+	IsIPv6 bool
+}
+
 type Destination struct {
-	IpBlock *knet.IPBlock
+	IpBlock *ipBlock
 
 	DestAddrSet       addressset.AddressSet
 	PodSelector       labels.Selector

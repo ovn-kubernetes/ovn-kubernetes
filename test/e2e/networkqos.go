@@ -576,6 +576,51 @@ spec:
 		ginkgo.Entry("ipv6", &skipIpv6, &dstPod1IPv6),
 	)
 
+	ginkgo.DescribeTable("Reports a NetworkQoS as not ready when an ipBlock value is not an IP address or prefix",
+		func(ipBlock string) {
+			networkQoSSpec := fmt.Sprintf(`
+apiVersion: k8s.ovn.org/v1alpha1
+kind: NetworkQoS
+metadata:
+  namespace: %s
+  name: %s
+spec:
+  podSelector:
+    matchLabels:
+      component: nqos-test-src
+  priority: 55
+  egress:
+  - dscp: 4
+    classifier:
+      to:
+      - ipBlock:
+          %s
+`, f.Namespace.Name, nqosSpecName, ipBlock)
+			_, err := e2ekubectl.RunKubectlInput(f.Namespace.Name, networkQoSSpec, "create", "-f", "-")
+			framework.ExpectNoError(err, "failed to create NetworkQoS %s/%s", f.Namespace.Name, nqosSpecName)
+
+			gomega.Eventually(func(g gomega.Gomega) {
+				conditions, err := e2ekubectl.RunKubectl(f.Namespace.Name, "get", "networkqos", nqosSpecName,
+					"-o", `jsonpath={range .status.conditions[*]}{.type}={.status} {.message}{"\n"}{end}`)
+				g.Expect(err).NotTo(gomega.HaveOccurred(), "failed to get the conditions of NetworkQoS %s/%s", f.Namespace.Name, nqosSpecName)
+				g.Expect(conditions).To(gomega.ContainSubstring("Ready-In-Zone-"),
+					"NetworkQoS %s/%s has no zone condition", f.Namespace.Name, nqosSpecName)
+				for _, condition := range strings.Split(strings.TrimSpace(conditions), "\n") {
+					g.Expect(condition).To(gomega.And(
+						gomega.HavePrefix("Ready-In-Zone-"),
+						gomega.ContainSubstring("=False "),
+						gomega.ContainSubstring("egress[0].classifier.to[0].ipBlock"),
+						gomega.ContainSubstring("is neither a CIDR nor an IP address"),
+					), "unexpected condition of NetworkQoS %s/%s", f.Namespace.Name, nqosSpecName)
+				}
+			}).WithTimeout(30*time.Second).WithPolling(time.Second).Should(gomega.Succeed(),
+				"NetworkQoS %s/%s was not reported as not ready", f.Namespace.Name, nqosSpecName)
+		},
+		ginkgo.Entry("cidr", `cidr: "203.0.113.0/24 || ip4.dst == 0.0.0.0/0"`),
+		ginkgo.Entry("except", `cidr: 203.0.113.0/24
+          except: ["203.0.113.0} || ip4.dst == {0.0.0.0/0"]`),
+	)
+
 	ginkgo.AfterEach(func() {
 		err := f.ClientSet.CoreV1().Namespaces().Delete(context.Background(), dstPodNamespace, metav1.DeleteOptions{})
 		framework.ExpectNoError(err, "Error deleting Namespace %v: %v", dstPodNamespace, err)
