@@ -171,7 +171,8 @@ var _ = ginkgo.Describe("External Gateway", feature.ExternalGateway, func() {
 					tcpDumpSync.Add(len(gwContainers))
 
 					for _, gwContainer := range gwContainers {
-						go checkReceivedPacketsOnExternalContainer(gwContainer, srcPingPodName, anyLink, []string{icmpCommand}, &tcpDumpSync)
+						filter := []string{icmpCommand, "and", "src", "host", addresses.srcPodIP}
+						go checkReceivedPacketsOnExternalContainer(gwContainer, srcPingPodName, anyLink, filter, &tcpDumpSync)
 					}
 
 					pingSync := sync.WaitGroup{}
