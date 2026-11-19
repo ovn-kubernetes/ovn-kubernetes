@@ -1306,9 +1306,21 @@ func (c *Controller) configureUDNEnabledServiceRoute(state *networkState, servic
 		if state.netInfo.TopologyType() == types.Layer2Topology && !globalconfig.Layer2UsesTransitRouter {
 			routerName = nodeInfo.gatewayRouterName
 		}
-		ops, err = libovsdbops.CreateOrUpdateLogicalRouterStaticRoutesWithPredicateOps(c.nbClient, nil, routerName, &staticRoute, func(item *nbdb.LogicalRouterStaticRoute) bool {
+		// Service routes belong to this router. Restrict the predicate to its
+		// referenced UUIDs instead of scanning routes for every network.
+		routes, err := libovsdbops.GetRouterLogicalRouterStaticRoutesWithPredicate(c.nbClient, &nbdb.LogicalRouter{Name: routerName}, func(item *nbdb.LogicalRouterStaticRoute) bool {
 			return routesEqual(item, &staticRoute)
 		})
+		if err != nil {
+			return err
+		}
+		if len(routes) > 1 {
+			return fmt.Errorf("multiple matching service routes on router %s", routerName)
+		}
+		if len(routes) == 1 {
+			staticRoute.UUID = routes[0].UUID
+		}
+		ops, err = libovsdbops.CreateOrUpdateLogicalRouterStaticRoutesWithPredicateOps(c.nbClient, nil, routerName, &staticRoute, nil)
 		if err != nil {
 			return err
 		}
