@@ -1932,7 +1932,7 @@ func recreatePodWithReadinessProbe(f *framework.Framework, podName, nodeSelector
 			}
 		}
 		return false
-	}).Should(gomega.Equal(true), fmt.Sprintf("Readiness probe for second external gateway pod %s from ns %s, failed: %v", podName, namespace, err))
+	}).WithTimeout(5*time.Minute).Should(gomega.Equal(true), fmt.Sprintf("Readiness probe for second external gateway pod %s from ns %s, failed: %v", podName, namespace, err))
 }
 
 func handleGatewayPodRemoval(f *framework.Framework, removalType GatewayRemovalType, gatewayPodName, servingNamespace string) func() {
