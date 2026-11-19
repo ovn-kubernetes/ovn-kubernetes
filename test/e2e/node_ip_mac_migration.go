@@ -421,7 +421,7 @@ spec:
 				BeforeEach(func() {
 					By("creating a host-network backend pod")
 					jig := e2eservice.NewTestJig(f.ClientSet, f.Namespace.Name, serviceName)
-					udpPort := infraprovider.Get().GetK8HostPort()
+					udpPort := infraprovider.Get().GetK8HostPort(f, providerCtx)
 					serverPod := e2epod.NewAgnhostPod(f.Namespace.Name, podName, nil, nil,
 						[]v1.ContainerPort{{ContainerPort: int32(udpPort)}, {ContainerPort: int32(udpPort), Protocol: "UDP"}},
 						"netexec", fmt.Sprintf("--udp-port=%d", udpPort))

@@ -12,12 +12,12 @@ import (
 	"time"
 
 	"github.com/onsi/ginkgo/v2"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/allocators"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
 	deploymentconfigapi "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig/api"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/api"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/engine/container"
-	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/engine/portalloc"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/engine/runner"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/engine/testcontext"
 
@@ -29,8 +29,7 @@ import (
 )
 
 type kind struct {
-	engine   *container.Engine
-	HostPort *portalloc.PortAllocator
+	engine *container.Engine
 }
 
 func New() api.Provider {
@@ -39,10 +38,7 @@ func New() api.Provider {
 	}
 	ce := getContainerRuntime()
 	cmdRunner := runner.NewDirectRunner()
-	kind := &kind{
-		engine:   container.NewEngine(ce.String(), cmdRunner),
-		HostPort: portalloc.New(1024, 65535)}
-	return kind
+	return &kind{engine: container.NewEngine(ce.String(), cmdRunner)}
 }
 
 func (k *kind) Name() string {
@@ -61,8 +57,11 @@ func (k *kind) GetDefaultTimeoutContext() *framework.TimeoutContext {
 	return framework.NewTimeoutContext()
 }
 
-func (k *kind) GetK8HostPort() uint16 {
-	return k.HostPort.Allocate()
+func (k *kind) GetK8HostPort(f *framework.Framework, cleanup api.ContextCleanUp) uint16 {
+	// Cap below 10250 (kubelet default) and the ephemeral range (ip_local_port_range).
+	port, err := allocators.AllocateHostPort(f, cleanup, 1024, 10249)
+	framework.ExpectNoError(err)
+	return port
 }
 
 func (k *kind) GetK8NodeNetworkInterface(container string, network api.Network) (api.NetworkInterface, error) {
