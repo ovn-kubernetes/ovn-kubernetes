@@ -62,16 +62,8 @@ source_copy_override_paths() {
     local module_path=$1
     local version=$2
     case "${module_path}@${version}" in
-        # These modules only expose licensing text through a README-like file.
-        github.com/bmizerany/assert@v0.0.0-20160611221934-b7ed37b82869)
-            printf '%s\n' "README.md"
-            ;;
-        github.com/garyburd/redigo@v0.0.0-20150301180006-535138d7bcd7)
-            printf '%s\n' "README.markdown"
-            ;;
-        github.com/kr/logfmt@v0.0.0-20140226030751-b84e30acd515)
-            printf '%s\n' "Readme"
-            ;;
+        # Modules that only expose licensing text through a README-like file.
+        # Add entries here when go mod download pulls such a module.
     esac
 }
 

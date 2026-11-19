@@ -325,8 +325,10 @@ if [ "$ENABLE_EVPN" = true ] && [[ "${WHAT}" != "${KV_LIVE_MIGRATION_TESTS}"* ]]
   # subnets). Use the ginkgo CLI so that -procs=3 spawns 3 coordinated worker
   # processes — one per DescribeTable entry.  go test cannot drive Ginkgo
   # parallelism directly; only the ginkgo binary can start the sync server and
-  # fan out the worker processes.
-  ginkgo run \
+  # fan out the worker processes. Run the CLI from this module so its version
+  # always matches the ginkgo library the suite is compiled with, independent
+  # of the Kubernetes test tarball that provides /usr/local/bin/ginkgo.
+  go tool ginkgo run \
         -procs=3 \
         -v \
         --focus="${FOCUS:-.}" \

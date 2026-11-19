@@ -33,6 +33,12 @@ KubeProxy
 # NOT IMPLEMENTED; SEE DISCUSSION IN https://github.com/ovn-kubernetes/ovn-kubernetes/pull/1225
 named port.+\[Feature:NetworkPolicy\]
 
+# k8s 1.37: deliberately omits 'named port' from the name so the skip above does not match
+# See: https://github.com/kubernetes/kubernetes/pull/139160
+# TODO: Remove after the bug is fixed in OVNK
+# https://github.com/ovn-kubernetes/ovn-kubernetes/issues/7213
+cannot limit to the requested port.+\[Feature:NetworkPolicy\]
+
 # NOT IMPLEMENTED: Service CIDR is a GA feature in K8s v1.33 which is not yet
 # supported in OVN-K.
 \[sig-network\].+Service CIDRs
@@ -85,6 +91,11 @@ pod generation should start at 1 and increment per update
 # Skip Alpha features in general
 \[Feature:Alpha\]
 \[Alpha\]
+
+# NOT IMPLEMENTED: localhost NodePorts (kube-proxy feature; OVN-K replaces kube-proxy)
+# New in k8s 1.37 e2e.test — https://kep.k8s.io/6032
+# See: https://github.com/kubernetes/kubernetes/pull/141763
+\[Feature:LocalhostNodePorts\]
 
 # Skip Beta features by feature name for visibility
 \[FeatureGate:MultiCIDRServiceAllocator\] \[Beta\]
