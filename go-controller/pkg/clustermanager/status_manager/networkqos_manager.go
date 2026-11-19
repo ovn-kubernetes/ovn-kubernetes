@@ -60,7 +60,9 @@ func (m *networkQoSManager) updateStatus(networkQoS *networkqosapi.NetworkQoS, a
 	}
 	newStatus := "NetworkQoS Destinations applied"
 	for _, condition := range networkQoS.Status.Conditions {
-		if strings.Contains(condition.Message, types.NetworkQoSErrorMsg) {
+		// a zone that could not program the NetworkQoS reports a False condition
+		notReady := strings.HasPrefix(condition.Type, readyInZonePrefix) && condition.Status == metav1.ConditionFalse
+		if notReady || strings.Contains(condition.Message, types.NetworkQoSErrorMsg) {
 			newStatus = types.NetworkQoSErrorMsg
 			break
 		}

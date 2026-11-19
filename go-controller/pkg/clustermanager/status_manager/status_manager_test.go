@@ -276,7 +276,7 @@ func checkNQStatusEventually(networkQoS *networkqosapi.NetworkQoS, expectFailure
 		} else if expectEmpty {
 			return eq.Status.Status == ""
 		} else {
-			return strings.Contains(eq.Status.Status, "applied")
+			return eq.Status.Status == "NetworkQoS Destinations applied"
 		}
 	}).Should(BeTrue(), fmt.Sprintf("expected network QoS status with expectFailure=%v expectEmpty=%v", expectFailure, expectEmpty))
 }
@@ -774,6 +774,40 @@ var _ = Describe("Cluster Manager Status Manager", func() {
 		}, fakeClient)
 		checkNQStatusEventually(networkQoS, false, false, fakeClient)
 
+	})
+
+	It("reports a NetworkQoS as not applied while a zone is not ready", func() {
+		config.OVNKubernetesFeature.EnableNetworkQoS = true
+		zones := sets.New[string]("zone1", "zone2")
+		namespace1 := util.NewNamespace(namespace1Name)
+		networkQoS := newNetworkQoS(namespace1.Name)
+		start(zones, namespace1, networkQoS)
+		ready := func(zone string) metav1.Condition {
+			return metav1.Condition{
+				Type:    "Ready-In-Zone-" + zone,
+				Status:  metav1.ConditionTrue,
+				Reason:  "SetupSucceeded",
+				Message: "NetworkQoS Destinations applied",
+			}
+		}
+
+		By("one zone rejecting the NetworkQoS")
+		updateNetworkQoSStatus(networkQoS, &networkqosapi.Status{
+			Conditions: []metav1.Condition{ready("zone1"), {
+				Type:    "Ready-In-Zone-zone2",
+				Status:  metav1.ConditionFalse,
+				Reason:  "SetupFailed",
+				Message: "failed to parse source pod selector",
+			}},
+		}, fakeClient)
+		checkNQStatusEventually(networkQoS, true, false, fakeClient)
+
+		By("the zone programming the NetworkQoS again")
+		updateNetworkQoSStatus(networkQoS, &networkqosapi.Status{
+			Status:     types.NetworkQoSErrorMsg,
+			Conditions: []metav1.Condition{ready("zone1"), ready("zone2")},
+		}, fakeClient)
+		checkNQStatusEventually(networkQoS, false, false, fakeClient)
 	})
 
 	It("cleans up stale zone managedFields during startup", func() {

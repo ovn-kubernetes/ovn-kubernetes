@@ -331,3 +331,5 @@ Each list element tells the controller **where** the pods' egress traffic must f
 If **all** specified classifier conditions match, the packet gets the DSCP mark and/or bandwidth policer defined above. This allows for fine-grained control over which traffic flows receive QoS treatment.
 
 A `NetworkQoS` stored with another protocol or `ipBlock` value, or with longer lists, admitted by an earlier version of the CRD, is left as it is: Kubernetes CRD validation ratcheting accepts updates that do not touch its `egress` rules, and a change to the `egress` rules requires correcting the value.
+
+While a zone reports a `Ready-In-Zone-<node>` condition that is `False`, the `STATUS` column of `kubectl get networkqoses` shows `NetworkQoS Destinations not correctly applied`.
