@@ -167,7 +167,7 @@ var _ = ginkgo.Describe("BGP: When default podNetwork is advertised", feature.Ro
 				}
 				if isIPv6Supported(f.ClientSet) {
 					ipVer := " -6"
-					nodeIPv6LLA, err := GetNodeIPv6LinkLocalAddressForEth0(routerContainerName)
+					nodeIPv6LLA, err := GetNodeIPv6LinkLocalAddress(routerContainerName, infraprovider.Get().ExternalContainerPrimaryInterfaceName())
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 					bgpRouteCommand := strings.Split(fmt.Sprintf("ip%s route show %s", ipVer, externalServerV6CIDR), " ")
 					framework.Logf("Checking for server's route in node %s", node.Name)
@@ -286,7 +286,7 @@ var _ = ginkgo.Describe("BGP: When default podNetwork is advertised", feature.Ro
 				}
 				if isIPv6Supported(f.ClientSet) {
 					ipVer := " -6"
-					nodeIPv6LLA, err := GetNodeIPv6LinkLocalAddressForEth0(routerContainerName)
+					nodeIPv6LLA, err := GetNodeIPv6LinkLocalAddress(routerContainerName, infraprovider.Get().ExternalContainerPrimaryInterfaceName())
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 					bgpRouteCommand := strings.Split(fmt.Sprintf("ip%s route show %s", ipVer, externalServerV6CIDR), " ")
 					framework.Logf("Checking for server's route in node %s", node.Name)
@@ -740,7 +740,7 @@ func expectNodesNotAdvertisedInFRR(nodes []corev1.Node, activeNodeName, v4CIDR, 
 			routeCmd: []string{"ip", "-6", "route", "show", "root", v6CIDR},
 			nextHop: func(node corev1.Node) string {
 				// BGP uses the link-local address as the IPv6 nexthop
-				lla, err := GetNodeIPv6LinkLocalAddressForEth0(node.Name)
+				lla, err := GetNodeIPv6LinkLocalAddress(node.Name, deploymentconfig.Get().PrimaryInterfaceName())
 				if err != nil {
 					return ""
 				}
@@ -921,7 +921,7 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 			var frrIPv6LLA string
 			if isIPv6Supported(f.ClientSet) {
 				var err error
-				frrIPv6LLA, err = GetNodeIPv6LinkLocalAddressForEth0(routerContainerName)
+				frrIPv6LLA, err = GetNodeIPv6LinkLocalAddress(routerContainerName, infraprovider.Get().ExternalContainerPrimaryInterfaceName())
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			}
 			for _, node := range nodes.Items {
@@ -4991,7 +4991,7 @@ func checkRouteInFRR(node corev1.Node, podCIDR, routerContainerName string, isIP
 		ipVer = " -6"
 		// BGP uses the link-local address as the nexthop for IPv6 routes by default.
 		var nodeIPv6LLA string
-		nodeIPv6LLA, err = GetNodeIPv6LinkLocalAddressForEth0(node.Name)
+		nodeIPv6LLA, err = GetNodeIPv6LinkLocalAddress(node.Name, deploymentconfig.Get().PrimaryInterfaceName())
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		nodeIP = []string{nodeIPv6LLA}
 	} else {
