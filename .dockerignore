@@ -1,0 +1,3 @@
+# Host build outputs are rebuilt inside the image builder stage.
+go-controller/_output/
+dist/images/_output/

@@ -33,6 +33,8 @@ env:
   CI_IMAGE_PR_TAR: image-pr.tar
   CI_DIST_IMAGES_OUTPUT: dist/images/_output/
 
+  BUILDER_IMAGE: quay.io/projectquay/golang:1.26
+
   # To run CI over custom OVN
   # OVN_REPO: https://github.com/ovn-org/ovn
   # OVN_GITREF: main
@@ -206,9 +208,7 @@ jobs:
     name: Build-PR
     runs-on: ubuntu-24.04
     env:
-      PR_IMAGE_FAMILY: fedora
       PR_IMAGE: ovn-daemonset-fedora:pr
-      PR_IMAGE_TARGET: fedora-image
       PR_IMAGE_ARTIFACT: test-image-pr
     steps:
     - name: Verify changed-file check succeeded
@@ -221,42 +221,16 @@ jobs:
       env:
         CACHE_RESULT: ${{ needs.go-cache.result }}
       run: test "$CACHE_RESULT" = success
-    # These anchored steps are shared with build-pr-ubuntu below.
-    - &restore_pr_image_cache
-      name: Restore PR image cache
-      uses: actions/cache@v4
-      with:
-        path: |
-          ${{ env.CI_IMAGE_CACHE }}
-        key: ${{ github.run_id }}-image-cache-pr-${{ env.PR_IMAGE_FAMILY }}
 
-    - &check_pr_image_build
-      name: Check if PR image build is needed
-      id: is_pr_image_build_needed
-      continue-on-error: true
-      run: |
-        set -x
-        mkdir -p "${CI_DIST_IMAGES_OUTPUT}"
-        if [ -f "${CI_IMAGE_CACHE}/${CI_IMAGE_PR_TAR}.gz" ]; then
-            cp "${CI_IMAGE_CACHE}/${CI_IMAGE_PR_TAR}.gz" "${CI_DIST_IMAGES_OUTPUT}/${CI_IMAGE_PR_TAR}.gz"
-            gunzip "${CI_DIST_IMAGES_OUTPUT}/${CI_IMAGE_PR_TAR}.gz"
-            echo "PR_IMAGE_RESTORED=true" >> "$GITHUB_OUTPUT"
-        fi
-
-    # only run the following steps if the PR image was not found in the cache
     - &checkout_pr_image_source
       name: Check out code into the Go module directory - from current pr branch
-      if: steps.is_pr_image_build_needed.outputs.PR_IMAGE_RESTORED != 'true' && success()
       uses: actions/checkout@v6
 
-    - &setup_pr_image_go
-      name: Set up Go
-      if: steps.is_pr_image_build_needed.outputs.PR_IMAGE_RESTORED != 'true' && success()
+    - name: Set up Go
       uses: ./.github/actions/setup-go
       id: go
 
-    - name: Build - from current pr branch
-      if: steps.is_pr_image_build_needed.outputs.PR_IMAGE_RESTORED != 'true' && success()
+    - name: Verify source
       run: |
         set -x
         pushd go-controller
@@ -264,35 +238,53 @@ jobs:
            make gofmt CONTAINER_RUNNABLE=1
            make verify-go-mod-vendor
            make verify-third-party-licenses
-           make
-           make windows
         popd
 
-    - &build_pr_image
-      name: Build PR image - from current pr branch
-      if: steps.is_pr_image_build_needed.outputs.PR_IMAGE_RESTORED != 'true' && success()
-      run: |
-        pushd dist/images
-          make IMAGE="${PR_IMAGE}" \
-            OVN_REPO="${OVN_REPO}" \
-            OVN_GITREF="${OVN_GITREF}" \
-            "${PR_IMAGE_TARGET}"
-          mkdir -p _output
-          docker save "${PR_IMAGE}" -o "_output/${CI_IMAGE_PR_TAR}"
-        popd
+    - name: Build Windows binary
+      run: make -C go-controller windows
 
-    - &cache_pr_image
-      name: Cache PR image
-      if: steps.is_pr_image_build_needed.outputs.PR_IMAGE_RESTORED != 'true' && success()
-      continue-on-error: true
+    - name: Resolve OVN build arguments
+      id: ovn
       run: |
-        set -x
-        mkdir -p "${CI_IMAGE_CACHE}"
-        rm -f "${CI_IMAGE_CACHE}/${CI_IMAGE_PR_TAR}" "${CI_IMAGE_CACHE}/${CI_IMAGE_PR_TAR}.gz"
-        cp "${CI_DIST_IMAGES_OUTPUT}/${CI_IMAGE_PR_TAR}" "${CI_IMAGE_CACHE}/${CI_IMAGE_PR_TAR}"
-        gzip -f "${CI_IMAGE_CACHE}/${CI_IMAGE_PR_TAR}"
+        repo="${OVN_REPO:-https://github.com/ovn-org/ovn}"
+        if [ -n "${OVN_GITREF}" ]; then
+          from=source
+          gitsha=$(git ls-remote "${repo}" "${OVN_GITREF}" | sort -k2 -V | tail -1 | awk '{ print $1 }')
+          test -n "${gitsha}"
+        else
+          from=koji
+          gitsha=
+        fi
+        echo "from=${from}" >> "$GITHUB_OUTPUT"
+        echo "repo=${repo}" >> "$GITHUB_OUTPUT"
+        echo "gitsha=${gitsha}" >> "$GITHUB_OUTPUT"
 
-    # run the following if none of the previous steps failed
+    - &setup_pr_image_buildx
+      name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Build PR image - from current pr branch
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./dist/images/Dockerfile.fedora
+        load: true
+        tags: ${{ env.PR_IMAGE }}
+        platforms: linux/amd64
+        build-args: |
+          BUILDER_IMAGE=${{ env.BUILDER_IMAGE }}
+          OVN_FROM=${{ steps.ovn.outputs.from }}
+          OVN_REPO=${{ steps.ovn.outputs.repo }}
+          OVN_GITREF=${{ steps.ovn.outputs.gitsha }}
+        cache-from: type=gha,scope=fedora-linux-amd64
+        cache-to: type=gha,mode=max,scope=fedora-linux-amd64
+
+    - &save_pr_image
+      name: Save PR image
+      run: |
+        mkdir -p "${CI_DIST_IMAGES_OUTPUT}"
+        docker save "${PR_IMAGE}" -o "${CI_DIST_IMAGES_OUTPUT}/${CI_IMAGE_PR_TAR}"
+
     - &upload_pr_image
       name: Upload PR image
       uses: actions/upload-artifact@v7
@@ -301,23 +293,38 @@ jobs:
         path: ${{ env.CI_DIST_IMAGES_OUTPUT }}/${{ env.CI_IMAGE_PR_TAR }}
 
   build-pr-ubuntu:
-    needs: [ changes, go-cache ]
+    needs: [ changes ]
     if: needs.changes.outputs.run_ci == 'true'
     name: Build-PR (Ubuntu)
     runs-on: ubuntu-24.04
     env:
-      PR_IMAGE_FAMILY: ubuntu
       PR_IMAGE: ovn-daemonset-ubuntu:pr
-      PR_IMAGE_TARGET: ubuntu-image
       PR_IMAGE_ARTIFACT: test-image-pr-ubuntu
       CI_IMAGE_PR_TAR: image-pr-ubuntu.tar
     steps:
-    - *restore_pr_image_cache
-    - *check_pr_image_build
     - *checkout_pr_image_source
-    - *setup_pr_image_go
-    - *build_pr_image
-    - *cache_pr_image
+
+    - name: Resolve kubectl version
+      id: kubectl
+      run: echo "minor=$(make --silent --no-print-directory -C dist/images print-kubectl-minor)" >> "$GITHUB_OUTPUT"
+
+    - *setup_pr_image_buildx
+
+    - name: Build PR image - from current pr branch
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./dist/images/Dockerfile.ubuntu
+        load: true
+        tags: ${{ env.PR_IMAGE }}
+        platforms: linux/amd64
+        build-args: |
+          BUILDER_IMAGE=${{ env.BUILDER_IMAGE }}
+          KUBECTL_MINOR=${{ steps.kubectl.outputs.minor }}
+        cache-from: type=gha,scope=ubuntu-linux-amd64
+        cache-to: type=gha,mode=max,scope=ubuntu-linux-amd64
+
+    - *save_pr_image
     - *upload_pr_image
 
   test-pr:
