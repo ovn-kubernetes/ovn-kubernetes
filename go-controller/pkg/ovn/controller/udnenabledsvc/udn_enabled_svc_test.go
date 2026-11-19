@@ -276,3 +276,56 @@ func getAddressSets(addresses []string) (*nbdb.AddressSet, *nbdb.AddressSet, err
 	}
 	return v4AS, v6AS, nil
 }
+
+// TestSyncServiceMissingServiceDoesNotPanic verifies that syncService handles a
+// work item whose Service is absent from both the informer cache and c.cache.
+// That is the service delete case: the key is enqueued by a delete event, but
+// by the time it is processed the Service is gone and no clusterIPs were ever
+// cached for it.
+//
+// Steps:
+//  1. Create and start a watch factory with no Services seeded.
+//  2. Confirm the precondition: the Service lister returns (nil, NotFound) and
+//     c.cache has no entry for the key.
+//  3. Call syncService directly with the key and check that it returns no error.
+//  4. Enqueue the key and call processNextWorkItem, checking that it processes
+//     the item and returns no error through the production worker entry point.
+func TestSyncServiceMissingServiceDoesNotPanic(t *testing.T) {
+	const key = "default/absent-service"
+
+	ovnClient := util.GetOVNClientset().GetOVNKubeControllerClientset()
+	factoryMock, err := factory.NewOVNKubeControllerWatchFactory(ovnClient, "test-node")
+	if err != nil {
+		t.Fatalf("failed to create OVN kube controller watch factory: %v", err)
+	}
+	if err = factoryMock.Start(); err != nil {
+		t.Fatalf("failed to start OVN kube controller watch factory: %v", err)
+	}
+	t.Cleanup(factoryMock.Shutdown)
+
+	// nbClient and addressSetFactory are intentionally nil: the delete case with
+	// no cached clusterIPs returns before touching either of them.
+	c := NewController(nil, nil, factoryMock.ServiceCoreInformer(), []string{key})
+	t.Cleanup(c.queue.ShutDown)
+
+	service, err := c.serviceInformer.Lister().Services("default").Get("absent-service")
+	if !apierrors.IsNotFound(err) || service != nil {
+		t.Fatalf("precondition failed: expected (nil, NotFound) from the Service lister, got (%v, %v)", service, err)
+	}
+	if _, ok := c.cache[key]; ok {
+		t.Fatalf("precondition failed: c.cache unexpectedly has an entry for %q", key)
+	}
+
+	t.Run("direct syncService call", func(t *testing.T) {
+		if err := c.syncService(key); err != nil {
+			t.Fatalf("syncService(%q) returned an unexpected error: %v", key, err)
+		}
+	})
+
+	t.Run("through processNextWorkItem", func(t *testing.T) {
+		c.queue.Add(key)
+		if !c.processNextWorkItem() {
+			t.Fatalf("processNextWorkItem() returned false, expected it to process the queued key %q", key)
+		}
+	})
+}
