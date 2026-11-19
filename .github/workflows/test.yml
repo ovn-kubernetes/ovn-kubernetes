@@ -865,47 +865,64 @@ jobs:
       # get its output
       timeout-minutes: ${{ startsWith(matrix.target, 'bgp') && 190 || matrix.target == 'evpn' && 190 || matrix.target == 'control-plane' && 190 || matrix.target == 'external-gateway' && 190 || startsWith(matrix.target, 'network-segmentation') && 190 || 130 }}
       run: |
+        # Some lanes invoke the same Make target twice with different WHAT filters.
+        # Give each invocation its own directory so the later suite cannot overwrite JUnit.
+        suite_index=0
+        run_suite() {
+          suite_index=$((suite_index + 1))
+          make -C test E2E_REPORT_DIR="${GITHUB_WORKSPACE}/test/_artifacts/junit/${suite_index}-$1" "$@"
+        }
+
         if [ "${{ matrix.target }}" == "multi-homing" ]; then
-          make -C test control-plane WHAT="Multi Homing"
+          run_suite control-plane WHAT="Multi Homing"
         elif [ "${{ matrix.target }}" == "no-uplink" ]; then
-          make -C test shard-network
+          run_suite shard-network
         elif [ "${{ matrix.target }}" == "node-ip-mac-migration" ]; then
-          make -C test control-plane WHAT="Node IP and MAC address migration"
+          run_suite control-plane WHAT="Node IP and MAC address migration"
         elif [ "${{ matrix.target }}" == "external-gateway" ]; then
-          make -C test control-plane WHAT="External Gateway"
+          run_suite control-plane WHAT="External Gateway"
         elif [ "${{ matrix.target }}" == "kv-live-migration" ]; then
           # the DHCP IPAM suite (dhcp_ipam.go) rides this lane: it is the one
           # provisioned with the dhcp CNI plugin (KIND_INSTALL_PLUGINS),
           # kubevirt and NetworkQoS
-          make -C test control-plane WHAT="Kubevirt Virtual Machines|Localnet DHCP IPAM"
+          run_suite control-plane WHAT="Kubevirt Virtual Machines|Localnet DHCP IPAM"
         elif [[ "${{ matrix.target }}" == network-segmentation* ]]; then
-          make -C test control-plane WHAT="Network Segmentation"
-          make -C test control-plane WHAT="ClusterNetworkConnect"
+          run_suite control-plane WHAT="Network Segmentation"
+          run_suite control-plane WHAT="ClusterNetworkConnect"
         elif [ "${{ matrix.target }}" == "evpn" ]; then
-          make -C test control-plane WHAT="EVPN"
+          run_suite control-plane WHAT="EVPN"
         elif [ "${{ matrix.target }}" == "bgp" ] || [ "${{ matrix.target }}" == "bgp-no-overlay" ] || [ "${{ matrix.target }}" == "bgp-no-overlay-dynamic" ] || [ "${{ matrix.target }}" == "bgp-loose-isolation" ]; then
-          make -C test control-plane
+          run_suite control-plane
         elif [ "${{ matrix.target }}" == "serial" ] || [ "${{ matrix.target }}" == "bgp-managed" ]; then
           # Run the Serial suite with the environment's compatibility filters.
-          make -C test control-plane WHAT=Serial
+          run_suite control-plane WHAT=Serial
         elif [ "${{ matrix.target }}" == "tools" ]; then
           make -C go-controller build
-          make -C test tools
+          run_suite tools
         elif [ "${{ matrix.target }}" == "traffic-flow-test-only" ]; then
           # Traffic Flow Tests can be ran as part of a target, as an additional
           # set of test, set via TRAFFIC_FLOW_TESTS. See below.
           :
         else
-          make -C test "${{ matrix.target }}"
+          run_suite "${{ matrix.target }}"
           if [ "${{ matrix.ipfamily }}" != "ipv6" ]; then
-            make -C test conformance
+            run_suite conformance
           fi
         fi
 
         # If target also specified traffic flow tests to run, do so now
         if [ -n "${TRAFFIC_FLOW_TESTS}" ]; then
-          make -C test traffic-flow-tests WHAT="run"
+          run_suite traffic-flow-tests WHAT="run"
         fi
+
+    - name: Upload E2E JUnit reports
+      if: always()
+      continue-on-error: true
+      uses: actions/upload-artifact@v7
+      with:
+        name: junit-${{ env.JOB_NAME }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ strategy.job-index }}
+        path: test/_artifacts/junit/**/junit*.xml
+        if-no-files-found: ignore
 
     - name: Export kind logs
       if: always()

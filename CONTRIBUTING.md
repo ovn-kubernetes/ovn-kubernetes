@@ -5,6 +5,7 @@
   * [Find an Issue](#find-an-issue)
   * [Ask for Help](#ask-for-help)
   * [Pull Request Lifecycle](#pull-request-lifecycle)
+    * [CI E2E JUnit Reports](#ci-e2e-junit-reports)
   * [Development Environment Setup](#development-environment-setup)
   * [Sign Your Commits](#sign-your-commits)
   * [Pull Request Checklist](#pull-request-checklist)
@@ -83,6 +84,26 @@ The best way to reach us with a question when contributing is to ask on:
 3. Once the assigned reviewer approves (+1), a maintainer (see `MAINTAINERS.md` for the current list) will review and merge your PR. You may be asked to make additional changes by maintainer post reviewer's approval.
 
 In some cases, other changes may conflict with your PR. If this happens, you will get notified by a comment in the issue that your PR requires a rebase, and the `needs-rebase` label will be applied. Once a rebase has been performed, this label will be automatically removed.
+
+### CI E2E JUnit Reports
+
+On the pull request's **Checks** tab, open the GitHub Actions workflow run,
+then go to **Summary → Artifacts** and download the `junit-*` artifact for the
+E2E matrix job you're investigating. The artifact name includes the job name,
+run ID, run attempt, and matrix job index.
+
+Inside the archive, each suite invocation writes reports to a separate
+`<number>-<make-target>/` directory. The number is the invocation order within
+that job, starting at 1. For example, `1-control-plane/` and `2-control-plane/`
+can hold reports from the same Make target run with different `WHAT` filters.
+Check the job's **Run Tests** log to see which suite each invocation ran.
+
+The upload step attempts to collect any `junit*.xml` files even if the tests
+fail. It silently skips the upload if no files match, for example if setup
+failed, the run was interrupted before XML was written, or the job only ran
+suites that don't write JUnit XML to those directories (such as traffic flow
+tests). Upload errors do not fail the job, so check **Upload E2E JUnit reports**
+in the job log if an expected artifact is missing.
 
 ## Development Environment Setup
 
