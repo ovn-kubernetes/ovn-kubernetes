@@ -8,7 +8,7 @@
         <link rel="canonical" href="https://www.ovn.org/ovn-kubernetes/1.4/features/infrastructure-security-controls/node-identity/">
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../security/">
       
       
         <link rel="next" href="../../multiple-networks/">
@@ -2801,6 +2801,8 @@
       
         
       
+        
+      
     
     
     
@@ -2851,6 +2853,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix="">
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -4863,9 +4893,10 @@ The RBAC rules are consistent across all <code>ovnkube-node</code> pods, we use 
 Note: By default, the generated certificates have a brief lifetime set (10min).
 This is intentional as it helps ensure that the certificate rotation works seamlessly, but it might be adjusted in production environments.<p></p>
 <h2 id="validating-admission-webhook">Validating Admission Webhook<a class="headerlink" href="#validating-admission-webhook" title="Permanent link">¶</a></h2>
-<p>The feature introduces a validating webhook for updates to <code>pod/status</code> and <code>node/status</code>.\
-The <code>ovnkube-node</code> pod exclusively updates the status on both resources, so it is sufficient to verify only update requests.\
-The webhooks include the following checks for each <code>ovnkube-node</code> pod:
+<p>The feature introduces a validating webhook for pod creation, updates to <code>pods</code> and
+<code>pods/status</code>, and updates to <code>nodes/status</code>.</p>
+<p>For cluster-wide pod annotation protection, see <a href="../security/#protected-pod-annotations">Security</a>.</p>
+<p>The webhooks include the following checks for each <code>ovnkube-node</code> pod:
 - Modifying annotations on pods hosted on its own node.
 - Modifying annotations on its own node.
 - Modifying only allowed annotations.

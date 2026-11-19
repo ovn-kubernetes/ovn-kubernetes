@@ -2799,6 +2799,8 @@
       
         
       
+        
+      
     
     
     
@@ -2849,6 +2851,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix="">
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../infrastructure-security-controls/security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -3321,6 +3351,17 @@
     <span class="md-ellipsis">
       
         Requirements
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#subnet-ownership" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Subnet ownership
       
     </span>
   </a>
@@ -4757,6 +4798,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#subnet-ownership" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Subnet ownership
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -4794,6 +4846,13 @@ the cluster has been installed, and a pod on the node is using the address,
 that pod will no longer work correctly until it has been killed and restarted.
 This is not handled automatically.</p>
 <p>It is recommended the hybrid overlay feature be enabled at cluster install time.</p>
+<h2 id="subnet-ownership">Subnet ownership<a class="headerlink" href="#subnet-ownership" title="Permanent link">¶</a></h2>
+<p>The <code>k8s.ovn.org/hybrid-overlay-node-subnet</code> annotation is used to configure
+networking on other nodes. An admission policy therefore permits only
+<code>ovnkube-cluster-manager</code> to change it by default.</p>
+<p>Deployments where another controller manages hybrid overlay subnets, such as
+during an OpenShiftSDN migration, can add that controller's Kubernetes username
+to the Helm value <code>global.hybridOverlaySubnetWriters</code>.</p>
 <p>Always check the dependencies on the <a href="../requirements/">Requirements page</a></p>
 
 

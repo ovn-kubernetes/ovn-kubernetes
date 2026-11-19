@@ -3,7 +3,7 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="Node-level security mechanisms for OVN-Kubernetes infrastructure.">
+        <meta name="description" content="Security mechanisms for OVN-Kubernetes infrastructure.">
       
       
       
@@ -13,7 +13,7 @@
         <link rel="prev" href="../cluster-egress-controls/egress-gateway/">
       
       
-        <link rel="next" href="node-identity/">
+        <link rel="next" href="security/">
       
       
         
@@ -2805,6 +2805,8 @@
       
         
       
+        
+      
     
     
     
@@ -2855,6 +2857,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix="">
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -4668,6 +4698,25 @@
     
   
   
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+      
+        <li class="md-nav__item">
+  <a href="#controller-owned-node-annotations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Controller-owned Node annotations
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
 </nav>
                   </div>
                 </div>
@@ -4689,7 +4738,14 @@
 
 
 <h1 id="infrastructure-security-controls">Infrastructure Security Controls<a class="headerlink" href="#infrastructure-security-controls" title="Permanent link">¶</a></h1>
-<p>Node-level security mechanisms for OVN-Kubernetes infrastructure.</p>
+<p>Security mechanisms for OVN-Kubernetes infrastructure.</p>
+<p><strong><a href="security/">Security</a></strong></p>
+<p>Protection of OVN-Kubernetes-owned annotations and pod network allocations.</p>
+<h2 id="controller-owned-node-annotations">Controller-owned Node annotations<a class="headerlink" href="#controller-owned-node-annotations" title="Permanent link">¶</a></h2>
+<p>The <code>k8s.ovn.org/node-subnets</code> annotation controls pod address allocation and
+networking configuration across the cluster. An admission policy permits only
+<code>ovnkube-cluster-manager</code> to add, change, or remove it. This protection does not
+depend on the optional NodeIdentity service.</p>
 <p><strong><a href="node-identity/">NodeIdentity</a></strong></p>
 <p>Cryptographic node identity verification to prevent unauthorized nodes from joining the network.</p>
 
