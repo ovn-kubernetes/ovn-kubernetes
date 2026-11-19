@@ -402,18 +402,6 @@ var _ = Describe("Network Segmentation: MAC binding mirroring with ARP/NDP flood
 		// ovnkube-node on the traffic node and retime the MAC bindings of the
 		// default network's gateway router, both of which are visible to every
 		// other spec running on that node.
-		//
-		// Ginkgo matches Serial in label filters, so the skip_label "Serial" that
-		// PARALLEL=true installs in test/scripts/e2e-cp.sh would drop this whole
-		// container. The lane that sets DISABLE_UDN_ARP_NDP_FLOOD is the only one
-		// running these specs, so it runs with PARALLEL=false - see the PARALLEL
-		// expression in .github/workflows/test.yml. Keep the two in step: marking
-		// a container Serial without that is the same as deleting its coverage.
-		//
-		// TODO: PARALLEL=false is a lane-wide hammer - it also unskips every other
-		// Serial spec on that lane. The narrower fix is for e2e-cp.sh to run the
-		// serial specs in a second pass rather than skip them, at which point the
-		// PARALLEL override here can go away.
 		Context("", Ordered, Serial, func() {
 
 			var (
