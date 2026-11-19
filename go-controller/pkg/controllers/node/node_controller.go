@@ -14,6 +14,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	v1 "k8s.io/client-go/listers/core/v1"
+	"k8s.io/klog/v2"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
@@ -22,6 +23,12 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/syncmap"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 )
+
+// localNodeQueueWorkers is the number of workers of the local node queue, the same as the shared
+// queue. Reconciles of different networks take independent per-network locks, so several can
+// progress at once, which keeps a slow network from holding up the local node of the others. The
+// queue dedups a node/network key.
+const localNodeQueueWorkers = 15
 
 // NodeHandler handles node reconciliation for a single network.
 type NodeHandler interface {
@@ -46,8 +53,13 @@ type NodeController struct {
 	nodeName string
 
 	nodeController controller.Controller
-	networkManager networkmanager.Interface
-	nodeLister     v1.NodeLister
+	// localNodeController reconciles this process's own node. It is a separate queue so that node
+	// is not stuck behind remote nodes queued for the same or other networks: network controllers
+	// wait for it during startup. Failures, such as annotations that are not set yet, are retried
+	// on this queue. Nil when nodeName is empty (cluster manager).
+	localNodeController controller.Reconciler
+	networkManager      networkmanager.Interface
+	nodeLister          v1.NodeLister
 
 	// handlers maps network name to node handler.
 	handlers *syncmap.SyncMap[NodeHandler]
@@ -107,7 +119,7 @@ func NewController(wf *factory.WatchFactory, name string, networkManager network
 		Informer:       nodeInformer.Informer(),
 		Lister:         nodeInformer.Lister().List,
 		MaxAttempts:    controller.InfiniteAttempts,
-		ObjNeedsUpdate: func(_, _ *corev1.Node) bool { return true },
+		ObjNeedsUpdate: c.nodeNeedsReconcile,
 		Reconcile:      c.reconcileNode,
 		Threadiness:    15,
 	}
@@ -123,7 +135,27 @@ func NewNodeController(wf *factory.WatchFactory, networkManager networkmanager.I
 	}
 	c := NewController(wf, "node-topology", networkManager)
 	c.nodeName = nodeName
+	// Retries stay on this queue because it runs reconcileNode itself, rather than
+	// handing the key back to the shared remote-node queue.
+	c.localNodeController = controller.NewReconciler(c.name+"-local-node", &controller.ReconcilerConfig{
+		Reconcile:   c.reconcileNode,
+		Threadiness: localNodeQueueWorkers,
+		MaxAttempts: controller.InfiniteAttempts,
+	})
 	return c
+}
+
+// nodeNeedsReconcile decides whether a node event is queued on the shared queue. Events of this
+// process's own node skip it: they are queued for every registered network directly on the local
+// queue, so they do not wait behind the remote nodes queued on the shared queue first.
+func (c *NodeController) nodeNeedsReconcile(_, newNode *corev1.Node) bool {
+	if c.localNodeController == nil || newNode.Name != c.nodeName {
+		return true
+	}
+	for _, netName := range c.handlers.GetKeys() {
+		c.ReconcileNetwork(newNode.Name, netName)
+	}
+	return false
 }
 
 // Start starts the node worker.
@@ -134,8 +166,12 @@ func (c *NodeController) Start() error {
 		return nil
 	}
 
-	err := controller.Start(c.nodeController)
-	if err != nil {
+	// One Start call so a failure stops every queue this call started.
+	reconcilers := []controller.Reconciler{c.nodeController}
+	if c.localNodeController != nil {
+		reconcilers = append(reconcilers, c.localNodeController)
+	}
+	if err := controller.Start(reconcilers...); err != nil {
 		return err
 	}
 
@@ -149,11 +185,20 @@ func (c *NodeController) Stop() {
 	c.started = false
 	c.startMu.Unlock()
 	controller.Stop(c.nodeController)
+	if c.localNodeController != nil {
+		controller.Stop(c.localNodeController)
+	}
 }
 
 // ReconcileNetwork queues reconciliation for a single node/network pair.
+// The controller's own node goes to the dedicated local queue so startup waits
+// are not blocked by remote nodes already queued.
 func (c *NodeController) ReconcileNetwork(nodeName, netName string) {
-	c.nodeController.Reconcile(scopedNodeQueueKey(nodeName, netName))
+	var reconciler controller.Reconciler = c.nodeController
+	if c.localNodeController != nil && nodeName == c.nodeName {
+		reconciler = c.localNodeController
+	}
+	reconciler.Reconcile(scopedNodeQueueKey(nodeName, netName))
 }
 
 // ReconcileNetworkWithPreflight runs preflight against the network handler and
@@ -242,82 +287,86 @@ func (c *NodeController) reconcileNode(ctx context.Context, key string) error {
 		if !ok || handler == nil {
 			return nil
 		}
-
-		// Special case where we know we need to reconcile a node delete.
-		// We handle delete of old object first, before we try to reconcile update.
-		// This is the same behavior as the old retry framework for nodes.
-		needsDelete := c.nodeNeedsDeleteReconciliation(netName, nodeName)
-		needsAddUpdate := true
-
-		// Check for node existence
-		newNode, err := c.nodeLister.Get(nodeName)
-		if err != nil && !apierrors.IsNotFound(err) {
-			return err
-		}
-
-		// We don't normally update the anno cache on delete.
-		// Only exception is on a true node delete, where it makes sense to update
-		// cache for all network deletes
-		updateAnnoCacheOnDelete := false
-		if newNode == nil {
-			needsDelete = true
-			needsAddUpdate = false
-			updateAnnoCacheOnDelete = true
-		}
-
-		oldNode := c.getCachedNode(netName, nodeName)
-		nodeHadNetwork := c.nodeHasNetwork(netName, nodeName)
-		nodeHasNetwork := c.networkManager.NodeHasNetwork(nodeName, netName)
-
-		if c.shouldFilterByRemoteNetworkActivity(newNode, netName) || c.shouldFilterByRemoteNetworkActivity(oldNode, netName) {
-			// If the node is going inactive we need to delete it and not update
-			if nodeHadNetwork && !nodeHasNetwork {
-				needsAddUpdate = false
-				needsDelete = true
-				c.markNodeNeedsDeleteReconciliation(netName, nodeName)
-				c.deleteNodeActive(netName, nodeName)
-				// If we have no configured node in cache, retain the latest informer object
-				// so delete reconciliation has the metadata needed for cleanup.
-				if newNode != nil && oldNode == nil {
-					oldNode = newNode
-					c.setLatestInformerNode(netName, oldNode)
-				}
-			} else if !nodeHadNetwork && nodeHasNetwork {
-				// node going active, but do not purge delete state (may need to retry previous failed delete)
-				needsAddUpdate = true
-				c.setNodeActive(netName, nodeName)
-				// set node for reconciliation in case we fail this add/update so we force a retry later
-				c.markNodeNeedsReconciliation(netName, nodeName)
-			}
-		} else if nodeHasNetwork {
-			c.setNodeActive(netName, nodeName)
-		} else {
-			c.deleteNodeActive(netName, nodeName)
-		}
-
-		oldState := c.annotationCache.updateNodeAnnotationState(oldNode, updateAnnoCacheOnDelete)
-		if needsDelete {
-			if delErr := c.reconcileDelete(ctx, handler, nodeName, netName, oldNode, oldState); delErr != nil {
-				return fmt.Errorf("%s: failed to delete node %s for network %s: %w", c.name, nodeName, netName, delErr)
-			}
-		}
-
-		if !needsAddUpdate || newNode == nil {
-			// remove any previous mark for needing an add reconciliation
-			c.deleteNodeReconciliation(netName, nodeName)
-			return nil
-		}
-
-		newState := c.annotationCache.updateNodeAnnotationState(newNode, true)
-
-		// if we are marked for reconciliation (first time going active/bootstrapping) treat as an add
-		if c.nodeNeedsReconciliation(netName, nodeName) {
-			oldNode = nil
-			oldState = nil
-		}
-
-		return c.reconcileUpdate(ctx, handler, oldNode, newNode, netName, oldState, newState)
+		return c.reconcileNodeLocked(ctx, handler, nodeName, netName)
 	})
+}
+
+// reconcileNodeLocked reconciles a node for a network. The caller must hold the per-network lock.
+func (c *NodeController) reconcileNodeLocked(ctx context.Context, handler NodeHandler, nodeName, netName string) error {
+	// Special case where we know we need to reconcile a node delete.
+	// We handle delete of old object first, before we try to reconcile update.
+	// This is the same behavior as the old retry framework for nodes.
+	needsDelete := c.nodeNeedsDeleteReconciliation(netName, nodeName)
+	needsAddUpdate := true
+
+	// Check for node existence
+	newNode, err := c.nodeLister.Get(nodeName)
+	if err != nil && !apierrors.IsNotFound(err) {
+		return err
+	}
+
+	// We don't normally update the anno cache on delete.
+	// Only exception is on a true node delete, where it makes sense to update
+	// cache for all network deletes
+	updateAnnoCacheOnDelete := false
+	if newNode == nil {
+		needsDelete = true
+		needsAddUpdate = false
+		updateAnnoCacheOnDelete = true
+	}
+
+	oldNode := c.getCachedNode(netName, nodeName)
+	nodeHadNetwork := c.nodeHasNetwork(netName, nodeName)
+	nodeHasNetwork := c.networkManager.NodeHasNetwork(nodeName, netName)
+
+	if c.shouldFilterByRemoteNetworkActivity(newNode, netName) || c.shouldFilterByRemoteNetworkActivity(oldNode, netName) {
+		// If the node is going inactive we need to delete it and not update
+		if nodeHadNetwork && !nodeHasNetwork {
+			needsAddUpdate = false
+			needsDelete = true
+			c.markNodeNeedsDeleteReconciliation(netName, nodeName)
+			c.deleteNodeActive(netName, nodeName)
+			// If we have no configured node in cache, retain the latest informer object
+			// so delete reconciliation has the metadata needed for cleanup.
+			if newNode != nil && oldNode == nil {
+				oldNode = newNode
+				c.setLatestInformerNode(netName, oldNode)
+			}
+		} else if !nodeHadNetwork && nodeHasNetwork {
+			// node going active, but do not purge delete state (may need to retry previous failed delete)
+			needsAddUpdate = true
+			c.setNodeActive(netName, nodeName)
+			// set node for reconciliation in case we fail this add/update so we force a retry later
+			c.markNodeNeedsReconciliation(netName, nodeName)
+		}
+	} else if nodeHasNetwork {
+		c.setNodeActive(netName, nodeName)
+	} else {
+		c.deleteNodeActive(netName, nodeName)
+	}
+
+	oldState := c.annotationCache.updateNodeAnnotationState(oldNode, updateAnnoCacheOnDelete)
+	if needsDelete {
+		if delErr := c.reconcileDelete(ctx, handler, nodeName, netName, oldNode, oldState); delErr != nil {
+			return fmt.Errorf("%s: failed to delete node %s for network %s: %w", c.name, nodeName, netName, delErr)
+		}
+	}
+
+	if !needsAddUpdate || newNode == nil {
+		// remove any previous mark for needing an add reconciliation
+		c.deleteNodeReconciliation(netName, nodeName)
+		return nil
+	}
+
+	newState := c.annotationCache.updateNodeAnnotationState(newNode, true)
+
+	// if we are marked for reconciliation (first time going active/bootstrapping) treat as an add
+	if c.nodeNeedsReconciliation(netName, nodeName) {
+		oldNode = nil
+		oldState = nil
+	}
+
+	return c.reconcileUpdate(ctx, handler, oldNode, newNode, netName, oldState, newState)
 }
 
 // reconcileUpdate reconciles per-network node changes.
@@ -387,8 +436,20 @@ func (c *NodeController) bootstrapNetwork(netName string, handler NodeHandler) e
 	}
 
 	c.setBootstrapNodes(netName, nodes)
+	// Network controllers wait for the local node's resources right after registering, so reconcile
+	// the local node here instead of queueing it. Registration holds the per-network lock, so this
+	// does not wait behind remote reconciles for it, and queued remote nodes cannot start before it
+	// is done. A failure, for example annotations that are not set yet, does not fail the
+	// bootstrap: the node is retried on the local queue like any other reconcile.
 	for _, node := range nodes {
-		c.nodeController.Reconcile(scopedNodeQueueKey(node.Name, netName))
+		if node.Name == c.nodeName {
+			err := c.reconcileNodeLocked(context.Background(), handler, node.Name, netName)
+			if err == nil {
+				continue
+			}
+			klog.Warningf("%s: failed to reconcile local node %s for network %s, retrying: %v", c.name, node.Name, netName, err)
+		}
+		c.ReconcileNetwork(node.Name, netName)
 	}
 	return nil
 }
