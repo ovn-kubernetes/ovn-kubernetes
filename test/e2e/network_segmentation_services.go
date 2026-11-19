@@ -397,7 +397,186 @@ ips=$(ip -o addr show dev $iface| grep global |awk '{print $4}' | cut -d/ -f1 | 
 
 	})
 
+	Context("on a cluster user defined primary network spanning namespaces", func() {
+		const (
+			servicePort       = 88
+			serviceTargetPort = 80
+			// 172.16.0.0/16 is in the rfc1918 range and, unlike 172.18.0.0/16,
+			// does not overlap the KIND node/docker network used in CI.
+			cudnL2IPv4Subnet = "172.16.0.0/16"
+			cudnL2IPv6Subnet = "2014:100:200::0/60"
+		)
+
+		var cs clientset.Interface
+
+		BeforeEach(func() {
+			cs = f.ClientSet
+			namespace, err := f.CreateNamespace(context.TODO(), f.BaseName, map[string]string{
+				"e2e-framework":           f.BaseName,
+				RequiredUDNNamespaceLabel: "",
+			})
+			Expect(err).NotTo(HaveOccurred())
+			f.Namespace = namespace
+		})
+
+		// A ClusterUserDefinedNetwork spans multiple namespaces. Pods in any of its
+		// namespaces share the same primary network, so they must reach each other's
+		// services across namespaces, while pods on the default network or on a
+		// different CUDN must not. NodePort services remain reachable from all networks.
+		DescribeTable(
+			"services are reachable across the CUDN namespaces and isolated from other networks",
+			func(topology, cidr string) {
+				ctx := context.Background()
+
+				By("Selecting 3 schedulable nodes")
+				nodes, err := e2enode.GetBoundedReadySchedulableNodes(ctx, cs, 3)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(len(nodes.Items)).To(BeNumerically(">", 2))
+
+				ns1 := f.Namespace.Name
+				By("Creating a second namespace that joins the same CUDN")
+				ns2Obj := &v1.Namespace{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:   ns1 + "-2",
+						Labels: map[string]string{RequiredUDNNamespaceLabel: ""},
+					},
+				}
+				f.AddNamespacesToDelete(ns2Obj)
+				_, err = cs.CoreV1().Namespaces().Create(ctx, ns2Obj, metav1.CreateOptions{})
+				Expect(err).NotTo(HaveOccurred())
+				ns2 := ns2Obj.Name
+
+				By("Creating a primary CUDN spanning both namespaces")
+				cudnName := randomNetworkMetaName()
+				cudnParams := networkAttachmentConfigParams{
+					name:      cudnName,
+					namespace: ns1 + "," + ns2,
+					topology:  topology,
+					cidr:      cidr,
+					role:      "primary",
+				}
+				cleanupCUDN, err := createManifest("", generateClusterUserDefinedNetworkManifest(&cudnParams, cs))
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() {
+					// Delete the pods first so the CUDN's NADs are no longer in
+					// use, otherwise deleting the CUDN blocks on its finalizer.
+					for _, ns := range []string{ns1, ns2} {
+						Expect(cs.CoreV1().Pods(ns).DeleteCollection(ctx, metav1.DeleteOptions{}, metav1.ListOptions{})).To(Succeed())
+					}
+					_, err := e2ekubectl.RunKubectl("", "delete", "clusteruserdefinednetwork", cudnName, "--wait", "--timeout=120s")
+					Expect(err).NotTo(HaveOccurred())
+					cleanupCUDN()
+				})
+				Eventually(clusterUserDefinedNetworkReadyFunc(ctx, f.DynamicClient, cudnName), 30*time.Second, time.Second).Should(Succeed())
+
+				By("Creating a NodePort service backed by a pod in the first namespace")
+				jig := e2eservice.NewTestJig(cs, ns1, "cudn-service")
+				policy := v1.IPFamilyPolicyPreferDualStack
+				service, err := jig.CreateUDPService(ctx, func(s *v1.Service) {
+					s.Spec.IPFamilyPolicy = &policy
+					s.Spec.Ports = []v1.ServicePort{{
+						Name:       "udp",
+						Protocol:   v1.ProtocolUDP,
+						Port:       servicePort,
+						TargetPort: intstr.FromInt(serviceTargetPort),
+					}}
+					s.Spec.Type = v1.ServiceTypeNodePort
+				})
+				Expect(err).NotTo(HaveOccurred())
+
+				backendPod := udnUDPBackendPod(ns1, "cudn-backend", serviceTargetPort)
+				backendPod.Labels = jig.Labels
+				backendPod.Spec.NodeName = nodes.Items[0].Name
+				backendPod = e2epod.PodClientNS(f, ns1).CreateSync(ctx, backendPod)
+
+				service, err = cs.CoreV1().Services(ns1).Get(ctx, service.Name, metav1.GetOptions{})
+				Expect(err).NotTo(HaveOccurred())
+
+				By("Connecting to the service cluster IP from a pod in the same CUDN namespace")
+				clientNs1 := e2epod.NewAgnhostPod(ns1, "cudn-client-ns1", nil, nil, nil)
+				clientNs1.Spec.NodeName = nodes.Items[1].Name
+				clientNs1 = e2epod.PodClientNS(f, ns1).CreateSync(ctx, clientNs1)
+				waitForClusterIPsReachable(f, clientNs1, service, backendPod.Name)
+
+				By("Connecting to the service cluster IP from a pod in the other CUDN namespace")
+				clientNs2 := e2epod.NewAgnhostPod(ns2, "cudn-client-ns2", nil, nil, nil)
+				clientNs2.Spec.NodeName = nodes.Items[0].Name
+				clientNs2 = e2epod.PodClientNS(f, ns2).CreateSync(ctx, clientNs2)
+				waitForClusterIPsReachable(f, clientNs2, service, backendPod.Name)
+
+				By("Verifying the NodePort is reachable from the CUDN client")
+				checkConnectionToNodePort(f, clientNs2, service, &nodes.Items[0], "server node", backendPod.Name)
+
+				By("Verifying a default-network pod cannot reach the CUDN cluster IP")
+				defaultNs := &v1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns1 + "-default"}}
+				f.AddNamespacesToDelete(defaultNs)
+				_, err = cs.CoreV1().Namespaces().Create(ctx, defaultNs, metav1.CreateOptions{})
+				Expect(err).NotTo(HaveOccurred())
+				defaultClient, err := createPod(f, "default-net-client", nodes.Items[1].Name, defaultNs.Name, []string{"sleep", "2000000"}, nil)
+				Expect(err).NotTo(HaveOccurred())
+				checkNoConnectionToClusterIPs(f, defaultClient, service)
+
+				By("Verifying the NodePort is still reachable from the default-network pod")
+				checkConnectionToNodePort(f, defaultClient, service, &nodes.Items[0], "server node", backendPod.Name)
+
+				By("Creating a separate CUDN in a third namespace")
+				ns3Obj := &v1.Namespace{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:   ns1 + "-3",
+						Labels: map[string]string{RequiredUDNNamespaceLabel: ""},
+					},
+				}
+				f.AddNamespacesToDelete(ns3Obj)
+				_, err = cs.CoreV1().Namespaces().Create(ctx, ns3Obj, metav1.CreateOptions{})
+				Expect(err).NotTo(HaveOccurred())
+				ns3 := ns3Obj.Name
+				otherCUDNName := randomNetworkMetaName()
+				otherCUDNParams := networkAttachmentConfigParams{
+					name:      otherCUDNName,
+					namespace: ns3,
+					topology:  topology,
+					cidr:      cidr,
+					role:      "primary",
+				}
+				cleanupOtherCUDN, err := createManifest("", generateClusterUserDefinedNetworkManifest(&otherCUDNParams, cs))
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() {
+					Expect(cs.CoreV1().Pods(ns3).DeleteCollection(ctx, metav1.DeleteOptions{}, metav1.ListOptions{})).To(Succeed())
+					_, err := e2ekubectl.RunKubectl("", "delete", "clusteruserdefinednetwork", otherCUDNName, "--wait", "--timeout=120s")
+					Expect(err).NotTo(HaveOccurred())
+					cleanupOtherCUDN()
+				})
+				Eventually(clusterUserDefinedNetworkReadyFunc(ctx, f.DynamicClient, otherCUDNName), 30*time.Second, time.Second).Should(Succeed())
+
+				By("Verifying a pod on a different CUDN cannot reach the first CUDN cluster IP")
+				clientNs3 := e2epod.NewAgnhostPod(ns3, "other-cudn-client", nil, nil, nil)
+				clientNs3.Spec.NodeName = nodes.Items[0].Name
+				clientNs3 = e2epod.PodClientNS(f, ns3).CreateSync(ctx, clientNs3)
+				checkNoConnectionToClusterIPs(f, clientNs3, service)
+			},
+			Entry("Layer3 primary CUDN", "layer3", primaryLayer3MultiCIDRs()),
+			Entry("Layer2 primary CUDN", "layer2", joinStrings(cudnL2IPv4Subnet, cudnL2IPv6Subnet)),
+		)
+	})
+
 })
+
+// udnUDPBackendPod returns an agnhost pod that serves UDP on the primary UDN
+// interface (ovn-udn1), suitable as a Service backend on a user defined network.
+func udnUDPBackendPod(namespace, name string, targetPort int) *v1.Pod {
+	pod := e2epod.NewAgnhostPod(
+		namespace, name, nil, nil,
+		[]v1.ContainerPort{{ContainerPort: int32(targetPort), Protocol: v1.ProtocolUDP}},
+		"-c",
+		fmt.Sprintf(`
+set -xe
+iface=ovn-udn1
+ips=$(ip -o addr show dev $iface | grep global | awk '{print $4}' | cut -d/ -f1 | paste -sd, -)
+./agnhost netexec --udp-port=%d --udp-listen-addresses=$ips
+`, targetPort))
+	pod.Spec.Containers[0].Command = []string{"/bin/bash"}
+	return pod
+}
 
 // TODO Once https://github.com/ovn-kubernetes/ovn-kubernetes/pull/4567 merges, use the vendored *TestJig.Run(), which tests
 // the reachability of a service through its name and through its cluster IP. For now only test the cluster IP.
@@ -487,6 +666,24 @@ func checkNoConnectionToAgnhostPod(f *framework.Framework, clientPod *v1.Pod, cm
 		return err
 	}
 	return fmt.Errorf("Error: %s/%s was able to connect (cmd=%s) ", clientPod.Namespace, clientPod.Name, cmd)
+}
+
+// waitForClusterIPsReachable polls until the client pod can reach every cluster
+// IP of the service. It tolerates the extra time OVN needs to program a service
+// across the namespaces of a user defined network, which the short fixed poll in
+// checkConnectionToClusterIPs may not cover on the first connection.
+func waitForClusterIPsReachable(f *framework.Framework, clientPod *v1.Pod, service *v1.Service, expectedOutput string) {
+	GinkgoHelper()
+	port := service.Spec.Ports[0].Port
+	for _, clusterIP := range service.Spec.ClusterIPs {
+		cmd := fmt.Sprintf(`/bin/sh -c 'echo hostname | nc -u -w 1 %s %d'`, clusterIP, port)
+		Eventually(func() (string, error) {
+			stdout, _, execErr := ExecShellInPodWithFullOutput(f, clientPod.Namespace, clientPod.Name, cmd)
+			return stdout, execErr
+		}).WithTimeout(60*time.Second).WithPolling(2*time.Second).Should(Equal(expectedOutput),
+			fmt.Sprintf("client %s/%s should reach service %s/%s on cluster IP %s port %d",
+				clientPod.Namespace, clientPod.Name, service.Namespace, service.Name, clusterIP, port))
+	}
 }
 
 func checkConnectionToClusterIPs(f *framework.Framework, clientPod *v1.Pod, service *v1.Service, expectedOutput string) {
