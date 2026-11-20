@@ -100,9 +100,12 @@ spec:
                                 minimum: 1
                                 type: integer
                               protocol:
-                                description: protocol (tcp, udp, sctp) that the traffic
+                                description: protocol (TCP, UDP, SCTP) that the traffic
                                   must match.
-                                pattern: ^TCP|UDP|SCTP$
+                                enum:
+                                - TCP
+                                - UDP
+                                - SCTP
                                 type: string
                             type: object
                           type: array

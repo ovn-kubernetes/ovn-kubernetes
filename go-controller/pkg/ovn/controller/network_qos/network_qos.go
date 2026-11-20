@@ -6,12 +6,14 @@ package networkqos
 import (
 	"context"
 	"fmt"
+	"net"
 	"sync"
 	"time"
 
 	nadv1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -21,6 +23,7 @@ import (
 	metaapplyv1 "k8s.io/client-go/applyconfigurations/meta/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
+	utilnet "k8s.io/utils/net"
 	"k8s.io/utils/ptr"
 
 	networkqosapi "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1"
@@ -86,7 +89,7 @@ func (c *Controller) syncNetworkQoS(key string) error {
 	if err := c.ensureNetworkQos(nqos); err != nil {
 		c.nqosCache.Delete(key)
 		// we can ignore the error if status update doesn't succeed; best effort
-		c.updateNQOSStatusToNotReady(nqos.Namespace, nqos.Name, "failed to reconcile", err)
+		_ = c.updateNQOSStatusToNotReady(nqos.Namespace, nqos.Name, "failed to reconcile", err)
 		return err
 	}
 	recordNetworkQoSReconcileDuration(c.controllerName, time.Since(startTime).Milliseconds())
@@ -104,9 +107,17 @@ func (c *Controller) ensureNetworkQos(nqos *networkqosapi.NetworkQoS) error {
 		namespace: nqos.Namespace,
 	}
 
+	if err := validateClassifierPorts(nqos.Spec.Egress); err != nil {
+		return c.rejectNetworkQos(nqos, "invalid classifier port", err)
+	}
+	ipBlocks, parseErr := parseClassifierIPBlocks(nqos.Spec.Egress)
+	if parseErr != nil {
+		return c.rejectNetworkQos(nqos, "invalid classifier ipBlock", parseErr)
+	}
+
 	if len(nqos.Spec.PodSelector.MatchLabels) > 0 || len(nqos.Spec.PodSelector.MatchExpressions) > 0 {
 		if podSelector, err := metav1.LabelSelectorAsSelector(&nqos.Spec.PodSelector); err != nil {
-			c.updateNQOSStatusToNotReady(nqos.Namespace, nqos.Name, "failed to parse source pod selector", err)
+			_ = c.updateNQOSStatusToNotReady(nqos.Namespace, nqos.Name, "failed to parse source pod selector", err)
 			return nil
 		} else {
 			desiredNQOSState.PodSelector = podSelector
@@ -134,7 +145,7 @@ func (c *Controller) ensureNetworkQos(nqos *networkqosapi.NetworkQoS) error {
 				return fmt.Errorf("specifying both ipBlock and podSelector/namespaceSelector is not allowed")
 			}
 			destState := &Destination{}
-			destState.IpBlock = destSpec.IPBlock.DeepCopy()
+			destState.IpBlock = ipBlocks[destSpec.IPBlock]
 			if destSpec.NamespaceSelector != nil && (len(destSpec.NamespaceSelector.MatchLabels) > 0 || len(destSpec.NamespaceSelector.MatchExpressions) > 0) {
 				if selector, err := metav1.LabelSelectorAsSelector(destSpec.NamespaceSelector); err != nil {
 					return fmt.Errorf("error parsing destination namespace selector: %v", err)
@@ -173,6 +184,89 @@ func (c *Controller) ensureNetworkQos(nqos *networkqosapi.NetworkQoS) error {
 		return fmt.Errorf("successfully reconciled NetworkQoS %s/%s, but failed to patch status: %v", nqos.Namespace, nqos.Name, e)
 	}
 	return nil
+}
+
+// rejectNetworkQos removes the QoS rules programmed from an earlier version of
+// the given NetworkQoS and reports it as not ready with the given reason and
+// error. It returns an error if either step fails, so that it is retried.
+// This function need to be called with a lock held.
+func (c *Controller) rejectNetworkQos(nqos *networkqosapi.NetworkQoS, reason string, err error) error {
+	if clearErr := c.clearNetworkQos(nqos.Namespace, nqos.Name); clearErr != nil {
+		return fmt.Errorf("failed to remove the QoS rules of NetworkQoS %s/%s: %w", nqos.Namespace, nqos.Name, clearErr)
+	}
+	return c.updateNQOSStatusToNotReady(nqos.Namespace, nqos.Name, reason, err)
+}
+
+// validateClassifierPorts returns an error if a classifier port of the given
+// rules names a protocol other than TCP, UDP or SCTP. The protocol is copied
+// into the OVN QoS match, where any other string is either refused by OVN or
+// read as further match terms.
+func validateClassifierPorts(rules []networkqosapi.Rule) error {
+	for ruleIndex, rule := range rules {
+		for portIndex, port := range rule.Classifier.Ports {
+			if port.Protocol == "" {
+				continue
+			}
+			if util.ValidateProtocol(corev1.Protocol(port.Protocol)) != nil {
+				return fmt.Errorf("egress[%d].classifier.ports[%d]: unsupported protocol %q, must be one of TCP, UDP, SCTP",
+					ruleIndex, portIndex, port.Protocol)
+			}
+		}
+	}
+	return nil
+}
+
+// parseClassifierIPBlocks parses the IP blocks of the classifier destinations
+// of the given rules and returns them by the IP block they were parsed from.
+// It returns an error if a cidr or an except entry is not an IP address or an
+// IP prefix. Both are copied into the OVN QoS match, where any other string is
+// either refused by OVN or read as further match terms. An IP block with an
+// empty cidr is left out: its destination matches any address.
+func parseClassifierIPBlocks(rules []networkqosapi.Rule) (map[*networkingv1.IPBlock]*ipBlock, error) {
+	ipBlocks := map[*networkingv1.IPBlock]*ipBlock{}
+	for ruleIndex, rule := range rules {
+		for destIndex, dest := range rule.Classifier.To {
+			if dest.IPBlock == nil || dest.IPBlock.CIDR == "" {
+				continue
+			}
+			parsed, err := parseIPBlock(dest.IPBlock.CIDR, dest.IPBlock.Except)
+			if err != nil {
+				return nil, fmt.Errorf("egress[%d].classifier.to[%d].ipBlock: %w", ruleIndex, destIndex, err)
+			}
+			ipBlocks[dest.IPBlock] = parsed
+		}
+	}
+	return ipBlocks, nil
+}
+
+// parseIPBlock parses cidr and except, each an IP address or an IP prefix,
+// into an ipBlock. All entries must belong to the same IP family.
+func parseIPBlock(cidr string, except []string) (*ipBlock, error) {
+	ipNet, err := util.ParseCIDROrIP(cidr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid cidr: %w", err)
+	}
+	block := &ipBlock{CIDR: ipBlockEntry(ipNet), IsIPv6: utilnet.IsIPv6CIDR(ipNet)}
+	for i, entry := range except {
+		entryNet, entryErr := util.ParseCIDROrIP(entry)
+		if entryErr != nil {
+			return nil, fmt.Errorf("invalid except[%d]: %w", i, entryErr)
+		}
+		if utilnet.IsIPv6CIDR(entryNet) != block.IsIPv6 {
+			return nil, fmt.Errorf("invalid except[%d]: %q is not in the IP family of cidr %q", i, entry, cidr)
+		}
+		block.Except = append(block.Except, ipBlockEntry(entryNet))
+	}
+	return block, nil
+}
+
+// ipBlockEntry returns the form of ipNet that goes into an OVN match. A
+// single-host prefix is returned as a bare address.
+func ipBlockEntry(ipNet *net.IPNet) string {
+	if ones, bits := ipNet.Mask.Size(); ones == bits {
+		return ipNet.IP.String()
+	}
+	return ipNet.String()
 }
 
 // clearNetworkQos will handle the logic for deleting all db objects related
@@ -217,7 +311,9 @@ func (c *Controller) updateNQOSStatusToReady(namespace, name string) error {
 	return nil
 }
 
-func (c *Controller) updateNQOSStatusToNotReady(namespace, name, reason string, err error) {
+// updateNQOSStatusToNotReady sets the ready condition of this zone to false
+// and returns an error if the status could not be patched.
+func (c *Controller) updateNQOSStatusToNotReady(namespace, name, reason string, err error) error {
 	msg := reason
 	if err != nil {
 		msg = fmt.Sprintf("NetworkQoS %s/%s - %s, error details: %v", namespace, name, reason, err)
@@ -233,10 +329,11 @@ func (c *Controller) updateNQOSStatusToNotReady(namespace, name, reason string, 
 	err = c.updateNQOStatusCondition(cond, namespace, name)
 	if err != nil {
 		klog.Warningf("%s: failed to update the status of NetworkQoS %s/%s, err: %v", c.controllerName, namespace, name, err)
-	} else {
-		klog.V(6).Infof("%s: successfully patched status of NetworkQoS %s/%s with condition type %v/%v in %v seconds", c.controllerName, namespace, name, conditionTypeReady+c.nodeName, metav1.ConditionTrue, time.Since(startTime).Seconds())
-		recordStatusPatchDuration(c.controllerName, time.Since(startTime).Milliseconds())
+		return fmt.Errorf("failed to update the status of NetworkQoS %s/%s: %w", namespace, name, err)
 	}
+	klog.V(6).Infof("%s: successfully patched status of NetworkQoS %s/%s with condition type %v/%v in %v seconds", c.controllerName, namespace, name, conditionTypeReady+c.nodeName, metav1.ConditionFalse, time.Since(startTime).Seconds())
+	recordStatusPatchDuration(c.controllerName, time.Since(startTime).Milliseconds())
+	return nil
 }
 
 func (c *Controller) updateNQOStatusCondition(newCondition metav1.Condition, namespace, name string) error {

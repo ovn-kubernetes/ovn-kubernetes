@@ -5,12 +5,14 @@ package networkqos
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
 	"slices"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -18,15 +20,20 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
+	k8stesting "k8s.io/client-go/testing"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/ptr"
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	nqostype "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1"
 	networkqosclientset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1/apis/clientset/versioned"
+	nqosfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1/apis/clientset/versioned/fake"
 	crdtypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
@@ -198,11 +205,11 @@ func tableEntrySetup() {
 						},
 						Ports: []*nqostype.Port{
 							{
-								Protocol: "tcp",
+								Protocol: "TCP",
 								Port:     &port8080,
 							},
 							{
-								Protocol: "tcp",
+								Protocol: "TCP",
 								Port:     &port8081,
 							},
 						},
@@ -236,19 +243,19 @@ func tableEntrySetup() {
 						},
 						Ports: []*nqostype.Port{
 							{
-								Protocol: "tcp",
+								Protocol: "TCP",
 								Port:     &port8080,
 							},
 							{
-								Protocol: "tcp",
+								Protocol: "TCP",
 								Port:     &port8081,
 							},
 							{
-								Protocol: "udp",
+								Protocol: "UDP",
 								Port:     &port9090,
 							},
 							{
-								Protocol: "udp",
+								Protocol: "UDP",
 								Port:     &port8080,
 							},
 						},
@@ -387,6 +394,231 @@ var _ = Describe("NetworkQoS Controller", func() {
 			eventuallySwitchHasNoQoS("node1", qos)
 		}
 	})
+
+	Context("with a classifier that cannot be programmed", func() {
+		const (
+			policyName      = "rejected-policy"
+			invalidProtocol = "TCP || ip4"
+			invalidCIDR     = "128.116.0.0/17 || ip4.dst == 0.0.0.0/0"
+			invalidExcept   = "128.116.0.0} || ip4.dst == {0.0.0.0/0"
+		)
+		var policy *nqostype.NetworkQoS
+
+		setInvalidProtocol := func(nqos *nqostype.NetworkQoS) {
+			nqos.Spec.Egress[0].Classifier.Ports[0].Protocol = invalidProtocol
+		}
+		invalidProtocolMessage := fmt.Sprintf("unsupported protocol %q", invalidProtocol)
+		setInvalidCIDR := func(nqos *nqostype.NetworkQoS) {
+			nqos.Spec.Egress[0].Classifier.To[0].IPBlock.CIDR = invalidCIDR
+		}
+		invalidCIDRMessage := fmt.Sprintf("egress[0].classifier.to[0].ipBlock: invalid cidr: %q is neither a CIDR nor an IP address", invalidCIDR)
+		setInvalidExcept := func(nqos *nqostype.NetworkQoS) {
+			nqos.Spec.Egress[0].Classifier.To[0].IPBlock.Except = []string{"128.116.0.1", invalidExcept}
+		}
+		invalidExceptMessage := fmt.Sprintf("egress[0].classifier.to[0].ipBlock: invalid except[1]: %q is neither a CIDR nor an IP address", invalidExcept)
+
+		eventuallyNotReady := func(message string) {
+			GinkgoHelper()
+			Eventually(func(g Gomega) {
+				nqos, err := fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Get(context.Background(), policyName, metav1.GetOptions{})
+				g.Expect(err).NotTo(HaveOccurred(), "failed to get NetworkQoS %s/%s", nqosNamespace, policyName)
+				cond := meta.FindStatusCondition(nqos.Status.Conditions, conditionTypeReady+"node1")
+				g.Expect(cond).NotTo(BeNil(), "NetworkQoS %s/%s has no ready condition", nqosNamespace, policyName)
+				g.Expect(cond.Status).To(Equal(metav1.ConditionFalse), "NetworkQoS %s/%s must not be ready", nqosNamespace, policyName)
+				g.Expect(cond.Message).To(ContainSubstring(message),
+					"ready condition of NetworkQoS %s/%s must name the rejected value", nqosNamespace, policyName)
+			}).WithTimeout(10*time.Second).WithPolling(100*time.Millisecond).Should(Succeed(), "NetworkQoS %s/%s was not rejected", nqosNamespace, policyName)
+		}
+
+		BeforeEach(func() {
+			ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: nqosNamespace}}
+			pod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "source", Namespace: nqosNamespace,
+					Annotations: map[string]string{
+						"k8s.ovn.org/pod-networks": `{"default":{"ip_addresses":["10.128.0.3/24"],"mac_address":"0a:58:0a:80:00:03"}}`,
+					},
+				},
+				Spec: corev1.PodSpec{NodeName: "node1"},
+			}
+			clientset := util.GetOVNClientset(ns, pod)
+			fakeKubeClient, fakeNQoSClient = clientset.KubeClient, clientset.NetworkQoSClient
+			initEnv(clientset, &libovsdbtest.TestSetup{NBData: []libovsdbtest.TestData{
+				&nbdb.LogicalSwitch{Name: "node1"},
+			}})
+			initNetworkQoSController(&util.DefaultNetInfo{}, nil, defaultAddrsetFactory, defaultControllerName)
+
+			policy = &nqostype.NetworkQoS{
+				ObjectMeta: metav1.ObjectMeta{Name: policyName, Namespace: nqosNamespace},
+				Spec: nqostype.Spec{
+					Priority: 100,
+					Egress: []nqostype.Rule{{
+						DSCP: 50,
+						Classifier: nqostype.Classifier{
+							To:    []nqostype.Destination{{IPBlock: &networkingv1.IPBlock{CIDR: "128.116.0.0/17"}}},
+							Ports: []*nqostype.Port{{Protocol: "TCP"}},
+						},
+					}},
+				},
+			}
+		})
+
+		DescribeTable("does not program a QoS rule for a new policy",
+			func(invalidate func(*nqostype.NetworkQoS), message string) {
+				invalidate(policy)
+				_, err := fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Create(context.Background(), policy, metav1.CreateOptions{})
+				Expect(err).NotTo(HaveOccurred(), "failed to create NetworkQoS %s/%s", nqosNamespace, policyName)
+
+				eventuallyNotReady(message)
+				qos, err := findQoS(defaultControllerName, nqosNamespace, policyName, 0)
+				Expect(err).NotTo(HaveOccurred(), "failed to look up the QoS rule of NetworkQoS %s/%s", nqosNamespace, policyName)
+				Expect(qos).To(BeNil(), "unexpected QoS rule for rejected NetworkQoS %s/%s", nqosNamespace, policyName)
+			},
+			Entry("with an unsupported port protocol", setInvalidProtocol, invalidProtocolMessage),
+			Entry("with an ipBlock cidr that does not parse", setInvalidCIDR, invalidCIDRMessage),
+			Entry("with an ipBlock except entry that does not parse", setInvalidExcept, invalidExceptMessage),
+		)
+
+		It("reports a new policy as not ready once a failed status update is retried", func() {
+			var failed atomic.Bool
+			fakeNQoSClient.(*nqosfake.Clientset).PrependReactor("patch", "networkqoses", func(k8stesting.Action) (bool, runtime.Object, error) {
+				if failed.CompareAndSwap(false, true) {
+					return true, nil, errors.New("status patch failed")
+				}
+				return false, nil, nil
+			})
+			setInvalidProtocol(policy)
+			_, err := fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Create(context.Background(), policy, metav1.CreateOptions{})
+			Expect(err).NotTo(HaveOccurred(), "failed to create NetworkQoS %s/%s", nqosNamespace, policyName)
+
+			eventuallyNotReady(invalidProtocolMessage)
+			Expect(failed.Load()).To(BeTrue(), "the first status update was expected to fail")
+		})
+
+		DescribeTable("removes the QoS rule of a policy updated to a rejected value",
+			func(invalidate func(*nqostype.NetworkQoS), message string, podSelector metav1.LabelSelector) {
+				By("creating a policy that can be programmed")
+				created, err := fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Create(context.Background(), policy, metav1.CreateOptions{})
+				Expect(err).NotTo(HaveOccurred(), "failed to create NetworkQoS %s/%s", nqosNamespace, policyName)
+				qos := eventuallyExpectQoS(defaultControllerName, nqosNamespace, policyName, 0)
+				Expect(qos.Match).To(HaveSuffix(" && tcp"), "unexpected match of the QoS rule")
+				eventuallySwitchHasQoS("node1", qos)
+
+				By("updating the policy to the rejected value")
+				// the fake clientset does not bump the resource version, which the update handler compares
+				created.ResourceVersion = time.Now().String()
+				invalidate(created)
+				created.Spec.PodSelector = podSelector
+				_, err = fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Update(context.Background(), created, metav1.UpdateOptions{})
+				Expect(err).NotTo(HaveOccurred(), "failed to update NetworkQoS %s/%s", nqosNamespace, policyName)
+
+				eventuallyNotReady(message)
+				eventuallyExpectNoQoS(defaultControllerName, nqosNamespace, policyName, 0)
+				eventuallySwitchHasNoQoS("node1", qos)
+			},
+			Entry("with an unsupported port protocol", setInvalidProtocol, invalidProtocolMessage, metav1.LabelSelector{}),
+			Entry("with an unsupported port protocol and a pod selector that does not parse", setInvalidProtocol, invalidProtocolMessage,
+				metav1.LabelSelector{MatchLabels: map[string]string{"app": "not a label value"}}),
+			Entry("with an ipBlock cidr that does not parse", setInvalidCIDR, invalidCIDRMessage, metav1.LabelSelector{}),
+			Entry("with an ipBlock cidr that does not parse and a pod selector that does not parse", setInvalidCIDR, invalidCIDRMessage,
+				metav1.LabelSelector{MatchLabels: map[string]string{"app": "not a label value"}}),
+			Entry("with an ipBlock except entry that does not parse", setInvalidExcept, invalidExceptMessage, metav1.LabelSelector{}),
+		)
+
+		DescribeTable("programs the canonical form of an ipBlock",
+			func(ipBlock networkingv1.IPBlock, destinationMatch string) {
+				policy.Spec.Egress[0].Classifier.To[0].IPBlock = &ipBlock
+				_, err := fakeNQoSClient.K8sV1alpha1().NetworkQoSes(nqosNamespace).Create(context.Background(), policy, metav1.CreateOptions{})
+				Expect(err).NotTo(HaveOccurred(), "failed to create NetworkQoS %s/%s", nqosNamespace, policyName)
+
+				qos := eventuallyExpectQoS(defaultControllerName, nqosNamespace, policyName, 0)
+				Expect(qos.Match).To(HaveSuffix(" && "+destinationMatch+" && tcp"), "unexpected match of the QoS rule")
+			},
+			Entry("IPv4 prefix with host bits set and exceptions",
+				networkingv1.IPBlock{CIDR: "128.116.3.4/17", Except: []string{"128.116.1.9/24", "128.116.0.1"}},
+				"ip4.dst == 128.116.0.0/17 && ip4.dst != {128.116.1.0/24,128.116.0.1}"),
+			Entry("IPv6 prefix with host bits set and exceptions",
+				networkingv1.IPBlock{CIDR: "FD00:0:0:1::5/64", Except: []string{"fd00:0:0:1:0::9"}},
+				"ip6.dst == fd00:0:0:1::/64 && ip6.dst != {fd00:0:0:1::9}"),
+			Entry("IPv6 address", networkingv1.IPBlock{CIDR: "fd00::1"}, "ip6.dst == fd00::1"),
+			Entry("empty cidr, which matches any destination", networkingv1.IPBlock{}, "(ip4.dst == 0.0.0.0/0 || ip6.dst == ::/0)"),
+		)
+	})
+
+	DescribeTable("validateClassifierPorts",
+		func(protocol string, valid bool) {
+			rules := []nqostype.Rule{
+				{Classifier: nqostype.Classifier{Ports: []*nqostype.Port{{Protocol: "TCP"}}}},
+				{Classifier: nqostype.Classifier{Ports: []*nqostype.Port{{Protocol: "UDP"}, {Protocol: protocol}}}},
+			}
+			err := validateClassifierPorts(rules)
+			if valid {
+				Expect(err).NotTo(HaveOccurred(), "protocol %q must be accepted", protocol)
+				return
+			}
+			Expect(err).To(MatchError(ContainSubstring(fmt.Sprintf("egress[1].classifier.ports[1]: unsupported protocol %q", protocol))),
+				"protocol %q must be rejected", protocol)
+		},
+		Entry("TCP", "TCP", true),
+		Entry("UDP", "UDP", true),
+		Entry("SCTP", "SCTP", true),
+		Entry("unset", "", true),
+		Entry("lowercase", "tcp", false),
+		Entry("unknown protocol", "ICMP", false),
+		Entry("supported name as a prefix", "TCP || ip4", false),
+		Entry("supported name in the middle", "ip4 || UDP || ip6", false),
+		Entry("supported name as a suffix", "ip4 || SCTP", false),
+		Entry("surrounding space", " TCP", false),
+	)
+
+	DescribeTable("parseIPBlock",
+		func(cidr string, except []string, expected *ipBlock, expectedErr string) {
+			got, err := parseIPBlock(cidr, except)
+			if expectedErr != "" {
+				Expect(err).To(MatchError(expectedErr), "cidr %q, except %q must be rejected", cidr, except)
+				return
+			}
+			Expect(err).NotTo(HaveOccurred(), "cidr %q, except %q must be accepted", cidr, except)
+			Expect(got).To(Equal(expected), "unexpected IP block for cidr %q, except %q", cidr, except)
+		},
+		Entry("cidr only", "128.116.0.0/17", nil, &ipBlock{CIDR: "128.116.0.0/17"}, ""),
+		Entry("address and prefix exceptions", "128.116.0.0/17", []string{"128.116.0.0", "128.116.1.0/24"},
+			&ipBlock{CIDR: "128.116.0.0/17", Except: []string{"128.116.0.0", "128.116.1.0/24"}}, ""),
+		Entry("single-host prefixes become addresses", "128.116.0.1/32", []string{"128.116.0.1/32"},
+			&ipBlock{CIDR: "128.116.0.1", Except: []string{"128.116.0.1"}}, ""),
+		Entry("entries are reformatted", "FD00:0:0:1::1/64", []string{"fd00:0:0:1:0::1"},
+			&ipBlock{CIDR: "fd00:0:0:1::/64", Except: []string{"fd00:0:0:1::1"}, IsIPv6: true}, ""),
+		Entry("invalid cidr", "128.116.0.0/17 || ip4.dst == 0.0.0.0/0", nil, nil,
+			`invalid cidr: "128.116.0.0/17 || ip4.dst == 0.0.0.0/0" is neither a CIDR nor an IP address`),
+		Entry("invalid except", "128.116.0.0/17", []string{"128.116.0.1", "128.116.0.0} || ip4.dst == {0.0.0.0/0"}, nil,
+			`invalid except[1]: "128.116.0.0} || ip4.dst == {0.0.0.0/0" is neither a CIDR nor an IP address`),
+		Entry("IPv4-mapped IPv6 entries become IPv4", "::ffff:10.1.2.3/104", []string{"::ffff:10.0.0.1"},
+			&ipBlock{CIDR: "10.0.0.0/8", Except: []string{"10.0.0.1"}}, ""),
+		Entry("mixed families", "128.116.0.0/17", []string{"fd00::1"}, nil,
+			`invalid except[0]: "fd00::1" is not in the IP family of cidr "128.116.0.0/17"`),
+	)
+
+	DescribeTable("ToQosMatchString",
+		func(classifier *Classifier, expected string) {
+			Expect(classifier.ToQosMatchString(true, false)).To(Equal(expected), "unexpected classifier match")
+		},
+		Entry("no destination and no port", &Classifier{}, ""),
+		Entry("a destination and no port",
+			&Classifier{Destinations: []*Destination{{IpBlock: &ipBlock{CIDR: "128.116.0.0/17"}}}},
+			"ip4.dst == 128.116.0.0/17"),
+		Entry("a destination and a port",
+			&Classifier{
+				Destinations: []*Destination{{IpBlock: &ipBlock{CIDR: "128.116.0.0/17"}}},
+				Ports:        []*nqostype.Port{{Protocol: "TCP", Port: ptr.To(int32(8080))}},
+			},
+			"ip4.dst == 128.116.0.0/17 && tcp && tcp.dst == 8080"),
+		Entry("no destination and a port",
+			&Classifier{Ports: []*nqostype.Port{{Protocol: "TCP", Port: ptr.To(int32(8080))}}},
+			"tcp && tcp.dst == 8080"),
+		Entry("no destination and two protocols",
+			&Classifier{Ports: []*nqostype.Port{{Protocol: "TCP", Port: ptr.To(int32(8080))}, {Protocol: "UDP"}}},
+			"((tcp && tcp.dst == 8080) || (udp))"),
+	)
 
 	DescribeTable("When starting controller with NetworkQoS, Pod and Node objects",
 		func() {

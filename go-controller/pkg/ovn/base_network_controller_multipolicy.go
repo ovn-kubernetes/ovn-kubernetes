@@ -67,46 +67,35 @@ func (bsnc *BaseUserDefinedNetworkController) shouldApplyMultiPolicy(mpolicy *mn
 	return false
 }
 
-// parseCIDROrIP parses a CIDR, or converts a bare IP into a single-host CIDR,
-// by adding a /32 or /128 mask depending on the IP version.
-// MultiNetworkPolicy doesn't have CIDR validation, so a bare IP used to work
-// before the validation was added since OVN match operands accept bare IPs.
-// IPv4-mapped IPv6 values are rejected, like the API server does for NetworkPolicy.
-func parseCIDROrIP(value string) (*net.IPNet, error) {
-	ip, ipNet, err := net.ParseCIDR(value)
-	if err != nil {
-		ip = net.ParseIP(value)
-		if ip == nil {
-			return nil, fmt.Errorf("%q is neither a CIDR nor an IP address", value)
-		}
-		bits := 32
-		if ip.To4() == nil {
-			bits = 128
-		}
-		ipNet = &net.IPNet{IP: ip, Mask: net.CIDRMask(bits, bits)}
-	}
-	if ip.To4() != nil && strings.Contains(value, ":") {
-		return nil, fmt.Errorf("%q is an IPv4-mapped IPv6 address, which is not supported", value)
-	}
-	return ipNet, nil
+// isIPv4MappedIPv6 reports whether value, an IP address or an IP prefix, is
+// written as an IPv4-mapped IPv6 address, such as ::ffff:10.0.0.1.
+func isIPv4MappedIPv6(value string) bool {
+	address, _, _ := strings.Cut(value, "/")
+	return strings.Contains(address, ":") && net.ParseIP(address).To4() != nil
 }
 
 // convertMultiNetPolicyIPBlock validates the ipBlock the same way the API server
 // validates NetworkPolicy ipBlocks. The MultiNetworkPolicy CRD does not validate
 // these fields and they are interpolated verbatim into ACL matches.
 func convertMultiNetPolicyIPBlock(ipb *mnpapi.IPBlock) (*knet.IPBlock, error) {
-	cidrIPNet, err := parseCIDROrIP(ipb.CIDR)
+	cidrIPNet, err := util.ParseCIDROrIP(ipb.CIDR)
 	if err != nil {
 		return nil, fmt.Errorf("invalid ipBlock cidr: %w", err)
+	}
+	if isIPv4MappedIPv6(ipb.CIDR) {
+		return nil, fmt.Errorf("invalid ipBlock cidr: %q is an IPv4-mapped IPv6 address, which is not supported", ipb.CIDR)
 	}
 	var except []string
 	if len(ipb.Except) > 0 {
 		except = make([]string, 0, len(ipb.Except))
 	}
 	for _, exceptCIDRStr := range ipb.Except {
-		exceptCIDR, err := parseCIDROrIP(exceptCIDRStr)
+		exceptCIDR, err := util.ParseCIDROrIP(exceptCIDRStr)
 		if err != nil {
 			return nil, fmt.Errorf("invalid ipBlock except: %w", err)
+		}
+		if isIPv4MappedIPv6(exceptCIDRStr) {
+			return nil, fmt.Errorf("invalid ipBlock except: %q is an IPv4-mapped IPv6 address, which is not supported", exceptCIDRStr)
 		}
 		cidrMaskLen, _ := cidrIPNet.Mask.Size()
 		exceptMaskLen, _ := exceptCIDR.Mask.Size()

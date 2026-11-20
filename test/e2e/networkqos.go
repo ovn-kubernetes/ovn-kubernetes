@@ -576,6 +576,104 @@ spec:
 		ginkgo.Entry("ipv6", &skipIpv6, &dstPod1IPv6),
 	)
 
+	ginkgo.DescribeTable("Limits egress traffic by protocol and port through a NetworkQoS spec without destinations",
+		func(skipThisTableEntry *bool, dst1IP *string) {
+			if *skipThisTableEntry {
+				return
+			}
+			rate := 5000
+			dstPod1, err := createPod(f, dstPod1Name, dstNode, dstPodNamespace, []string{"bash", "-c", "iperf3 -s -p 80 -D && iperf3 -s -p 8080"}, map[string]string{"component": "nqos-test-port-only"}, func(p *corev1.Pod) {
+				p.Spec.Containers[0].Image = images.Netshoot()
+			})
+			framework.ExpectNoError(err, "failed to create pod %s/%s", dstPodNamespace, dstPod1Name)
+			gomega.Eventually(func() error {
+				_, err := e2ekubectl.RunKubectl(dstPodNamespace, "exec", dstPod1Name, "--", "which", "iperf3")
+				return err
+			}, 60*time.Second, 1*time.Second).ShouldNot(gomega.HaveOccurred(), "iperf3 is not available in pod %s/%s", dstPodNamespace, dstPod1Name)
+			dstPod1IPv4, dstPod1IPv6 = getPodAddresses(dstPod1)
+			bps := iperf3Test(f, srcPodName, *dst1IP, 80)
+			gomega.Expect(bps/1000).To(gomega.BeNumerically(">", float64(rate)*bandwidthFluctuation),
+				"traffic to %s must not be limited before the NetworkQoS is created", *dst1IP)
+
+			networkQoSSpec := fmt.Sprintf(`
+apiVersion: k8s.ovn.org/v1alpha1
+kind: NetworkQoS
+metadata:
+  namespace: %s
+  name: %s
+spec:
+  podSelector:
+    matchLabels:
+      component: nqos-test-src
+  priority: 56
+  egress:
+  - dscp: 5
+    bandwidth:
+      rate: %d
+    classifier:
+      ports:
+      - protocol: TCP
+        port: 80
+`, f.Namespace.Name, nqosSpecName, rate)
+			_, err = e2ekubectl.RunKubectlInput(f.Namespace.Name, networkQoSSpec, "create", "-f", "-")
+			framework.ExpectNoError(err, "failed to create NetworkQoS %s/%s", f.Namespace.Name, nqosSpecName)
+			waitForNetworkQoSApplied(f.Namespace.Name)
+			bps = iperf3Test(f, srcPodName, *dst1IP, 80)
+			gomega.Expect(bps/1000).To(gomega.BeNumerically("<=", float64(rate)*bandwidthFluctuation),
+				"traffic to %s port 80 must be limited by the NetworkQoS", *dst1IP)
+			bps = iperf3Test(f, srcPodName, *dst1IP, 8080)
+			gomega.Expect(bps/1000).To(gomega.BeNumerically(">", float64(rate)*bandwidthFluctuation),
+				"traffic to %s port 8080 must not be limited by the NetworkQoS", *dst1IP)
+		},
+		ginkgo.Entry("ipv4", &skipIpv4, &dstPod1IPv4),
+		ginkgo.Entry("ipv6", &skipIpv6, &dstPod1IPv6),
+	)
+
+	ginkgo.DescribeTable("Reports a NetworkQoS as not ready when an ipBlock value is not an IP address or prefix",
+		func(ipBlock string) {
+			networkQoSSpec := fmt.Sprintf(`
+apiVersion: k8s.ovn.org/v1alpha1
+kind: NetworkQoS
+metadata:
+  namespace: %s
+  name: %s
+spec:
+  podSelector:
+    matchLabels:
+      component: nqos-test-src
+  priority: 55
+  egress:
+  - dscp: 4
+    classifier:
+      to:
+      - ipBlock:
+          %s
+`, f.Namespace.Name, nqosSpecName, ipBlock)
+			_, err := e2ekubectl.RunKubectlInput(f.Namespace.Name, networkQoSSpec, "create", "-f", "-")
+			framework.ExpectNoError(err, "failed to create NetworkQoS %s/%s", f.Namespace.Name, nqosSpecName)
+
+			gomega.Eventually(func(g gomega.Gomega) {
+				conditions, err := e2ekubectl.RunKubectl(f.Namespace.Name, "get", "networkqos", nqosSpecName,
+					"-o", `jsonpath={range .status.conditions[*]}{.type}={.status} {.message}{"\n"}{end}`)
+				g.Expect(err).NotTo(gomega.HaveOccurred(), "failed to get the conditions of NetworkQoS %s/%s", f.Namespace.Name, nqosSpecName)
+				g.Expect(conditions).To(gomega.ContainSubstring("Ready-In-Zone-"),
+					"NetworkQoS %s/%s has no zone condition", f.Namespace.Name, nqosSpecName)
+				for _, condition := range strings.Split(strings.TrimSpace(conditions), "\n") {
+					g.Expect(condition).To(gomega.And(
+						gomega.HavePrefix("Ready-In-Zone-"),
+						gomega.ContainSubstring("=False "),
+						gomega.ContainSubstring("egress[0].classifier.to[0].ipBlock"),
+						gomega.ContainSubstring("is neither a CIDR nor an IP address"),
+					), "unexpected condition of NetworkQoS %s/%s", f.Namespace.Name, nqosSpecName)
+				}
+			}).WithTimeout(30*time.Second).WithPolling(time.Second).Should(gomega.Succeed(),
+				"NetworkQoS %s/%s was not reported as not ready", f.Namespace.Name, nqosSpecName)
+		},
+		ginkgo.Entry("cidr", `cidr: "203.0.113.0/24 || ip4.dst == 0.0.0.0/0"`),
+		ginkgo.Entry("except", `cidr: 203.0.113.0/24
+          except: ["203.0.113.0} || ip4.dst == {0.0.0.0/0"]`),
+	)
+
 	ginkgo.AfterEach(func() {
 		err := f.ClientSet.CoreV1().Namespaces().Delete(context.Background(), dstPodNamespace, metav1.DeleteOptions{})
 		framework.ExpectNoError(err, "Error deleting Namespace %v: %v", dstPodNamespace, err)

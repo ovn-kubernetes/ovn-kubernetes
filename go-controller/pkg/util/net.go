@@ -554,6 +554,25 @@ func SubnetBroadcastIP(ipnet net.IPNet) net.IP {
 	return result
 }
 
+// ParseCIDROrIP parses a CIDR, or converts a bare IP into a single-host CIDR,
+// by adding a /32 or /128 mask depending on the IP version.
+// An IPv4-mapped IPv6 value, such as ::ffff:10.0.0.1, is returned as IPv4.
+func ParseCIDROrIP(value string) (*net.IPNet, error) {
+	_, ipNet, err := net.ParseCIDR(value)
+	if err != nil {
+		ip := net.ParseIP(value)
+		if ip == nil {
+			return nil, fmt.Errorf("%q is neither a CIDR nor an IP address", value)
+		}
+		bits := 32
+		if ip.To4() == nil {
+			bits = 128
+		}
+		ipNet = &net.IPNet{IP: ip, Mask: net.CIDRMask(bits, bits)}
+	}
+	return ipNet, nil
+}
+
 // ParseIPList parses a comma-separated string of IP addresses ignoring spaces.
 // Returns an empty slice if the input string is empty.
 func ParseIPList(ipsStr string) ([]net.IP, error) {
