@@ -2683,6 +2683,14 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 		testNamespace, err := createNamespaceWithPrimaryNetworkOfType(f, ictx, testName, networkName, networkType, networkSpec)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
+		switch networkType {
+		case cudnAdvertisedEVPNUnmanagedSharedVTEP, cudnAdvertisedEVPNUnmanagedRandomVTEP, cudnAdvertisedEVPNOverlappingCIDRSharedVTEP:
+			// A new FRRConfiguration can make frr-k8s reload FRR and drop the EVPN
+			// session. Wait until it is established again before pods are created.
+			ginkgo.By("Waiting for EVPN BGP convergence")
+			gomega.Expect(waitForEVPNConvergence(f, ipFamilySet, networkName, networkSpec)).To(gomega.Succeed())
+		}
+
 		// attach network to the VRF on all nodes
 		switch networkType {
 		case cudnAdvertisedVRFLite:
@@ -3902,8 +3910,10 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 			for _, node := range nodes.Items {
 				var output string
 				gomega.Eventually(func() error {
+					attemptCtx, attemptCancel := context.WithTimeout(context.Background(), 30*time.Second)
+					defer attemptCancel()
 					var err error
-					output, err = execVtyshOnFRRK8s(f, node.Name, fmt.Sprintf("show bgp l2vpn evpn route vni %s type multicast", macVRFVNI))
+					output, err = execVtyshOnFRRK8s(attemptCtx, f, node.Name, fmt.Sprintf("show bgp l2vpn evpn route vni %s type multicast", macVRFVNI))
 					if err != nil {
 						return err
 					}
@@ -3942,8 +3952,10 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 			ginkgo.By("Validation 2: Type-2 (MAC/IP) for PodA and MAC-VRF external agnhost on PodA's node")
 			var type2Output string
 			gomega.Eventually(func() error {
+				attemptCtx, attemptCancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer attemptCancel()
 				var err error
-				type2Output, err = execVtyshOnFRRK8s(f, nodeA, fmt.Sprintf("show bgp l2vpn evpn route vni %s type macip", macVRFVNI))
+				type2Output, err = execVtyshOnFRRK8s(attemptCtx, f, nodeA, fmt.Sprintf("show bgp l2vpn evpn route vni %s type macip", macVRFVNI))
 				framework.Logf("Type-2 MAC/IP routes on %s, vtysh out:\n%s", nodeA, type2Output)
 				if err != nil {
 					return err
@@ -4069,9 +4081,9 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 })
 
 // getFRRK8sPodOnNode returns the frr-k8s DaemonSet pod on the given node.
-func getFRRK8sPodOnNode(f *framework.Framework, nodeName string) (*corev1.Pod, error) {
+func getFRRK8sPodOnNode(ctx context.Context, f *framework.Framework, nodeName string) (*corev1.Pod, error) {
 	ns := deploymentconfig.Get().FRRK8sNamespace()
-	pods, err := f.ClientSet.CoreV1().Pods(ns).List(context.Background(), metav1.ListOptions{
+	pods, err := f.ClientSet.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{
 		FieldSelector: "spec.nodeName=" + nodeName,
 		LabelSelector: "app=frr-k8s",
 	})
@@ -4088,14 +4100,210 @@ func getFRRK8sPodOnNode(f *framework.Framework, nodeName string) (*corev1.Pod, e
 	return p, nil
 }
 
-// execVtyshOnFRRK8s runs a vtysh -c command in the FRR sidecar of the frr-k8s pod on the given node.
-func execVtyshOnFRRK8s(f *framework.Framework, nodeName string, vtyshCmd string) (string, error) {
-	pod, err := getFRRK8sPodOnNode(f, nodeName)
+// execVtyshOnFRRK8s runs vtysh -c command(s) in the FRR sidecar of the frr-k8s pod on the given node.
+func execVtyshOnFRRK8s(ctx context.Context, f *framework.Framework, nodeName string, vtyshCmds ...string) (string, error) {
+	if len(vtyshCmds) == 0 {
+		return "", fmt.Errorf("no vtysh command")
+	}
+	pod, err := getFRRK8sPodOnNode(ctx, f, nodeName)
 	if err != nil {
 		return "", err
 	}
-	args := []string{"exec", pod.Name, "-c", frrContainerName, "--", "vtysh", "-c", vtyshCmd}
-	return e2ekubectl.RunKubectl(deploymentconfig.Get().FRRK8sNamespace(), args...)
+	deadline, ok := ctx.Deadline()
+	var timeoutCh <-chan time.Time
+	if ok {
+		if remaining := time.Until(deadline); remaining > 0 {
+			timeoutCh = time.NewTimer(remaining).C
+		} else {
+			return "", ctx.Err()
+		}
+	} else {
+		timeoutCh = time.NewTimer(30 * time.Second).C
+	}
+	args := []string{"exec", pod.Name, "-c", frrContainerName, "--", "vtysh"}
+	for _, cmd := range vtyshCmds {
+		args = append(args, "-c", cmd)
+	}
+	out, _, execErr := e2ekubectl.NewKubectlCommand(deploymentconfig.Get().FRRK8sNamespace(), args...).
+		WithTimeout(timeoutCh).ExecWithFullOutput()
+	return out, execErr
+}
+
+func evpnNetworkVNIs(spec *udnv1.NetworkSpec) []int32 {
+	if spec == nil || spec.EVPN == nil {
+		return nil
+	}
+	var vnis []int32
+	if spec.EVPN.MACVRF != nil && spec.EVPN.MACVRF.VNI != 0 {
+		vnis = append(vnis, spec.EVPN.MACVRF.VNI)
+	}
+	if spec.EVPN.IPVRF != nil && spec.EVPN.IPVRF.VNI != 0 {
+		vnis = append(vnis, spec.EVPN.IPVRF.VNI)
+	}
+	return vnis
+}
+
+// frrEVPNVNIDetail is the subset of `show evpn vni detail json` we wait on.
+// FRR versions differ on extra field names (vxlanIntf vs vxlanInterface, etc.).
+type frrEVPNVNIDetail struct {
+	VNI   int32  `json:"vni"`
+	Type  string `json:"type"`
+	State string `json:"state"`
+}
+
+func parseFRREVPNVNIDetails(raw string) ([]frrEVPNVNIDetail, error) {
+	// FRR may print vtysh.conf warnings before JSON. Locate the VNI document;
+	// do not take the first '[' (that matches Configuration file[/etc/frr/frr.conf]).
+	payload := strings.TrimSpace(raw)
+	i := strings.Index(raw, `"vni"`)
+	if i < 0 {
+		i = strings.Index(raw, `"VNI"`)
+	}
+	if i >= 0 {
+		start := strings.LastIndexAny(raw[:i], "[{")
+		if start >= 0 {
+			if raw[start] == '{' {
+				j := start - 1
+				for j >= 0 && (raw[j] == ' ' || raw[j] == '\t' || raw[j] == '\n' || raw[j] == '\r') {
+					j--
+				}
+				if j >= 0 && raw[j] == '[' {
+					start = j
+				}
+			}
+			payload = strings.TrimSpace(raw[start:])
+		}
+	}
+	if strings.HasPrefix(payload, "{") && strings.HasSuffix(payload, "]") {
+		payload = "[" + payload
+	}
+	trimmed := payload
+	if strings.HasPrefix(trimmed, "[") {
+		var list []frrEVPNVNIDetail
+		if err := json.Unmarshal([]byte(trimmed), &list); err != nil {
+			return nil, fmt.Errorf("decode show evpn vni detail json: %w", err)
+		}
+		return list, nil
+	}
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(trimmed), &top); err != nil {
+		return nil, fmt.Errorf("decode show evpn vni detail json: %w", err)
+	}
+	if raw, ok := top["vnis"]; ok {
+		var list []frrEVPNVNIDetail
+		if err := json.Unmarshal(raw, &list); err != nil {
+			return nil, fmt.Errorf("decode show evpn vni detail json: %w", err)
+		}
+		return list, nil
+	}
+	list := make([]frrEVPNVNIDetail, 0, len(top))
+	for _, raw := range top {
+		var item frrEVPNVNIDetail
+		if err := json.Unmarshal(raw, &item); err != nil {
+			continue
+		}
+		list = append(list, item)
+	}
+	if len(list) == 0 {
+		return nil, fmt.Errorf("decode show evpn vni detail json: no VNI entries")
+	}
+	return list, nil
+}
+
+func frrEVPNVNIDetailHasVNI(detailJSON string, vni int32) error {
+	list, err := parseFRREVPNVNIDetails(detailJSON)
+	if err != nil {
+		return err
+	}
+	for _, item := range list {
+		if item.VNI != vni {
+			continue
+		}
+		// L3 entries report state=Up; some L2 dumps omit state. Require Up when present.
+		if item.State != "" && !strings.EqualFold(item.State, "Up") {
+			return fmt.Errorf("VNI %d state %q, want Up", vni, item.State)
+		}
+		return nil
+	}
+	return fmt.Errorf("show evpn vni detail json missing VNI %d", vni)
+}
+
+// waitForEVPNConvergence waits until every ready node has an established EVPN
+// BGP session with the external FRR and this network's VNIs are present (and
+// state Up when FRR reports it) on both cluster frr-k8s and the external FRR.
+func waitForEVPNConvergence(f *framework.Framework, ipFamilySet sets.Set[utilnet.IPFamily], networkName string, networkSpec *udnv1.NetworkSpec) error {
+	const (
+		timeout = 5 * time.Minute
+		polling = 5 * time.Second
+	)
+
+	expectedVNIs := evpnNetworkVNIs(networkSpec)
+	if len(expectedVNIs) == 0 {
+		return fmt.Errorf("EVPN network %s has no MAC-VRF or IP-VRF VNI", networkName)
+	}
+	externalFRRIP, err := getExternalFRRIP(ipFamilySet)
+	if err != nil {
+		return fmt.Errorf("determining external FRR IP for network %s: %w", networkName, err)
+	}
+
+	listCtx, listCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer listCancel()
+	nodeList, err := e2enode.GetReadySchedulableNodes(listCtx, f.ClientSet)
+	if err != nil {
+		return fmt.Errorf("listing ready nodes for network %s: %w", networkName, err)
+	}
+	if len(nodeList.Items) == 0 {
+		return fmt.Errorf("no ready schedulable nodes to check EVPN convergence for network %s", networkName)
+	}
+
+	var lastErr error
+	pollErr := wait.PollUntilContextTimeout(context.Background(), polling, timeout, true, func(_ context.Context) (bool, error) {
+		for i := range nodeList.Items {
+			nodeName := nodeList.Items[i].Name
+			attemptCtx, attemptCancel := context.WithTimeout(context.Background(), 30*time.Second)
+			out, execErr := execVtyshOnFRRK8s(attemptCtx, f, nodeName,
+				"show bgp l2vpn evpn summary established",
+				"show evpn vni detail json")
+			attemptCancel()
+			if execErr != nil {
+				lastErr = fmt.Errorf("node %s: vtysh error: %w\n%s", nodeName, execErr, out)
+				return false, nil
+			}
+			if !strings.Contains(out, externalFRRIP) {
+				lastErr = fmt.Errorf("node %s: EVPN BGP session with %s is not yet established:\n%s", nodeName, externalFRRIP, out)
+				return false, nil
+			}
+			for _, vni := range expectedVNIs {
+				if err := frrEVPNVNIDetailHasVNI(out, vni); err != nil {
+					lastErr = fmt.Errorf("node %s: %w\n%s", nodeName, err, out)
+					return false, nil
+				}
+			}
+		}
+		extOut, extErr := infraprovider.Get().ExecExternalContainerCommand(
+			infraapi.ExternalContainer{Name: routerContainerName},
+			vtyshCommand("show evpn vni detail json"),
+		)
+		if extErr != nil {
+			lastErr = fmt.Errorf("external FRR: show evpn vni detail json: %w\n%s", extErr, extOut)
+			return false, nil
+		}
+		for _, vni := range expectedVNIs {
+			if err := frrEVPNVNIDetailHasVNI(extOut, vni); err != nil {
+				lastErr = fmt.Errorf("external FRR: %w\n%s", err, extOut)
+				return false, nil
+			}
+		}
+		lastErr = nil
+		return true, nil
+	})
+	if pollErr != nil {
+		if lastErr != nil {
+			return fmt.Errorf("EVPN network %s did not converge: %w", networkName, lastErr)
+		}
+		return fmt.Errorf("EVPN network %s did not converge: %w", networkName, pollErr)
+	}
+	return nil
 }
 
 // bumE2EQuoteTcpdumpFilter wraps a BPF for safe use in sh -c for tcpdump.
