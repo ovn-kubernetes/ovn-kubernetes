@@ -114,6 +114,7 @@ nav:
     - ACLs: design/acls.md
     - EgressIP Design: design/egressip.md
     - Gateway Accelerated Interface: design/gateway-accelerated-interface-configuration.md
+    - Upgrades: design/upgrades.md
     - Kubevirt VM Live Migration: features/live-migration.md
   - Getting Started:
     - getting-started/index.md
