@@ -5870,6 +5870,83 @@ func TestController_reconcileEgressIPLookupFailure(t *testing.T) {
 	}
 }
 
+// Hold the FRR watch behind the API while the EgressIP moves. A committed
+// create whose response was lost must be withdrawn before the new export.
+func TestEgressIPMovesAfterUnconfirmedCreate(t *testing.T) {
+	g := gomega.NewWithT(t)
+	ctx := t.Context()
+	tt := newFRRReconcileTest(t, g, "eth0")
+	ra := (&testRA{Name: "ra", SelectsDefault: true, AdvertiseEgressIPs: true}).RouteAdvertisements()
+	tt.updateRA(ra)
+	eip := (&testEIP{Name: "eip", EIPs: map[string]string{"node": "192.0.2.10"}}).EgressIP()
+	_, err := tt.fakeClientset.EgressIPClient.K8sV1().EgressIPs().Create(ctx, eip, metav1.CreateOptions{})
+	g.Expect(err).NotTo(gomega.HaveOccurred(), "assign the EgressIP to its new owner")
+	g.Eventually(func() error { _, err := tt.c.eipLister.Get(eip.Name); return err }, 5*time.Second).Should(gomega.Succeed())
+
+	index := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+	template, err := tt.c.frrLister.FRRConfigurations("frrNamespace").Get("frrConfig")
+	g.Expect(err).NotTo(gomega.HaveOccurred(), "get the peering template")
+	g.Expect(index.Add(template)).To(gomega.Succeed(), "the watch initially contains only the template")
+	tt.c.frrLister = frrlisters.NewFRRConfigurationLister(index)
+	tt.c.pendingFRR = newPendingWrites(index)
+	queue := &controllerutil.FakeController{}
+	tt.c.raController = queue
+
+	old := generatedFRRConfig(generateName+"former", "former", true).FRRConfiguration()
+	old.Spec.BGP.Routers[0].Prefixes = []string{"192.0.2.10/32"}
+	old.Spec.BGP.Routers[0].Neighbors[0].ToAdvertise.Allowed.Prefixes = old.Spec.BGP.Routers[0].Prefixes
+	client := tt.fakeClientset.FRRClient.(*frrfake.Clientset)
+	client.PrependReactor("create", "frrconfigurations", func(a ctesting.Action) (bool, runtime.Object, error) {
+		cfg := a.(ctesting.CreateAction).GetObject().(*frrapi.FRRConfiguration)
+		if cfg.Name != old.Name {
+			return false, nil, nil
+		}
+		stored := cfg.DeepCopy()
+		stored.ResourceVersion = "10"
+		g.Expect(client.Tracker().Create(a.GetResource(), stored, stored.Namespace)).To(gomega.Succeed(), "commit the former owner's export")
+		return true, nil, context.DeadlineExceeded
+	})
+	result := frrGenerationResult{frrConfigs: []*frrapi.FRRConfiguration{old}}
+	_, err = tt.c.updateFRRConfigurations(ctx, ra.Name, &result)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(errors.Is(result.failureError(), context.DeadlineExceeded)).To(gomega.BeTrue(), "the create response was lost")
+
+	listErr := errors.New("inventory unavailable")
+	lists := 0
+	client.PrependReactor("list", "frrconfigurations", func(a ctesting.Action) (bool, runtime.Object, error) {
+		if a.GetNamespace() != metav1.NamespaceAll {
+			return false, nil, nil
+		}
+		lists++
+		g.Expect(a.(ctesting.ListAction).GetListRestrictions().Labels.String()).To(gomega.Equal(types.OvnRouteAdvertisementsKey+"=ra"), "read only this RA's inventory")
+		if lists == 1 {
+			return true, nil, listErr
+		}
+		return false, nil, nil
+	})
+	g.Expect(errors.Is(tt.c.reconcile(ctx, ra.Name), listErr)).To(gomega.BeTrue(), "retry an unavailable inventory")
+	g.Expect(tt.c.reconcile(ctx, ra.Name)).To(gomega.Succeed())
+	g.Expect(queue.Reconciles).To(gomega.ContainElement("After:ra"), "wait for the watch to see the committed export")
+	exports := tt.generatedConfigs("ra")
+	g.Expect(exports).To(gomega.HaveLen(1), "the address must still have only its former owner")
+	g.Expect(exports).To(gomega.HaveKey("ra/frrConfig/former"))
+	g.Expect(index.Add(exports["ra/frrConfig/former"])).To(gomega.Succeed(), "deliver the delayed create")
+	client.ClearActions()
+	g.Expect(tt.c.reconcile(ctx, ra.Name)).To(gomega.Succeed(), "withdraw before publishing the new owner")
+	var writes []string
+	for _, a := range client.Actions() {
+		if a.GetVerb() == "create" || a.GetVerb() == "delete" {
+			writes = append(writes, a.GetVerb())
+		}
+	}
+	g.Expect(writes).To(gomega.Equal([]string{"delete", "create"}), "withdraw the former owner's export first")
+	g.Expect(lists).To(gomega.Equal(2), "resume cache-only reconciliation once the inventory is known")
+	exports = tt.generatedConfigs("ra")
+	g.Expect(exports).To(gomega.HaveLen(1))
+	g.Expect(exports).To(gomega.HaveKey("ra/frrConfig/node"))
+	g.Expect(util.RouteAdvertisementsConfigurationExportsPrefix(exports["ra/frrConfig/node"], "", "192.0.2.10/32")).To(gomega.BeTrue(), "the new owner advertises the EgressIP")
+}
+
 func TestController_reconcileEgressIPOwnerChange(t *testing.T) {
 	for _, tc := range []struct {
 		name, ip             string
@@ -6399,7 +6476,7 @@ func TestControllerRetriesIndependentTemplateWrites(t *testing.T) {
 				prefix = "1.1.2.0/24"
 				tt.updateNodeSubnets("node", `{"default":"1.1.2.0/24"}`)
 			}
-			failure := errors.New("template rejected")
+			failure := apierrors.NewBadRequest("template rejected")
 			reject := true
 			client.PrependReactor(verb, "frrconfigurations", func(action ctesting.Action) (bool, runtime.Object, error) {
 				cfg := action.(interface{ GetObject() runtime.Object }).GetObject().(*frrapi.FRRConfiguration)
@@ -6409,6 +6486,7 @@ func TestControllerRetriesIndependentTemplateWrites(t *testing.T) {
 				return false, nil, nil
 			})
 			g.Expect(errors.Is(tt.c.reconcile(ctx, "ra"), failure)).To(gomega.BeTrue(), "retry the failed %s", verb)
+			g.Expect(tt.c.uncertainFRRCreates.Has("ra")).To(gomega.BeFalse(), "a definitive API rejection needs no live inventory")
 			// A failed pass counts the cache from before its own writes. The
 			// retry runs once they are cached and refreshes the sample.
 			tt.waitForFRRCache()

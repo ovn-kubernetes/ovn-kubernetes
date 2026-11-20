@@ -1014,8 +1014,9 @@ FRR applies changes asynchronously, so API deletion does not confirm BGP withdra
 Before reconciling an RA again, the controller waits for its informer caches to
 reflect the FRR configurations and NAD annotations it wrote. For example, if an
 EgressIP moves while the old owner's configuration is still arriving in the
-cache, reconciliation waits so it can withdraw that route first. Other RAs can
-continue reconciling.
+cache, reconciliation waits so it can withdraw that route first. If the API
+server may have created an object but the controller lost the response, the
+controller lists that RA's configurations to recover their names and versions. Other RAs continue reconciling.
 
 Node-specific VTEP validation continues to exclude invalid nodes while applying
 configurations generated for the other nodes. If another input error prevents a

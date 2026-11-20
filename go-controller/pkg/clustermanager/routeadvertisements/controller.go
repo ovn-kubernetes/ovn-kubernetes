@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"maps"
 	"net"
+	"net/http"
 	"net/netip"
 	"reflect"
 	"slices"
@@ -130,6 +131,8 @@ type Controller struct {
 	raNetworks     map[string]sets.Set[string]
 
 	pendingFRR, pendingNAD *pendingWrites
+	// Only the RA reconcile worker reads and writes this set.
+	uncertainFRRCreates sets.Set[string]
 }
 
 // networkRefReconcilerFunc adapts a function to the
@@ -188,6 +191,7 @@ func NewController(
 		nm:              nm,
 		raNetworks:      map[string]sets.Set[string]{},
 	}
+	c.uncertainFRRCreates = sets.New[string]()
 	c.pendingFRR = newPendingWrites(wf.FRRConfigurationsInformer().Informer().GetStore())
 	c.pendingNAD = newPendingWrites(wf.NADInformer().Informer().GetStore())
 	if util.IsUplinkEnabled() {
@@ -415,6 +419,22 @@ func (c *Controller) handleReconcileError(ctx context.Context, key string, error
 // The controller processes selected events of RouteAdvertisements,
 // FRRConfigurations, Nodes, EgressIPs, NADs and namespaces.
 func (c *Controller) reconcile(ctx context.Context, name string) error {
+	if c.uncertainFRRCreates.Has(name) {
+		// A lost Create response leaves us without the generated name or version.
+		// Recover the committed objects before an EgressIP can move to a new owner.
+		configs, err := c.frrClient.ApiV1beta1().FRRConfigurations(metav1.NamespaceAll).List(ctx,
+			metav1.ListOptions{LabelSelector: labels.Set{types.OvnRouteAdvertisementsKey: name}.String()})
+		if err != nil {
+			return fmt.Errorf("checking unconfirmed FRRConfiguration creates for RouteAdvertisements %q: %w", name, err)
+		}
+		for i := range configs.Items {
+			cfg := &configs.Items[i]
+			if cfg.Annotations[types.OvnRouteAdvertisementsKey] != "" {
+				c.pendingFRR.written(name, cfg)
+			}
+		}
+		c.uncertainFRRCreates.Delete(name)
+	}
 	// The cache must show this RA's own last writes before we compare it
 	// with the desired state again. Their events requeue the RA.
 	if c.pendingFRR.waiting(name) || c.pendingNAD.waiting(name) {
@@ -2112,6 +2132,17 @@ func (c *Controller) withdrawMovedEgressIPs(ctx context.Context, configs []*frrt
 	return changed, errors.Join(errs...)
 }
 
+// A client rejection is definitive. A transport failure or a server timeout
+// can arrive after the API server has stored the generated object.
+func createOutcomeUncertain(err error) bool {
+	var status apierrors.APIStatus
+	if !errors.As(err, &status) {
+		return true
+	}
+	code := status.Status().Code
+	return code < http.StatusBadRequest || code == http.StatusRequestTimeout || code >= http.StatusInternalServerError
+}
+
 // updateFRRConfigurations withdraws old objects for any missing desired key,
 // including failed templates on nodes where another template still works.
 // A failed withdrawal blocks replacements on that node. An EgressIP can move
@@ -2213,6 +2244,9 @@ func (c *Controller) updateFRRConfigurations(ctx context.Context, ra string, res
 				},
 			)
 			if err != nil {
+				if createOutcomeUncertain(err) {
+					c.uncertainFRRCreates.Insert(ra)
+				}
 				result.nodeErrors = append(result.nodeErrors, fmt.Errorf("failed to create FRRConfiguration for %s: %w", key, err))
 				continue
 			}
