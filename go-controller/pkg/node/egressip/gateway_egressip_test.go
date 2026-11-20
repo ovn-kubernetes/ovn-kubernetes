@@ -11,6 +11,7 @@ import (
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
+	ocpconfigapi "github.com/openshift/api/config/v1"
 	"github.com/vishvananda/netlink"
 
 	corev1 "k8s.io/api/core/v1"
@@ -42,6 +43,11 @@ var _ = ginkgo.Describe("Gateway EgressIP", func() {
 		mark2           = "50001"
 		mark3           = "50002"
 		emptyAnnotation = ""
+		// A cloud node whose primary interface address is a /32, and an EgressIP that is only
+		// within the subnet reported by the cloud egress IP config annotation.
+		cloudNodeIfAddr     = `{"ipv4":"10.0.128.3/32"}`
+		cloudEIPConfigAnnot = `[{"interface":"nic0","ifaddr":{"ipv4":"10.0.128.0/17"},"capacity":{"ip":100}}]`
+		cloudEIPAddr        = "10.0.128.201"
 	)
 
 	var (
@@ -154,6 +160,37 @@ var _ = ginkgo.Describe("Gateway EgressIP", func() {
 			gomega.Expect(parseEIPsFromAnnotation(node)).ShouldNot(gomega.ConsistOf(secondaryIP), "secondary IP should not be in annotation")
 			gomega.Expect(nlMock.AssertNotCalled(ginkgo.GinkgoT(), "AddrAdd", nlLinkMock,
 				egressip.GetNetlinkAddress(net.ParseIP(secondaryIP), bridgeLinkIndex))).Should(gomega.BeTrue(), "should not add IP to bridge")
+		})
+
+		ginkgo.It("configures annotation and bridge when a cloud node has a /32 primary interface address", func() {
+			// Some clouds assign the node a /32 primary interface address and reach the rest of the
+			// subnet over an on-link route. The subnet that may host an EgressIP is then only
+			// described by the cloud egress IP config annotation, never by the node primary
+			// interface address.
+			config.Kubernetes.PlatformType = string(ocpconfigapi.GCPPlatformType)
+
+			nlLinkMock.On("Attrs").Return(&netlink.LinkAttrs{Name: bridgeName, Index: bridgeLinkIndex}, nil)
+			nlMock.On("LinkByName", bridgeName).Return(nlLinkMock, nil)
+			nlMock.On("LinkByIndex", bridgeLinkIndex).Return(nlLinkMock, nil)
+			nlMock.On("LinkList").Return([]netlink.Link{nlLinkMock}, nil)
+			nlMock.On("AddrList", nlLinkMock, 0).Return([]netlink.Addr{}, nil)
+			nlMock.On("AddrAdd", nlLinkMock, egressip.GetNetlinkAddress(net.ParseIP(cloudEIPAddr), bridgeLinkIndex)).Return(nil)
+
+			addrMgr, stopFn := initBridgeEIPAddrManagerCloud(nodeName, bridgeName, cloudNodeIfAddr, cloudEIPConfigAnnot)
+			defer stopFn()
+			eip := getEIPAssignedToNode(nodeName, mark, cloudEIPAddr)
+			isUpdated, err := addrMgr.AddEgressIP(eip)
+			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "should process an EgressIP hosted by the cloud network")
+			gomega.Expect(isUpdated).Should(gomega.BeTrue(), "EgressIP within the cloud egress IP config subnet must be configured")
+			gomega.Eventually(func() []string {
+				node, err := addrMgr.nodeLister.Get(nodeName)
+				gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "node should be present within kapi")
+				return parseEIPsFromAnnotation(node)
+			}).Should(gomega.ConsistOf(cloudEIPAddr))
+			gomega.Expect(addrMgr.cache.IsIPPresent(net.ParseIP(cloudEIPAddr))).Should(gomega.BeTrue(),
+				"EgressIP must be cached so that the SNAT flow is generated")
+			gomega.Expect(nlMock.AssertCalled(ginkgo.GinkgoT(), "AddrAdd", nlLinkMock,
+				egressip.GetNetlinkAddress(net.ParseIP(cloudEIPAddr), bridgeLinkIndex))).Should(gomega.BeTrue(), "should add IP to bridge")
 		})
 	})
 
@@ -405,6 +442,31 @@ var _ = ginkgo.Describe("Gateway EgressIP", func() {
 
 func initBridgeEIPAddrManager(nodeName, bridgeName string, bridgeEIPAnnot string) (*BridgeEIPAddrManager, func()) {
 	return initBridgeEIPAddrManagerWithHostCIDRs(nodeName, bridgeName, bridgeEIPAnnot, nil)
+}
+
+// cloudEgressIPConfigAnnotation is the annotation holding the cloud provider's egress IP
+// configuration for a node. It mirrors the unexported key of the same value in pkg/util.
+const cloudEgressIPConfigAnnotation = "cloud.network.openshift.io/egress-ipconfig"
+
+// initBridgeEIPAddrManagerCloud is a variant of initBridgeEIPAddrManager for a node running on a
+// cloud platform, where the subnet that may host an EgressIP is reported by the cloud egress IP
+// config annotation rather than by the node primary interface address.
+func initBridgeEIPAddrManagerCloud(nodeName, bridgeName, nodeIfAddr, cloudEIPConfig string) (*BridgeEIPAddrManager, func()) {
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: nodeName, Annotations: map[string]string{
+			util.OvnNodeIfAddr:            nodeIfAddr,
+			cloudEgressIPConfigAnnotation: cloudEIPConfig,
+		}},
+	}
+	client := fake.NewSimpleClientset(node)
+	watchFactory, err := factory.NewNodeWatchFactory(&util.OVNNodeClientset{KubeClient: client}, nodeName)
+	gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "watch factory creation must succeed")
+	gomega.Expect(watchFactory.Start()).Should(gomega.Succeed(), "watch factory should start")
+	linkManager := linkmanager.NewController(nodeName, true, true, nil)
+	addrMgr := NewBridgeEIPAddrManager(nodeName, bridgeName, linkManager, &kube.Kube{KClient: client},
+		watchFactory.EgressIPInformer(), watchFactory.NodeCoreInformer())
+	addrMgr.annotationIPs = sets.New[string]()
+	return addrMgr, watchFactory.Shutdown
 }
 
 // initBridgeEIPAddrManagerWithHostCIDRs is a variant of initBridgeEIPAddrManager that sets the host-cidrs annotation
