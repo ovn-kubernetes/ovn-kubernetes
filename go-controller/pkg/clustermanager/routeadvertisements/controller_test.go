@@ -5862,9 +5862,13 @@ func TestController_reconcileEgressIPLookupFailure(t *testing.T) {
 			g.Expect(current.Status).To(gomega.Equal(published.Status), "shared lookup failure must preserve the published status")
 
 			tt.c.eipLister, tt.c.namespaceLister = eipLister, namespaceLister
+			tt.waitForFRRCache()
 			g.Expect(tt.c.reconcile(ctx, "ra")).To(gomega.Succeed(), "retry succeeds after the shared lookup recovers")
-			updated, err := frr.Get(ctx, owner.Name, metav1.GetOptions{})
-			g.Expect(err).NotTo(gomega.HaveOccurred())
+			recovered := tt.generatedConfigs("ra")
+			g.Expect(recovered).To(gomega.HaveLen(len(configs)), "recovery must keep one generated export per node")
+			updated := recovered["ra/frrConfig/node"]
+			g.Expect(updated).NotTo(gomega.BeNil(), "the original EgressIP owner still has an export")
+			g.Expect(updated.Name).To(gomega.Equal(owner.Name), "update the original owner's export in place")
 			g.Expect(updated.Spec.BGP.Routers[0].Prefixes).To(gomega.ConsistOf("1.1.0.0/24", "192.0.2.10/32"))
 		})
 	}
@@ -7195,6 +7199,7 @@ func TestCleanupFailureStatusAtRetryExhaustion(t *testing.T) {
 
 	// Missing allocations must still reach withdrawal.
 	g.Expect(tt.generatedConfigs("ra")).To(gomega.HaveLen(1))
+	tt.waitForFRRCache()
 	tt.updateNodeSubnets("node", `{}`)
 	ra := previous.DeepCopy()
 	ra.Generation++
