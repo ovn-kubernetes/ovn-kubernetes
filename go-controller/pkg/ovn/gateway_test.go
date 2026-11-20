@@ -69,11 +69,9 @@ func generateAdvertisedUDNIsolationExpectedNB(testData []libovsdbtest.TestData, 
 	pg.Ports = []string{types.SwitchToRouterPrefix + nodeSwitch.Name + "-UUID"}
 	testData = append(testData, passACL, dropACL, pg)
 
-	var cidrs []string
-	for _, subnet := range clusterIPSubnets {
-		cidrs = append(cidrs, subnet.String())
-	}
-	v4set, v6set := addressset.GetTestDbAddrSets(GetAdvertisedNetworkSubnetsAddressSetDBIDs(), cidrs)
+	// the address set is filled by AdvertisedNetworkSubnetsController, which
+	// the network controller tests do not run
+	v4set, v6set := addressset.GetTestDbAddrSets(GetAdvertisedNetworkSubnetsAddressSetDBIDs(), nil)
 	if config.IPv4Mode {
 		testData = append(testData, v4set)
 	}

@@ -413,37 +413,6 @@ func migrateAdvertisedNetworkDropACLToPortGroup(nbClient libovsdbclient.Client, 
 	return ops, nil
 }
 
-// CleanupStaleAdvertisedNetworkSubnets removes subnets from the advertised network subnets address set
-// that are not in validSubnets.
-func CleanupStaleAdvertisedNetworkSubnets(nbClient libovsdbclient.Client, validSubnets sets.Set[string]) error {
-	addressSetFactory := addressset.NewOvnAddressSetFactory(nbClient, config.IPv4Mode, config.IPv6Mode)
-
-	addrSetDBIDs := GetAdvertisedNetworkSubnetsAddressSetDBIDs()
-	addrSet, err := addressSetFactory.GetAddressSet(addrSetDBIDs)
-	if err != nil && !errors.Is(err, libovsdbclient.ErrNotFound) {
-		return fmt.Errorf("failed to get advertised subnets address set %s: %w", addrSetDBIDs, err)
-	}
-	if addrSet == nil {
-		return nil
-	}
-
-	v4Addrs, v6Addrs := addrSet.GetAddresses()
-	var stale []string
-	for _, addr := range append(v4Addrs, v6Addrs...) {
-		if !validSubnets.Has(addr) {
-			stale = append(stale, addr)
-		}
-	}
-	if len(stale) > 0 {
-		if err := addrSet.DeleteAddresses(stale); err != nil {
-			klog.Errorf("Failed to delete stale addresses %q from advertised network subnets address set: %v", stale, err)
-		}
-		klog.Infof("Cleaned up stale advertised addresses %q from advertised network subnets address set", stale)
-	}
-
-	return nil
-}
-
 // BuildAdvertisedNetworkSubnetsDropACL builds the advertised network subnets drop ACL:
 // action match                                                                       priority
 // ------ --------------------------------------------------------------------------- --------
@@ -477,17 +446,14 @@ func BuildAdvertisedNetworkSubnetsDropACL(advertisedNetworkSubnetsAddressSet add
 // drop   "(ip[4|6].src == $<ALL_ADV_SUBNETS> && ip[4|6].dst == $<ALL_ADV_SUBNETS>)"    1050
 // The pass ACL is added to the node switch. The drop ACL is on a port group shared by all
 // advertised networks. The stor port of this network's switch is added to that port group
-// so the drop ACL applies to the whole switch.
+// so the drop ACL applies to the whole switch. The address set matched by the drop ACL is
+// maintained by AdvertisedNetworkSubnetsController.
 // On upgrade from switch-based drop ACL, stale switch references are removed in the same transaction.
 func (bnc *BaseNetworkController) addAdvertisedNetworkIsolation(nodeName string) error {
-	var passMatches, cidrs []string
+	var passMatches []string
 	var ops []ovsdb.Operation
+	var err error
 
-	addrSetDBIDs := GetAdvertisedNetworkSubnetsAddressSetDBIDs()
-	addrSet, err := bnc.addressSetFactory.GetAddressSet(addrSetDBIDs)
-	if err != nil {
-		return fmt.Errorf("failed to get advertised subnets address set %s for network %s: %w", addrSetDBIDs, bnc.GetNetworkName(), err)
-	}
 	var ipv4Subnets, ipv6Subnets []*net.IPNet
 	for _, subnet := range bnc.Subnets() {
 		if utilnet.IsIPv6CIDR(subnet.CIDR) {
@@ -495,7 +461,6 @@ func (bnc *BaseNetworkController) addAdvertisedNetworkIsolation(nodeName string)
 		} else {
 			ipv4Subnets = append(ipv4Subnets, subnet.CIDR)
 		}
-		cidrs = append(cidrs, subnet.CIDR.String())
 	}
 	if len(ipv4Subnets) > 0 {
 		var srcMatches, dstMatches []string
@@ -515,12 +480,6 @@ func (bnc *BaseNetworkController) addAdvertisedNetworkIsolation(nodeName string)
 		// build match ((ip6.src == subnet1 || ip6.src == subnet2 ...) && (ip6.dst == subnet1 || ip6.dst == subnet2 ...))
 		passMatches = append(passMatches, fmt.Sprintf("((%s) && (%s))", strings.Join(srcMatches, " || "), strings.Join(dstMatches, " || ")))
 	}
-	addrOps, err := addrSet.AddAddressesReturnOps(cidrs)
-	if err != nil {
-		return fmt.Errorf("failed to add addresses %q to the %s address set for network %s: %w", cidrs, GetAdvertisedNetworkSubnetsAddressSetDBIDs(), bnc.GetNetworkName(), err)
-	}
-	ops = append(ops, addrOps...)
-
 	switchName := bnc.GetNetworkScopedSwitchName(nodeName)
 
 	if len(passMatches) > 0 {
@@ -562,25 +521,10 @@ func (bnc *BaseNetworkController) addAdvertisedNetworkIsolation(nodeName string)
 }
 
 // deleteAdvertisedNetworkIsolation deletes advertised network isolation rules from the given node switch.
-// It removes the network CIDRs from the global advertised networks address set, removes the pass ACL from
-// the node switch, and removes the stor port from the advertised network drop port group.
+// It removes the pass ACL from the node switch, and removes the stor port from the advertised network
+// drop port group.
 func (bnc *BaseNetworkController) deleteAdvertisedNetworkIsolation(nodeName string) error {
-	addrSet, err := bnc.addressSetFactory.GetAddressSet(GetAdvertisedNetworkSubnetsAddressSetDBIDs())
-	if err != nil && !errors.Is(err, libovsdbclient.ErrNotFound) {
-		return fmt.Errorf("failed to get advertised subnets addresset %s for network %s: %w", GetAdvertisedNetworkSubnetsAddressSetDBIDs(), bnc.GetNetworkName(), err)
-	}
-
 	var ops []ovsdb.Operation
-	if addrSet != nil {
-		var cidrs []string
-		for _, subnet := range bnc.Subnets() {
-			cidrs = append(cidrs, subnet.CIDR.String())
-		}
-		ops, err = addrSet.DeleteAddressesReturnOps(cidrs)
-		if err != nil {
-			return fmt.Errorf("failed to create ovsdb ops for deleting the addresses from %s addresset for network %s: %w", GetAdvertisedNetworkSubnetsAddressSetDBIDs(), bnc.GetNetworkName(), err)
-		}
-	}
 
 	switchName := bnc.GetNetworkScopedSwitchName(nodeName)
 

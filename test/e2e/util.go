@@ -1386,13 +1386,12 @@ func routeToNode(nodeName string, ips []string, mtu int, add bool) error {
 	return nil
 }
 
-// GetNodeIPv6LinkLocalAddressForEth0 returns the IPv6 link-local address for eth0 interface
-func GetNodeIPv6LinkLocalAddressForEth0(nodeName string) (string, error) {
-	// Command to get IPv6 link-local address for eth0
-	ipCmd := []string{"ip", "-6", "addr", "show", "dev", "eth0", "scope", "link"}
+// GetNodeIPv6LinkLocalAddress returns the IPv6 link-local address of the given interface of the node
+func GetNodeIPv6LinkLocalAddress(nodeName, iface string) (string, error) {
+	ipCmd := []string{"ip", "-6", "addr", "show", "dev", iface, "scope", "link"}
 	output, err := infraprovider.Get().ExecK8NodeCommand(nodeName, ipCmd)
 	if err != nil {
-		return "", fmt.Errorf("failed to get link-local address for eth0: %v", err)
+		return "", fmt.Errorf("failed to get link-local address for %s: %w", iface, err)
 	}
 
 	// Parse the output to extract the fe80:: address
@@ -1421,7 +1420,7 @@ func GetNodeIPv6LinkLocalAddressForEth0(nodeName string) (string, error) {
 		}
 	}
 
-	return "", fmt.Errorf("no IPv6 link-local address found for eth0 on node %s", nodeName)
+	return "", fmt.Errorf("no IPv6 link-local address found for %s on node %s", iface, nodeName)
 }
 
 // CaptureContainerOutput captures output of a container according to the
