@@ -48,6 +48,7 @@ import (
 	uplinkv1alpha1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1"
 	uplinklisters "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1/apis/listers/uplink/v1alpha1"
 	userdefinednetworkv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
+	cudnlisters "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/listers/userdefinednetwork/v1"
 	vteplisters "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1/apis/listers/vtep/v1"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
@@ -85,7 +86,7 @@ var (
 	errConfig      = errors.New("configuration error")
 	errPending     = errors.New("configuration pending")
 	errInvalidVTEP = fmt.Errorf("%w: invalid VTEP annotation", errConfig)
-	cudnController = userdefinednetworkv1.SchemeGroupVersion.WithKind("ClusterUserDefinedNetwork")
+	cudnGVK        = userdefinednetworkv1.SchemeGroupVersion.WithKind("ClusterUserDefinedNetwork")
 )
 
 // incompleteVTEPConfigurationError identifies nodes whose advertisements must
@@ -114,6 +115,7 @@ type Controller struct {
 	namespaceLister   corelisters.NamespaceLister
 	uplinkStateLister uplinklisters.UplinkStateLister
 	vtepLister        vteplisters.VTEPLister
+	cudnLister        cudnlisters.ClusterUserDefinedNetworkLister
 
 	frrClient frrclientset.Interface
 	nadClient nadclientset.Interface
@@ -126,6 +128,7 @@ type Controller struct {
 	raController          controllerutil.Controller
 	nsController          controllerutil.Controller
 	uplinkStateController controllerutil.Controller
+	cudnController        controllerutil.Controller
 
 	nm networkmanager.Interface
 	// networkRefReconcilerID identifies our registration with the network
@@ -284,10 +287,12 @@ func NewController(
 			ObjNeedsUpdate: egressIPNeedsUpdate,
 		}
 		c.eipController = controllerutil.NewController("clustermanager routeadvertisements egressip controller", eipConfig)
+	}
 
+	if config.OVNKubernetesFeature.EnableEgressIP || util.IsNetworkSegmentationSupportEnabled() {
 		nsConfig := &controllerutil.ControllerConfig[corev1.Namespace]{
 			RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
-			Reconcile:      c.reconcileEgressIPs,
+			Reconcile:      c.reconcileNamespace,
 			Threadiness:    1,
 			Informer:       wf.NamespaceInformer().Informer(),
 			Lister:         wf.NamespaceInformer().Lister().List,
@@ -298,6 +303,23 @@ func NewController(
 
 	if util.IsEVPNEnabled() {
 		c.vtepLister = wf.VTEPInformer().Lister()
+	}
+
+	if util.IsNetworkSegmentationSupportEnabled() {
+		c.cudnLister = wf.ClusterUserDefinedNetworkInformer().Lister()
+
+		cudnConfig := &controllerutil.ControllerConfig[userdefinednetworkv1.ClusterUserDefinedNetwork]{
+			RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
+			Reconcile:      func(_ context.Context, _ string) error { c.raController.ReconcileAll(); return nil },
+			Threadiness:    1,
+			Informer:       wf.ClusterUserDefinedNetworkInformer().Informer(),
+			Lister:         c.cudnLister.List,
+			ObjNeedsUpdate: cudnNeedsUpdate,
+		}
+		c.cudnController = controllerutil.NewController(
+			"clustermanager routeadvertisements clusteruserdefinednetwork controller",
+			cudnConfig,
+		)
 	}
 
 	return c
@@ -327,8 +349,14 @@ func (c *Controller) Start() error {
 	if util.IsUplinkEnabled() {
 		controllers = append(controllers, c.uplinkStateController)
 	}
+	if util.IsNetworkSegmentationSupportEnabled() {
+		controllers = append(controllers, c.cudnController)
+	}
 	if config.OVNKubernetesFeature.EnableEgressIP {
-		controllers = append(controllers, c.eipController, c.nsController)
+		controllers = append(controllers, c.eipController)
+	}
+	if c.nsController != nil {
+		controllers = append(controllers, c.nsController)
 	}
 	return controllerutil.Start(controllers...)
 }
@@ -344,8 +372,14 @@ func (c *Controller) Stop() {
 	if util.IsUplinkEnabled() {
 		controllers = append(controllers, c.uplinkStateController)
 	}
+	if util.IsNetworkSegmentationSupportEnabled() {
+		controllers = append(controllers, c.cudnController)
+	}
 	if config.OVNKubernetesFeature.EnableEgressIP {
-		controllers = append(controllers, c.eipController, c.nsController)
+		controllers = append(controllers, c.eipController)
+	}
+	if c.nsController != nil {
+		controllers = append(controllers, c.nsController)
 	}
 	controllerutil.Stop(controllers...)
 	klog.Infof("Cluster manager routeadvertisements stopped")
@@ -2274,10 +2308,7 @@ func (c *Controller) getSelectedNADs(ctx context.Context, networkSelectors apity
 				return nil, err
 			}
 			for _, nad := range nads {
-				// check this NAD is controlled by a CUDN
-				controller := metav1.GetControllerOfNoCopy(nad)
-				isCUDN := controller != nil && controller.Kind == cudnController.Kind && controller.APIVersion == cudnController.GroupVersion().String()
-				if !isCUDN {
+				if !c.matchesOwnerCUDN(nad) {
 					continue
 				}
 				selected = append(selected, nad)
@@ -2288,6 +2319,59 @@ func (c *Controller) getSelectedNADs(ctx context.Context, networkSelectors apity
 	}
 
 	return selected, nil
+}
+
+// matchesOwnerCUDN returns whether the NAD is consistent with the NAD that
+// the ClusterUserDefinedNetwork of its controller owner reference renders in
+// the NAD's namespace: that CUDN exists with the same UID, the NAD has the
+// name of that CUDN, its namespace matches the CUDN namespace selector and
+// its network is the network of that CUDN.
+func (c *Controller) matchesOwnerCUDN(nad *nadtypes.NetworkAttachmentDefinition) bool {
+	owner := metav1.GetControllerOfNoCopy(nad)
+	if owner == nil || owner.Kind != cudnGVK.Kind || owner.APIVersion != cudnGVK.GroupVersion().String() {
+		return false
+	}
+	if reason := c.cudnMismatch(nad, owner); reason != "" {
+		klog.V(5).Infof("Skipping NAD %s/%s with ClusterUserDefinedNetwork owner %q: %s",
+			nad.Namespace, nad.Name, owner.Name, reason)
+		return false
+	}
+	return true
+}
+
+// cudnMismatch returns why the NAD is not consistent with the NAD that the
+// ClusterUserDefinedNetwork named by its controller owner reference renders
+// in the NAD's namespace, or an empty string if it is.
+func (c *Controller) cudnMismatch(nad *nadtypes.NetworkAttachmentDefinition, owner *metav1.OwnerReference) string {
+	// no ClusterUserDefinedNetwork exists with network segmentation disabled
+	if !util.IsNetworkSegmentationSupportEnabled() {
+		return "network segmentation is disabled"
+	}
+	cudn, err := c.cudnLister.Get(owner.Name)
+	if err != nil {
+		return fmt.Sprintf("failed to get owner: %v", err)
+	}
+	if !metav1.IsControlledBy(nad, cudn) {
+		return fmt.Sprintf("owner has UID %q, owner reference has UID %q", cudn.UID, owner.UID)
+	}
+	if nad.Name != cudn.Name {
+		return "owner renders NADs with its own name"
+	}
+	namespaceSelector, err := metav1.LabelSelectorAsSelector(&cudn.Spec.NamespaceSelector)
+	if err != nil {
+		return fmt.Sprintf("failed to parse owner namespace selector: %v", err)
+	}
+	namespace, err := c.namespaceLister.Get(nad.Namespace)
+	if err != nil {
+		return fmt.Sprintf("failed to get namespace: %v", err)
+	}
+	if !namespaceSelector.Matches(labels.Set(namespace.Labels)) {
+		return "owner does not select the namespace"
+	}
+	if network := util.GetAnnotatedNetworkName(nad); network != util.GenerateCUDNNetworkName(cudn.Name) {
+		return fmt.Sprintf("network %q is not the network of the owner", network)
+	}
+	return ""
 }
 
 // getEgressIPsByNodesByNetworks iterates all existing egress IPs that apply to
@@ -2406,7 +2490,7 @@ func nadNeedsUpdate(oldObj, newObj *nadtypes.NetworkAttachmentDefinition) bool {
 		if nad == nil {
 			return false
 		}
-		network, err := util.ParseNADInfo(newObj)
+		network, err := util.ParseNADInfo(nad)
 		if err != nil {
 			return true
 		}
@@ -2420,6 +2504,8 @@ func nadNeedsUpdate(oldObj, newObj *nadtypes.NetworkAttachmentDefinition) bool {
 
 	return oldObj == nil || newObj == nil ||
 		!reflect.DeepEqual(oldObj.Labels, newObj.Labels) ||
+		!reflect.DeepEqual(metav1.GetControllerOfNoCopy(oldObj), metav1.GetControllerOfNoCopy(newObj)) ||
+		oldObj.Annotations[types.OvnNetworkNameAnnotation] != newObj.Annotations[types.OvnNetworkNameAnnotation] ||
 		oldObj.Annotations[types.OvnRouteAdvertisementsKey] != newObj.Annotations[types.OvnRouteAdvertisementsKey]
 }
 
@@ -2443,6 +2529,12 @@ func uplinkStateNeedsUpdate(oldObj, newObj *uplinkv1alpha1.UplinkState) bool {
 	return oldObj == nil || newObj == nil || !reflect.DeepEqual(oldObj.Status, newObj.Status)
 }
 
+// cudnNeedsUpdate tracks the ClusterUserDefinedNetwork fields that decide
+// whether a NAD is the one the ClusterUserDefinedNetwork renders.
+func cudnNeedsUpdate(oldObj, newObj *userdefinednetworkv1.ClusterUserDefinedNetwork) bool {
+	return oldObj == nil || !reflect.DeepEqual(oldObj.Spec.NamespaceSelector, newObj.Spec.NamespaceSelector)
+}
+
 func egressIPNeedsUpdate(oldObj, newObj *eiptypes.EgressIP) bool {
 	if oldObj != nil && newObj != nil {
 		return !reflect.DeepEqual(oldObj.Status, newObj.Status) || !reflect.DeepEqual(oldObj.Spec.NamespaceSelector, newObj.Spec.NamespaceSelector)
@@ -2458,7 +2550,9 @@ func egressIPNeedsUpdate(oldObj, newObj *eiptypes.EgressIP) bool {
 
 func nsNeedsUpdate(oldObj, newObj *corev1.Namespace) bool {
 	// we only care about label changes, added/deleted namespaces served by a
-	// UDN will already be reflected in a network update
+	// UDN will already be reflected in a network update. Label changes decide
+	// the EgressIPs that apply to a namespace and the namespaces a
+	// ClusterUserDefinedNetwork selects.
 	return oldObj != nil && newObj != nil && !reflect.DeepEqual(oldObj.Labels, newObj.Labels)
 }
 
@@ -2538,6 +2632,16 @@ func neighborKey(neighbor frrtypes.Neighbor) string {
 // neighbor that specifies both is considered defined by address.
 func isUnnumberedNeighbor(neighbor frrtypes.Neighbor) bool {
 	return neighbor.Address == "" && neighbor.Interface != ""
+}
+
+func (c *Controller) reconcileNamespace(ctx context.Context, key string) error {
+	// the namespaces a ClusterUserDefinedNetwork selects decide which NADs are
+	// advertised by any RouteAdvertisements
+	if util.IsNetworkSegmentationSupportEnabled() {
+		c.raController.ReconcileAll()
+		return nil
+	}
+	return c.reconcileEgressIPs(ctx, key)
 }
 
 func (c *Controller) reconcileEgressIPs(_ context.Context, _ string) error {
