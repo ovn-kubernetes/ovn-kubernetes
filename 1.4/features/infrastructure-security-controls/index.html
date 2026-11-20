@@ -20,7 +20,7 @@
       
       
       <link rel="icon" href="../../images/ovn-inside-k8s.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.2">
     
     
       
@@ -4742,10 +4742,27 @@
 <p><strong><a href="security/">Security</a></strong></p>
 <p>Protection of OVN-Kubernetes-owned annotations and pod network allocations.</p>
 <h2 id="controller-owned-node-annotations">Controller-owned Node annotations<a class="headerlink" href="#controller-owned-node-annotations" title="Permanent link">¶</a></h2>
-<p>The <code>k8s.ovn.org/node-subnets</code> annotation controls pod address allocation and
-networking configuration across the cluster. An admission policy permits only
-<code>ovnkube-cluster-manager</code> to add, change, or remove it. This protection does not
-depend on the optional NodeIdentity service.</p>
+<p>An admission policy unconditionally protects these controller-owned node
+annotations, permitting only <code>ovnkube-cluster-manager</code> to add, change, or remove them:</p>
+<ul>
+<li><code>k8s.ovn.org/node-subnets</code>: pod subnet allocations.</li>
+<li><code>k8s.ovn.org/node-id</code>: node IDs used to derive network resources.</li>
+<li><code>k8s.ovn.org/udn-layer2-node-gateway-router-lrp-tunnel-ids</code>: per-network router port tunnel IDs.</li>
+</ul>
+<p>When hybrid overlay is enabled, the policy also protects
+<code>k8s.ovn.org/hybrid-overlay-node-subnet</code>, allowing configured additional writers.
+Other controller-owned annotations are outside this policy's scope.</p>
+<p>This protection covers node creation and updates through both <code>nodes</code> and
+<code>nodes/status</code>, and does not depend on the optional NodeIdentity service.
+The webhook's <code>--extra-allowed-user</code> setting does not grant permission to
+change these annotations. Custom deployments must include the admission policy
+and its binding. Existing annotation values are not revalidated when unchanged;
+allocation validation and recovery are handled separately by controllers.</p>
+<p>Recreating a Node from saved YAML containing protected OVN annotations may be
+rejected by admission. Before creating the Node, omit controller-owned OVN
+annotations, including those listed above, and let the controllers regenerate
+them. When NodeIdentity is enabled, its webhook also restricts other OVN node
+annotations; normally omit those from the saved YAML as well.</p>
 <p><strong><a href="node-identity/">NodeIdentity</a></strong></p>
 <p>Cryptographic node identity verification to prevent unauthorized nodes from joining the network.</p>
 

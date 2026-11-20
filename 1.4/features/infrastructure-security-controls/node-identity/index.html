@@ -18,7 +18,7 @@
       
       
       <link rel="icon" href="../../../images/ovn-inside-k8s.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.2">
     
     
       
@@ -2972,6 +2972,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#uplinkstate-ownership" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        UplinkState Ownership
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#validating-admission-webhook" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4812,6 +4823,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#uplinkstate-ownership" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        UplinkState Ownership
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#validating-admission-webhook" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4892,18 +4914,75 @@ The RBAC rules are consistent across all <code>ovnkube-node</code> pods, we use 
 </code></pre></div>
 Note: By default, the generated certificates have a brief lifetime set (10min).
 This is intentional as it helps ensure that the certificate rotation works seamlessly, but it might be adjusted in production environments.<p></p>
+<h2 id="uplinkstate-ownership">UplinkState Ownership<a class="headerlink" href="#uplinkstate-ownership" title="Permanent link">¶</a></h2>
+<p>When node identity is enabled, only <code>system:ovn-node:&lt;nodeName&gt;</code> may create or
+update an <code>UplinkState</code> whose <code>spec.nodeName</code> matches that identity.
+A <code>ValidatingAdmissionPolicy</code> enforces update ownership and unchanged finalizers
+inside the API server. The CRD makes both spec identity fields immutable.
+The policy also preserves owner references, allowing only the owning node to
+set <code>blockOwnerDeletion</code> to <code>false</code> on existing references. All updates,
+including patches and server-side apply, avoid the identity webhook.</p>
+<p>The webhook validates the caller's node identity and the canonical object name,
+including hashed names, on creation. It does not look up Uplinks or Nodes or
+validate owner references. Nodes cannot set finalizers at creation.
+Administrators and <code>--extra-allowed-user</code> identities have no create or update
+exemption.</p>
+<p>The existing naming scheme can generate the same object name for different
+Uplink/node pairs containing dots. Admission does not resolve those collisions;
+both pairs still compete for one object name.</p>
+<p>Nodes manage their own states. The admission policy rejects deletion of another
+node's state using the existing object's identity. Other RBAC-authorized callers
+can delete states, including cluster-manager when a Node is deleted and garbage
+collection when an Uplink is deleted. Deletes do not call the webhook.</p>
+<p>In split DPU deployments, the DPU and DPU-host need a trusted identity mapping
+before enabling this restriction. The DPU Helm values currently disable node
+identity.</p>
 <h2 id="validating-admission-webhook">Validating Admission Webhook<a class="headerlink" href="#validating-admission-webhook" title="Permanent link">¶</a></h2>
-<p>The feature introduces a validating webhook for pod creation, updates to <code>pods</code> and
-<code>pods/status</code>, and updates to <code>nodes/status</code>.</p>
+<p>The feature introduces validating webhooks for pod creation, updates to <code>pods</code> and
+<code>pods/status</code>, creation and updates of <code>nodes</code>, including <code>nodes/status</code>, and
+creation of <code>uplinkstates</code>.</p>
 <p>For cluster-wide pod annotation protection, see <a href="../security/#protected-pod-annotations">Security</a>.</p>
-<p>The webhooks include the following checks for each <code>ovnkube-node</code> pod:
-- Modifying annotations on pods hosted on its own node.
-- Modifying annotations on its own node.
-- Modifying only allowed annotations.
-- Not modifying anything other than annotations.</p>
-<p>The allowed annotations list contains both common and feature specific values:
- - By default, the webhook will verify common node annotations and pod/node annotations set by the ovnkube-node component.
- - When <code>enable-hybrid-overlay</code> parameter is provided the webhook will validate additional node annotations set by the ovnkube-node component for hybrid overlay.</p>
+<p>Node annotations can also be written through the main Node resource, so both paths must be checked.
+An API-server match condition skips the node webhook for other callers unless
+an annotation with the <code>k8s.ovn.org/</code> prefix is added, changed, or removed.
+Ordinary node registration without OVN annotations and unrelated label, taint,
+and status updates therefore do not depend on webhook availability. Requests
+using <code>system:ovn-node</code> credentials always reach the webhook so that their
+metadata and status restrictions remain enforced. Matching requests fail closed
+if the webhook cannot be reached. Custom deployments must include this match
+condition along with the expanded resource rules.</p>
+<p>The webhooks include the following checks for each <code>ovnkube-node</code> pod:</p>
+<ul>
+<li>Modifying annotations on pods hosted on its own node.</li>
+<li>Modifying annotations on its own node.</li>
+<li>Modifying only allowed annotations.</li>
+<li>Not modifying anything other than annotations.</li>
+</ul>
+<p>The allowed annotations list contains both common and feature specific values:</p>
+<ul>
+<li>By default, the webhook will verify common node annotations and pod/node annotations set by the ovnkube-node component.</li>
+<li>When <code>enable-hybrid-overlay</code> parameter is provided the webhook will validate additional node annotations set by the ovnkube-node component for hybrid overlay.</li>
+</ul>
+<p>Cluster-manager's allocation annotations, including <code>k8s.ovn.org/node-id</code> and
+<code>k8s.ovn.org/udn-layer2-node-gateway-router-lrp-tunnel-ids</code>, are protected by a
+separate <a href="../#controller-owned-node-annotations">admission policy</a>.
+That protection remains active when NodeIdentity is disabled and authorizes
+only the cluster-manager service account; <code>--extra-allowed-user</code> does not
+override it. Node credentials cannot write these annotations, even on their
+own node. Other users can update unrelated annotations and node status while
+preserving protected annotations.</p>
+<p>Custom deployments must update the node webhook rules to include <code>CREATE</code> and
+<code>UPDATE</code> on <code>nodes</code>, and <code>UPDATE</code> on <code>nodes/status</code>. Configure all required trusted
+controller identities before enabling these protections. Administrative repair
+requires an identity authorized by every applicable webhook and admission
+policy. Existing annotation values are not revalidated when they remain
+unchanged; this protection does not repair preexisting corrupt allocations or
+validate NAD/CNC resources.</p>
+<p>When recreating a Node from saved YAML, normally omit protected OVN annotations
+and let the controllers regenerate them. Replaying those annotations during
+creation may be rejected even if they were valid on the original Node. See
+<a href="../#controller-owned-node-annotations">Controller-owned Node annotations</a>
+for allocations protected independently of NodeIdentity.</p>
 <p>The specific annotation values can be found in <code>go-controller/pkg/ovnwebhook/nodeadmission.go</code> and <code>go-controller/pkg/ovnwebhook/podadmission.go</code> files.</p>
 <p>Some of the allowed annotations have additional checks; for instance, the IP addresses in <a href="https://github.com/ovn-kubernetes/ovn-kubernetes/blob/5d56a53df520a085e629cdc71be092afed9c3f0f/go-controller/pkg/util/pod_annotation.go#L20-L51">k8s.ovn.org/pod-networks</a>
 must match the node's <a href="https://github.com/ovn-kubernetes/ovn-kubernetes/blob/5d56a53df520a085e629cdc71be092afed9c3f0f/go-controller/pkg/util/subnet_annotations.go#L15-L39">k8s.ovn.org/node-subnets</a> networks.</p>
