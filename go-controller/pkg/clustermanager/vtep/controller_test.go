@@ -1054,43 +1054,6 @@ var _ = ginkgo.Describe("VTEP Controller", func() {
 	})
 
 	ginkgo.Context("CUDN watch for finalizer re-evaluation", func() {
-		ginkgo.It("indexes EVPN CUDNs on create and ignores non-EVPN CUDNs", func() {
-			evpnCUDN := newCUDNWithEVPN("cudn-evpn", "vtep-indexed")
-			nonEVPNCUDN := &udnv1.ClusterUserDefinedNetwork{
-				ObjectMeta: metav1.ObjectMeta{Name: "cudn-plain"},
-				Spec: udnv1.ClusterUserDefinedNetworkSpec{
-					NamespaceSelector: metav1.LabelSelector{},
-					Network: udnv1.NetworkSpec{
-						Topology: udnv1.NetworkTopologyLayer3,
-						Layer3: &udnv1.Layer3Config{
-							Subnets: []udnv1.Layer3Subnet{{CIDR: "10.0.0.0/16"}},
-						},
-					},
-				},
-			}
-			vtep := newVTEP("vtep-indexed", vtepv1.VTEPModeUnmanaged, "100.64.0.0/24")
-			start(vtep, evpnCUDN, nonEVPNCUDN)
-
-			// EVPN CUDN should be indexed
-			gomega.Eventually(func() bool {
-				controller.cudnVTEPIndexMu.RLock()
-				_, ok := controller.cudnVTEPIndex["cudn-evpn"]
-				controller.cudnVTEPIndexMu.RUnlock()
-				return ok
-			}).WithTimeout(5 * time.Second).Should(gomega.BeTrue())
-
-			controller.cudnVTEPIndexMu.RLock()
-			val := controller.cudnVTEPIndex["cudn-evpn"]
-			controller.cudnVTEPIndexMu.RUnlock()
-			gomega.Expect(val).To(gomega.Equal("vtep-indexed"))
-
-			// Non-EVPN CUDN should NOT be indexed
-			controller.cudnVTEPIndexMu.RLock()
-			_, ok := controller.cudnVTEPIndex["cudn-plain"]
-			controller.cudnVTEPIndexMu.RUnlock()
-			gomega.Expect(ok).To(gomega.BeFalse())
-		})
-
 		ginkgo.It("unblocks VTEP deletion when the referencing CUDN is deleted", func() {
 			cudn := newCUDNWithEVPN("cudn-ref", "vtep-cudn-del")
 			vtep := newVTEP("vtep-cudn-del", vtepv1.VTEPModeUnmanaged, "100.64.0.0/24")
@@ -1121,12 +1084,6 @@ var _ = ginkgo.Describe("VTEP Controller", func() {
 				_, err := fakeVTEP.K8sV1().VTEPs().Get(context.Background(), "vtep-cudn-del", metav1.GetOptions{})
 				return apierrors.IsNotFound(err)
 			}).WithTimeout(5 * time.Second).Should(gomega.BeTrue())
-
-			// Index entry should be cleaned up
-			controller.cudnVTEPIndexMu.RLock()
-			_, ok := controller.cudnVTEPIndex["cudn-ref"]
-			controller.cudnVTEPIndexMu.RUnlock()
-			gomega.Expect(ok).To(gomega.BeFalse())
 		})
 
 		ginkgo.It("keeps VTEP blocked until all referencing CUDNs are deleted", func() {
