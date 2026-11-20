@@ -667,7 +667,8 @@ func (c *networkController) setAdvertisements(network util.MutableNetInfo, previ
 				intents[raName] = intent
 				conflicts.Delete(raName)
 			case current.UID == intent.UID:
-				if intent.Generation > current.Generation {
+				// Backfilling ownership changes NADs one at a time without advancing the RA generation.
+				if intent.Generation > current.Generation || (intent.Generation == current.Generation && intent.RequireFRROwner && !current.RequireFRROwner) {
 					intents[raName] = intent
 				} else if current.UID == "" && current != intent {
 					conflicts.Insert(raName)
@@ -833,6 +834,12 @@ func (c *networkController) nodeAdvertisementsReady(raName string, intent util.R
 	vrf := intent.ResolvedVRF(network)
 	for _, obj := range configs {
 		cfg := obj.(*frrtypes.FRRConfiguration)
+		// Before ownership was recorded, matching routes could have no UID.
+		// A known different owner can never satisfy this RA's versioned intent.
+		owner := cfg.Labels[types.OvnRouteAdvertisementsUIDKey]
+		if intent.UID != "" && (intent.RequireFRROwner || owner != "") && owner != string(intent.UID) {
+			continue
+		}
 		if !cfg.DeletionTimestamp.IsZero() {
 			continue
 		}

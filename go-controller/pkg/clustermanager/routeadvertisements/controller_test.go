@@ -4233,6 +4233,7 @@ exit
 						g.Expect(key).To(gomega.HaveLen(3))
 						g.Expect(frrConfig.Labels).To(gomega.HaveKeyWithValue(types.OvnRouteAdvertisementsNodeKey, util.RouteAdvertisementsNodeLabel(key[2])), "node watch must see %s", frrConfig.Name)
 						delete(frrConfig.Labels, types.OvnRouteAdvertisementsNodeKey)
+						delete(frrConfig.Labels, types.OvnRouteAdvertisementsUIDKey)
 					}
 					actualFRRConfigLabels[frrConfig.Annotations[types.OvnRouteAdvertisementsKey]] = frrConfig.Labels
 					actualFRRConfigSpecs[frrConfig.Annotations[types.OvnRouteAdvertisementsKey]] = &frrConfig.Spec
@@ -5519,6 +5520,9 @@ func TestController_reconcileHostname(t *testing.T) {
 			g := gomega.NewWithT(t)
 			tt := newFRRReconcileTest(t, g, "eth0")
 			ctx := context.Background()
+			ra := (&testRA{Name: "ra", SelectsDefault: true, AdvertisePods: true}).RouteAdvertisements()
+			ra.UID = "original-ra"
+			tt.updateRA(ra)
 			name, hostname := tc.name, tc.hostname
 			node := (&testNode{Name: name, OmitPrimaryAddress: true,
 				SubnetsAnnotation: `{"default":"1.1.1.0/24"}`,
@@ -5549,17 +5553,20 @@ func TestController_reconcileHostname(t *testing.T) {
 			g.Expect(err).NotTo(gomega.HaveOccurred())
 			g.Expect(selector.Matches(labels.Set(node.Labels))).To(gomega.BeTrue())
 
-			// A pre-upgrade object can already have the correct spec and
-			// validated marker. Only its missing label hides it from the node.
+			// An upgrade can leave the right routes in an object that still needs
+			// its node-watch label or, one release later, its RA owner label.
 			client := tt.c.frrClient.ApiV1beta1().FRRConfigurations(cfg.Namespace)
-			delete(cfg.Labels, types.OvnRouteAdvertisementsNodeKey)
-			_, err = client.Update(t.Context(), cfg, metav1.UpdateOptions{})
-			g.Expect(err).NotTo(gomega.HaveOccurred(), "seed an otherwise current configuration without its node-watch label")
-			tt.waitForFRRCache()
-			g.Expect(tt.c.reconcile(t.Context(), "ra")).To(gomega.Succeed(), "backfill the node-watch label")
-			stored, err := client.Get(t.Context(), cfg.Name, metav1.GetOptions{})
-			g.Expect(err).NotTo(gomega.HaveOccurred(), "backfill the original object in place")
-			g.Expect(stored.Labels).To(gomega.HaveKeyWithValue(types.OvnRouteAdvertisementsNodeKey, util.RouteAdvertisementsNodeLabel(name)))
+			for _, key := range []string{types.OvnRouteAdvertisementsNodeKey, types.OvnRouteAdvertisementsUIDKey} {
+				delete(cfg.Labels, key)
+				_, err = client.Update(ctx, cfg, metav1.UpdateOptions{})
+				g.Expect(err).NotTo(gomega.HaveOccurred(), "seed the existing export without %s", key)
+				tt.waitForFRRCache()
+				g.Expect(tt.c.reconcile(ctx, "ra")).To(gomega.Succeed(), "backfill %s", key)
+				cfg, err = client.Get(ctx, cfg.Name, metav1.GetOptions{})
+				g.Expect(err).NotTo(gomega.HaveOccurred(), "read the same export after backfill")
+				g.Expect(cfg.Labels).To(gomega.HaveKeyWithValue(types.OvnRouteAdvertisementsNodeKey, util.RouteAdvertisementsNodeLabel(name)))
+				g.Expect(cfg.Labels).To(gomega.HaveKeyWithValue(types.OvnRouteAdvertisementsUIDKey, string(ra.UID)))
+			}
 		})
 	}
 }
@@ -6299,7 +6306,7 @@ func TestController_rejectedUpdateWithdrawsConfigurations(t *testing.T) {
 	g.Expect(generated).To(gomega.HaveKey("ra/frrConfig/node"))
 	g.Expect(generated["ra/frrConfig/node"].Spec.BGP.Routers[0].Prefixes).To(gomega.ConsistOf("1.1.0.0/24", "1.3.0.0/24"))
 	g.Expect(references("green")).To(gomega.ConsistOf("ra", "other"))
-	g.Expect(annotations("green")[types.OvnRouteAdvertisementsIntentKey]).To(gomega.MatchJSON(`{"ra":{"uid":"uid-ra","generation":2,"targetVRF":"","egressIP":true}}`), "green must record the corrected RA generation")
+	g.Expect(annotations("green")[types.OvnRouteAdvertisementsIntentKey]).To(gomega.MatchJSON(`{"ra":{"requireFRROwner":true,"uid":"uid-ra","generation":2,"targetVRF":"","egressIP":true}}`), "green must record the corrected RA generation")
 
 	tt.waitForFRRCache()
 	ra.Spec.FRRConfigurationSelector.MatchExpressions = []metav1.LabelSelectorRequirement{{Key: "peer", Operator: "Unknown"}}
@@ -6642,16 +6649,17 @@ func TestRollbackAfterNADPatchFailure(t *testing.T) {
 
 func TestPartialDeselectionWithdrawsBeforeClearingNAD(t *testing.T) {
 	const (
-		gen1       = `{"ra":{"uid":"uid-ra","generation":1,"targetVRF":""}}`
-		gen2Red    = `{"ra":{"uid":"uid-ra","generation":2,"targetVRF":"red"}}`
-		gen2Egress = `{"ra":{"uid":"uid-ra","generation":2,"targetVRF":"","egressIP":true}}`
-		gen3       = `{"ra":{"uid":"uid-ra","generation":3,"targetVRF":""}}`
+		gen1       = `{"ra":{"requireFRROwner":true,"uid":"uid-ra","generation":1,"targetVRF":""}}`
+		gen2Red    = `{"ra":{"requireFRROwner":true,"uid":"uid-ra","generation":2,"targetVRF":"red"}}`
+		gen2Egress = `{"ra":{"requireFRROwner":true,"uid":"uid-ra","generation":2,"targetVRF":"","egressIP":true}}`
+		gen3       = `{"ra":{"requireFRROwner":true,"uid":"uid-ra","generation":3,"targetVRF":""}}`
 	)
 	for _, tc := range []struct{ name, verb, oldVRF, priorIntent string }{
 		{"delete obsolete template", "delete", "red", gen2Red},
 		{"change target VRF", "update", "red", gen2Red},
 		{"drop EgressIP in the same VRF", "update", "", gen2Egress},
 		{"change target VRF with a legacy NAD reference", "update", "red", ""},
+		{"backfill owner UID in the same VRF", "update", "", `{"ra":{"uid":"uid-ra","generation":2,"targetVRF":""}}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			g := gomega.NewWithT(t)
