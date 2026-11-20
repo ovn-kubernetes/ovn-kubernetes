@@ -5,10 +5,12 @@ package clustermanager
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
 	"net"
+	"net/http"
 	"reflect"
 	"slices"
 	"strconv"
@@ -34,7 +36,9 @@ import (
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	egressipv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressip/v1"
+	egressipfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/clientset/versioned/fake"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/ovn/healthcheck"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
@@ -4942,7 +4946,7 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				eIPMark := util.EgressIPMarkBase + 100 // mark to be added to EIP obj before sync func is called
 				eIPMarkStr := fmt.Sprintf("%d", eIPMark)
 				objMeta := newEgressIPMeta(egressIPName)
-				objMeta.Annotations = createAnnotWithMark(eIPMark)
+				objMeta.Annotations = map[string]string{util.EgressIPMarkAnnotation: eIPMarkStr}
 				eIPWithMark := egressipv1.EgressIP{ObjectMeta: objMeta}
 				eIP2WithoutMark := egressipv1.EgressIP{ObjectMeta: newEgressIPMeta(egressIPName2)}
 				fakeClusterManagerOVN.start(&egressipv1.EgressIPList{Items: []egressipv1.EgressIP{eIPWithMark, eIP2WithoutMark}})
@@ -5353,7 +5357,147 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 		})
 	})
 
+	ginkgo.Context("EgressIP status patch recovery", func() {
+		ginkgo.DescribeTable("should recover reservations after a status patch error", func(hasStatus bool, responseCode int) {
+			const (
+				oldIP = "192.168.126.25"
+				newIP = "192.168.126.26"
+			)
+			node := newEgressTestNode(node1Name, "192.168.126.12/24", "", `["192.168.126.12/24"]`, true)
+			snapshot := &egressipv1.EgressIP{
+				ObjectMeta: newEgressIPMeta(egressIPName),
+				Spec:       egressipv1.EgressIPSpec{EgressIPs: []string{oldIP}},
+			}
+			snapshot.ResourceVersion = "1"
+			originalAllocations := map[string]string{}
+			if hasStatus {
+				snapshot.Spec.EgressIPs = []string{newIP}
+				snapshot.Status.Items = []egressipv1.EgressIPStatusItem{{Node: node.Name, EgressIP: oldIP}}
+				originalAllocations[oldIP] = snapshot.Name
+			}
+			eip := snapshot.DeepCopy()
+			eip.ResourceVersion = "2"
+			eip.Spec.EgressIPs = []string{newIP}
+			eip.Annotations = map[string]string{"unrelated": "value"}
+			if responseCode == http.StatusGatewayTimeout {
+				eip = snapshot.DeepCopy()
+			}
+			fakeClusterManagerOVN.start(
+				&corev1.NodeList{Items: []corev1.Node{node}},
+				&egressipv1.EgressIPList{Items: []egressipv1.EgressIP{*eip}},
+			)
+			eIPC := fakeClusterManagerOVN.eIPC
+			gomega.Expect(eIPC.initEgressIPAllocator(&node)).To(gomega.Succeed(), "failed to initialize the EgressIP allocator for node %s", node.Name)
+			eIPC.setNodeEgressAssignable(node.Name, true)
+			eIPC.setNodeEgressReady(node.Name, true)
+			eIPC.setNodeEgressReachable(node.Name, true)
+			eIPC.ensureAllocatorEgressIPAssignments(snapshot)
+			client := fakeClusterManagerOVN.fakeClient.EgressIPClient.(*egressipfake.Clientset)
+			loseResponse := responseCode == http.StatusGatewayTimeout
+			client.PrependReactor("patch", "egressips", func(action k8stesting.Action) (bool, runtime.Object, error) {
+				handled, obj, err := k8stesting.ObjectReaction(client.Tracker())(action)
+				if err != nil {
+					// The fake returns a plain JSON Patch error; the API server
+					// reports a failed test operation as HTTP 422 (Invalid).
+					return true, nil, apierrors.NewGenericServerResponse(responseCode, "patch", egressipv1.Resource("egressips"), snapshot.Name, err.Error(), 0, false)
+				}
+				if loseResponse {
+					loseResponse = false
+					return true, obj, apierrors.NewTimeoutError("patch response lost", 0)
+				}
+				return handled, obj, nil
+			})
+
+			gomega.Expect(eIPC.reconcileEgressIP(context.Background(), nil, snapshot)).To(gomega.HaveOccurred(),
+				"expected reconciliation of EgressIP %s to return the injected patch error (HTTP %d)", snapshot.Name, responseCode)
+			if responseCode == http.StatusGatewayTimeout {
+				if hasStatus {
+					gomega.Expect(readAllocations(node.Name)).To(gomega.BeEmpty(),
+						"persisted status removal must keep IP %s released on node %s despite the lost response", oldIP, node.Name)
+				} else {
+					gomega.Expect(readAllocations(node.Name)).To(gomega.Equal(map[string]string{oldIP: snapshot.Name}),
+						"persisted assignment of IP %s for EgressIP %s must remain reserved despite the lost response", oldIP, snapshot.Name)
+				}
+				current, err := eIPC.kube.GetEgressIP(snapshot.Name)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to read EgressIP %s after its patch response was lost", snapshot.Name)
+				current.ResourceVersion = "2"
+				current.Spec.EgressIPs = []string{newIP}
+				current.Annotations["unrelated"] = "value"
+				_, err = client.K8sV1().EgressIPs().Update(context.Background(), current, metav1.UpdateOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to update EgressIP %s to request replacement IP %s", snapshot.Name, newIP)
+			} else {
+				gomega.Expect(readAllocations(node.Name)).To(gomega.Equal(originalAllocations),
+					"rejected status patch must restore the previous reservations for EgressIP %s on node %s", snapshot.Name, node.Name)
+			}
+
+			// Retry from the current object, then process the resulting status
+			// update, which can finish replacing an existing assignment.
+			for attempt := range 2 {
+				current, err := eIPC.kube.GetEgressIP(snapshot.Name)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to read EgressIP %s before retry %d", snapshot.Name, attempt+1)
+				gomega.Expect(eIPC.reconcileEgressIP(context.Background(), nil, current)).To(gomega.Succeed(),
+					"failed to reconcile EgressIP %s on retry %d", snapshot.Name, attempt+1)
+			}
+			current, err := eIPC.kube.GetEgressIP(snapshot.Name)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to read EgressIP %s after reconciliation retries", snapshot.Name)
+			gomega.Expect(current.Status.Items).To(gomega.Equal([]egressipv1.EgressIPStatusItem{{Node: node.Name, EgressIP: newIP}}),
+				"EgressIP %s must assign replacement IP %s to node %s after retrying", snapshot.Name, newIP, node.Name)
+			gomega.Expect(current.Annotations["unrelated"]).To(gomega.Equal("value"),
+				"reconciliation retries must preserve unrelated annotations on EgressIP %s", snapshot.Name)
+			gomega.Expect(readAllocations(node.Name)).To(gomega.Equal(map[string]string{newIP: snapshot.Name}),
+				"allocator must replace IP %s with IP %s for EgressIP %s on node %s", oldIP, newIP, snapshot.Name, node.Name)
+		},
+			ginkgo.Entry("when an initial assignment loses a resourceVersion test", false, http.StatusUnprocessableEntity),
+			ginkgo.Entry("when a status removal loses a resourceVersion test", true, http.StatusUnprocessableEntity),
+			ginkgo.Entry("when an initial assignment conflicts", false, http.StatusConflict),
+			ginkgo.Entry("when a status removal conflicts", true, http.StatusConflict),
+			ginkgo.Entry("when an initial assignment persists but its response is lost", false, http.StatusGatewayTimeout),
+			ginkgo.Entry("when a status removal persists but its response is lost", true, http.StatusGatewayTimeout),
+		)
+	})
+
 	ginkgo.Context("EgressIP Mark cache", func() {
+		ginkgo.It("should reserve a persisted mark when retrying after its patch response was lost", func() {
+			eip1 := egressipv1.EgressIP{ObjectMeta: newEgressIPMeta(egressIPName)}
+			eip1.ResourceVersion = "1"
+			eip2 := egressipv1.EgressIP{ObjectMeta: newEgressIPMeta(egressIPName2)}
+			eip2.ResourceVersion = "2"
+			fakeClusterManagerOVN.start(&egressipv1.EgressIPList{Items: []egressipv1.EgressIP{eip1, eip2}})
+			client := fakeClusterManagerOVN.fakeClient.EgressIPClient.(*egressipfake.Clientset)
+			loseResponse := true
+			client.PrependReactor("patch", "egressips", func(action k8stesting.Action) (bool, runtime.Object, error) {
+				if !loseResponse {
+					return false, nil, nil
+				}
+				loseResponse = false
+				handled, obj, err := k8stesting.ObjectReaction(client.Tracker())(action)
+				gomega.Expect(handled).To(gomega.BeTrue(), "expected the fake client to handle the first EgressIP mark patch")
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to persist the first EgressIP mark patch before simulating a lost response")
+				return true, obj, apierrors.NewTimeoutError("patch response lost", 0)
+			})
+
+			// The startup retry loop keeps using the original, unmarked snapshots.
+			snapshot := []interface{}{&eip1, &eip2}
+			eIPC := fakeClusterManagerOVN.eIPC
+			gomega.Expect(eIPC.syncEgressIPMarkAllocator(context.Background(), snapshot)).To(gomega.HaveOccurred(),
+				"expected the initial mark sync to return the lost patch response error")
+			gomega.Expect(eIPC.syncEgressIPMarkAllocator(context.Background(), snapshot)).To(gomega.Succeed(),
+				"failed to sync the EgressIP mark allocator after a lost patch response")
+
+			marks := make([]int, 0, len(snapshot))
+			for _, name := range []string{egressIPName, egressIPName2} {
+				eip, err := eIPC.kube.GetEgressIP(name)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to read EgressIP %s after retrying mark sync", name)
+				mark, err := util.ParseEgressIPMark(eip.Annotations)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to parse the mark annotation on EgressIP %s", name)
+				gomega.Expect(eIPC.markAllocator.GetID(name)).To(gomega.Equal(mark.ToInt()-util.EgressIPMarkBase),
+					"allocator must reserve persisted mark %s for EgressIP %s after startup retries", mark.String(), name)
+				marks = append(marks, mark.ToInt())
+			}
+			gomega.Expect(marks[0]).NotTo(gomega.Equal(marks[1]),
+				"EgressIPs %s and %s must retain distinct marks after startup retries", egressIPName, egressIPName2)
+		})
+
 		ginkgo.It("should round robin when mark range is exhausted", func() {
 			nodeAlloc := getEgressIPMarkAllocator()
 			ecc := &egressIPClusterController{markAllocator: nodeAlloc}
@@ -5370,6 +5514,53 @@ var _ = ginkgo.Describe("OVN cluster-manager EgressIP Operations", func() {
 				gomega.Expect(mark).Should(gomega.BeNumerically(">=", eipMarkMin), "mark should be greater or equal to allowable min")
 				ecc.deallocMark(egressIPName)
 			}
+		})
+
+		ginkgo.It("should add the mark without clobbering annotations written by another actor", func() {
+			const eipName = "eip-annotation-test"
+			client := egressipfake.NewSimpleClientset(&egressipv1.EgressIP{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:            eipName,
+					ResourceVersion: "1",
+					Annotations:     map[string]string{"unrelated": "value"},
+				},
+			})
+			eIPC := &egressIPClusterController{
+				kube:          &kube.KubeOVN{EIPClient: client},
+				markAllocator: getEgressIPMarkAllocator(),
+			}
+
+			var patch []jsonPatchOperation
+			client.PrependReactor("patch", "egressips", func(action k8stesting.Action) (bool, runtime.Object, error) {
+				patchAction, ok := action.(k8stesting.PatchAction)
+				gomega.Expect(ok).To(gomega.BeTrue(), "expected the action to be a patch")
+				gomega.Expect(json.Unmarshal(patchAction.GetPatch(), &patch)).To(gomega.Succeed(), "failed to unmarshal the patch sent to the apiserver")
+				return false, nil, nil
+			})
+
+			// The informer copy that triggered reconciliation: it carries an
+			// annotation written by another actor.
+			snapshot := &egressipv1.EgressIP{ObjectMeta: metav1.ObjectMeta{
+				Name:            eipName,
+				ResourceVersion: "1",
+				Annotations:     map[string]string{"unrelated": "value"},
+			}}
+			err := eIPC.patchEgressIP(context.Background(), snapshot, func(*egressipv1.EgressIP) []jsonPatchOperation {
+				return []jsonPatchOperation{generateMarkPatchOp(1234)}
+			})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "patchEgressIP should succeed")
+
+			gomega.Expect(patch).To(gomega.HaveLen(2), "expected a resourceVersion precondition and a single annotation add, got %v", patch)
+			gomega.Expect(patch[0]).To(gomega.Equal(jsonPatchOperation{
+				Operation: "test",
+				Path:      "/metadata/resourceVersion",
+				Value:     "1",
+			}), "the patch must be gated on the resourceVersion of the object it was derived from")
+
+			patched, err := client.K8sV1().EgressIPs().Get(context.Background(), eipName, metav1.GetOptions{})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to get the patched EgressIP")
+			gomega.Expect(patched.Annotations["unrelated"]).To(gomega.Equal("value"), "unrelated annotation was lost")
+			gomega.Expect(patched.Annotations[util.EgressIPMarkAnnotation]).To(gomega.Equal("1234"), "mark annotation was not set")
 		})
 	})
 })
