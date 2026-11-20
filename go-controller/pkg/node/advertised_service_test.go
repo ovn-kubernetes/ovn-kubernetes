@@ -59,7 +59,9 @@ func TestAdvertisedServiceRoutingTransitions(t *testing.T) {
 			for _, vrfs := range [][]string{nil, {types.DefaultNetworkName}, {"blue"}, nil, {types.DefaultNetworkName}} {
 				current := util.NewMutableNetInfo(netInfo)
 				current.SetPodNetworkAdvertisedVRFs(map[string][]string{"node": vrfs})
-				expected := transport == "" && len(vrfs) == 0 || transport != types.NetworkTransportEVPN && len(vrfs) > 0 && vrfs[0] == types.DefaultNetworkName
+				// an unadvertised overlay network and a no-overlay network with no
+				// RouteAdvertisements both route through the default VRF
+				expected := transport != types.NetworkTransportEVPN && (len(vrfs) == 0 || vrfs[0] == types.DefaultNetworkName)
 				g.Expect(shouldAddUDNServiceMarkRules(current, "node")).To(gomega.Equal(expected), "mark eligibility for VRFs %v", vrfs)
 				if previousMarks != expected {
 					g.Expect(nc.shouldReconcileNetworkChange(old, current)).To(gomega.BeTrue(), "service mark changes must trigger gateway reconciliation")

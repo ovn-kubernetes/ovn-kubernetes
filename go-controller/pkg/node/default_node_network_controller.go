@@ -215,7 +215,9 @@ func NewDefaultNodeNetworkController(cnnci *CommonNodeNetworkControllerInfo, net
 			return nil, fmt.Errorf("failed to setup PMTUD nftables chain: %w", err)
 		}
 
-		if util.IsRouteAdvertisementsEnabled() {
+		// The advertised-UDN isolation chain and sets are consumed by every
+		// network that IsPodNetworkAdvertisedAtNode considers advertised.
+		if util.MayAdvertisePodNetworks() {
 			err = configureAdvertisedUDNIsolationNFTables()
 			if err != nil {
 				return nil, fmt.Errorf("failed to setup advertised UDN isolation nftables: %w", err)

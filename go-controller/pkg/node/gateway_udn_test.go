@@ -1280,8 +1280,8 @@ func TestShouldAddUDNServiceMarkRules(t *testing.T) {
 	}
 
 	noOverlayNetInfo := noOverlayLayer3NetInfo(t)
-	if shouldAddUDNServiceMarkRules(noOverlayNetInfo, nodeName) {
-		t.Fatalf("expected no service mark rules for no-overlay network without explicit default VRF")
+	if !shouldAddUDNServiceMarkRules(noOverlayNetInfo, nodeName) {
+		t.Fatalf("expected service mark rules for no-overlay network without explicit advertised VRF")
 	}
 
 	noOverlayDefaultVRFNetInfo := util.NewMutableNetInfo(noOverlayNetInfo)

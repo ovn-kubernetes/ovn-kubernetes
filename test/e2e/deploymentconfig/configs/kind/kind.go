@@ -107,6 +107,10 @@ func (k *kind) IsConfigurationEnabled(config api.Config) bool {
 		val, present := os.LookupEnv("DISABLE_UDN_ARP_NDP_FLOOD")
 		udnARPNDPFloodDisabled := present && val == "true"
 		return udnARPNDPFloodDisabled
+	case api.RouteAdvertisementsConfig:
+		// the CRD is installed with the chart regardless, so the feature flag
+		// is the only signal that the RouteAdvertisements controller runs
+		return os.Getenv("ENABLE_ROUTE_ADVERTISEMENTS") == "true"
 	default:
 		return false
 	}
