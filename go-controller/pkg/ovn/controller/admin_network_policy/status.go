@@ -116,13 +116,12 @@ func (c *Controller) updateANPZoneStatusCondition(newCondition metav1.Condition,
 	if existingCondition == nil {
 		newCondition.LastTransitionTime = metav1.NewTime(time.Now())
 	} else {
+		newCondition.ObservedGeneration = existingCondition.ObservedGeneration
 		if existingCondition.Status != newCondition.Status {
-			existingCondition.Status = newCondition.Status
-			existingCondition.LastTransitionTime = metav1.NewTime(time.Now())
+			newCondition.LastTransitionTime = metav1.NewTime(time.Now())
+		} else {
+			newCondition.LastTransitionTime = existingCondition.LastTransitionTime
 		}
-		existingCondition.Reason = newCondition.Reason
-		existingCondition.Message = newCondition.Message
-		newCondition = *existingCondition
 	}
 	applyObj := anpapiapply.AdminNetworkPolicy(anpName).
 		WithStatus(anpapiapply.AdminNetworkPolicyStatus().WithConditions(newCondition))
@@ -183,13 +182,12 @@ func (c *Controller) updateBANPZoneStatusCondition(newCondition metav1.Condition
 	if existingCondition == nil {
 		newCondition.LastTransitionTime = metav1.NewTime(time.Now())
 	} else {
+		newCondition.ObservedGeneration = existingCondition.ObservedGeneration
 		if existingCondition.Status != newCondition.Status {
-			existingCondition.Status = newCondition.Status
-			existingCondition.LastTransitionTime = metav1.NewTime(time.Now())
+			newCondition.LastTransitionTime = metav1.NewTime(time.Now())
+		} else {
+			newCondition.LastTransitionTime = existingCondition.LastTransitionTime
 		}
-		existingCondition.Reason = newCondition.Reason
-		existingCondition.Message = newCondition.Message
-		newCondition = *existingCondition
 	}
 	applyObj := anpapiapply.BaselineAdminNetworkPolicy(banpName).
 		WithStatus(anpapiapply.BaselineAdminNetworkPolicyStatus().WithConditions(newCondition))
