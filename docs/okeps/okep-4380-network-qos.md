@@ -25,6 +25,10 @@ packets based on arbitrary match criteria for a logical switch.
    traffic on the NIC on the K8s Node.
 3. Provide above mechanisms on all networks attached to K8s Pods.
 
+The current design does not meet these goals on primary Layer2 User Defined
+Networks (UDNs). See the [limitation](#primary-layer2-udn-enforcement) and
+[proposed options](#options-for-primary-layer2-udns).
+
 ## Non-Goals
 
 1. Ingress Network QoS.
@@ -47,6 +51,9 @@ virtualization in OVN occurs on the K8s node (also known as the OVN chassis), ba
 enforcement for matched traffic occurs on the node itself. This allows OVN-K8s to provide API to
 regulate NIC's bandwidth between the workloads running on the same or different namespaces
 within a K8s node, even before the traffic reaches network fabric through the overlay.
+That source-side enforcement is not guaranteed by the current primary Layer2
+UDN topology, as explained under
+[Primary Layer2 UDN enforcement](#primary-layer2-udn-enforcement).
 Additionally, the network fabric can do its own regulation of network bandwidth, however how it
 is done is outside the scope of this proposal.
 
@@ -551,12 +558,210 @@ To be discussed.
 
 ## Risks, Known Limitations and Mitigations
 
+### Primary Layer2 UDN enforcement
+
+**Tracking bug: TBD (to be opened).**
+
+NetworkQoS should limit a workload's outgoing traffic before it consumes
+cross-node bandwidth. On primary Layer2 UDNs, it applies too late.
+
+**Why?** NetworkQoS uses OVN's `to-lport` stage, which runs when a packet leaves
+a logical switch. Layer2 uses one logical switch spanning the nodes, so direct
+cross-node traffic reaches this stage on the destination node:
+
+```text
+Source node                            Destination node
+Pod A --> from-lport --> [ tunnel ] --> to-lport --> Pod B
+          QoS could run here            QoS runs here today
+          before the tunnel            after the tunnel
+```
+
+Dropping excess traffic at the destination cannot protect bandwidth already
+used by the tunnel. DSCP marking at the destination happens after the tunnel
+and cannot affect the packet's cross-node transit. The default network does not have this
+layout: its per-node switches allow `to-lport` QoS before leaving the source
+switch toward the router.
+
+This is a pre-existing Layer2 limitation, not a consequence of switching to
+source port groups. However, the solution chosen to handle this will directly
+affect the NetworkQOS limitations.
+
+These alternatives and their tradeoffs will be described in [options-for-primary-layer2-udns](#options-for-primary-layer2-udns) section.
+
+### Default-network coexistence with EgressQoS
+
+With source-port-group matching, EgressQoS can overwrite NetworkQoS DSCP marking
+on default-network Service traffic, even when NetworkQoS has higher priority.
+After Service routing, the packet can reenter a switch through a router port.
+NetworkQoS no longer matches that `inport`, but EgressQoS still matches the
+source IP. Priority cannot help when the NetworkQoS rule does not match.
+
+**Proposal:** document overlapping NetworkQoS and EgressQoS policies on the
+default network as an unsupported combination until EgressQoS is formally
+deprecated and coexistence support is retired. Users would need to migrate
+overlapping policies to NetworkQoS rather than rely on priority.
+
+This needs maintainer agreement. Until then, coexistence remains a requirement,
+and its tests should stay. Accepting the limitation would not, by itself,
+deprecate EgressQoS or add automatic overlap detection.
+
+### Reporting unsupported configurations
+
+Extend the `Accepted` condition proposed in
+[OKEP-6815](okep-6815-network-qos-ipamless.md#api-details):
+
+- Set `Accepted=False` for an unsupported topology or action. Name the affected
+  networks and rules in the reason/message.
+- Reject the whole policy across all selected networks. Do not silently omit
+  unsupported actions or apply only part of the policy.
+- Remove any previously installed rules for a rejected policy, and do not
+  report it as ready.
+
+Per-zone readiness continues to report whether accepted rules were applied.
+
 ## OVN-Kubernetes Version Skew
 
 To be discussed.
 
 ## Alternatives
 
-N/A
+### Options for primary Layer2 UDNs
+
+Each option gives up part of the original behavior or requires a larger change.
+None is selected yet. Keeping destination-side policing alone would not address
+the source's cross-node bandwidth usage.
+
+#### Option A: Do not support NetworkQoS on primary Layer2 UDNs
+
+**Behavior change:** reject any NetworkQoS policy selecting a primary Layer2
+UDN with `Accepted=False`, and remove its installed rules. Neither DSCP marking
+nor bandwidth limiting would be available on this topology. Under all-or-nothing
+acceptance, a policy selecting both primary Layer2 and other networks would
+also stop applying to those other networks.
+
+**Pros:**
+
+- A clear support boundary.
+- No new packet-classification semantics.
+
+**Cons:**
+
+- Removes working DSCP marking and classification, not just the faulty
+  source-side bandwidth protection. That is a backward compatibility break.
+- Existing policies would be rejected on upgrade and lose all enforcement,
+  including on other selected networks.
+
+#### Option B: Use source-side `from-lport` enforcement
+
+**Behavior change:** move both DSCP marking and bandwidth limiting from the
+destination node to the source node, before cross-node traffic enters the
+tunnel. Both actions remain supported, but primary Layer2 UDN classifiers
+would see the packet before Service load balancing:
+
+- Direct pod-IP traffic still matches destination pod/namespace selectors.
+- Service traffic targets the VIP, so a selector matching backend pods would
+  no longer select that traffic. Users would need an explicit VIP `ipBlock`
+  match instead, selecting all backends behind that VIP.
+- Port classifiers match the Service port, not the translated backend target
+  port. Existing rules using the target port may stop matching.
+
+Rules without destination restrictions do not need a VIP match, but any port
+restriction still uses the pre-translation port.
+
+**Pros:**
+
+- Marks and limits traffic on the source node, before the tunnel.
+- Each node only needs its selected local pods' ports in its source port groups;
+  there is no need to track remote source ports for enforcement on that node.
+
+**Cons:**
+
+- Changes working Service matching, a backward compatibility break separate
+  from fixing the enforcement location.
+- To select a particular Service, users must explicitly configure its VIP in
+  an `ipBlock`; backend pod selectors will not select its traffic. Policies
+  matching all destinations do not need an explicit VIP.
+- Port restrictions must use the Service port, not the backend target port.
+- Affected classifiers need updating after upgrade; until then, policies may
+  remain accepted without matching that traffic. These updates restore
+  Service-wide matching, but cannot preserve selection of only some backends.
+- The same classifier has different Service semantics on different network types.
+
+Document the changed selector semantics and migration steps. Do not silently
+replace backend selectors with broader VIP matches.
+
+#### Option C: Keep `to-lport`, but support DSCP marking only
+
+**Behavior change:** keep DSCP marking at `to-lport`, on the destination node
+for cross-node traffic, and retain post-load-balancing backend and target-port
+matching. Reject any policy containing bandwidth actions that selects a primary
+Layer2 UDN with `Accepted=False`, and remove its installed rules. This includes
+policies combining DSCP and bandwidth: neither action would apply until the
+bandwidth configuration is removed. All-or-nothing rejection also applies to
+any other networks selected by that policy.
+
+**Pros:**
+
+- Retains DSCP marking and backend-selector semantics without promising
+  source-side bandwidth protection.
+- Preserves existing DSCP-only policy behavior.
+
+**Cons:**
+
+- Withdraws destination-side policing, which does not meet the intended
+  source-side bandwidth contract but may still be useful to users.
+- Rejecting combined policies also removes their working DSCP marking, a
+  backward compatibility break.
+- All-or-nothing rejection removes enforcement on other selected networks too.
+- Cross-node DSCP marking still happens after the tunnel.
+- The NetworkQoS port-group implementation must also add the destination
+  node's representation of each selected remote source pod's LSP to its source
+  port group, rather than adding only local source pods' LSPs.
+
+#### Longer-term option: Leaf/spine topology
+
+Give each node a local leaf switch, connected through a spine, and apply
+`to-lport` QoS on the source leaf. OVN supports directly connected logical
+switches, but this is not yet a validated OVN-Kubernetes QoS solution.
+
+**Intended behavior change:** move marking and bandwidth limiting to the source
+node while preserving post-load-balancing backend and target-port matching.
+Unlike option B, users should not need to replace backend selectors with VIP
+matches. Whether this can preserve existing policies unchanged depends on the
+topology and load-balancer design.
+
+**Pros:**
+
+- Could combine source-side enforcement with backend classification.
+- Aims to preserve existing policy configuration.
+- May improve scalability.
+
+**Cons:**
+
+- Requires a substantial topology and upgrade change.
+- Fixing the enforcement location is not itself a backward compatibility break,
+  but preserving existing classification and providing a safe upgrade need
+  validation.
+- Load-balancer placement, source identity, and interconnect also need validation.
+
+### Approval and follow-up
+
+- Maintainers must decide which primary Layer2 UDN option to support.
+- Maintainers must explicitly agree whether to accept the default-network
+  EgressQoS coexistence limitation.
+- The level-driven controller refactor can proceed independently if it
+  preserves existing behavior.
+- Once maintainers agree, update the examples, status rules, and upgrade guidance.
+- Verify DSCP and bandwidth separately, using direct and Service traffic on
+  same-node and cross-node paths, IPv4/IPv6, and translated ports. Include
+  existing-policy upgrades and ensure new E2Es run in a CI lane with the
+  required topology.
 
 ## References
+
+- [IPAM-less NetworkQoS enhancement](okep-6815-network-qos-ipamless.md)
+- [Implementation investigation](https://gist.github.com/RamLavi/a770cab6ee2a53c4b6cc687eae52e078)
+- [NetworkQoS Service packet-path trace](https://pastebin.com/17qQEtXM)
+- [OVN-Kubernetes discussion of classification and compatibility](https://cloud-native.slack.com/archives/C08452HR8V6/p1794231419332369?thread_ts=1793621840.114719&cid=C08452HR8V6)
+- [OVN discussion of Layer2 enforcement and topology alternatives](https://cloud-native.slack.com/archives/C083DD4K8J1/p1794227128209249?thread_ts=1794224917.255519&cid=C083DD4K8J1)
+- [OVN support for directly connected logical switches](https://github.com/ovn-org/ovn/commit/a2db2b2)
