@@ -176,9 +176,12 @@ following steps:
 2. Configure the pod namespace — assign IP addresses, set up default
    route via the gateway, configure any additional routes.
 3. Add to OVS — `ConfigureOVS()` adds the host-side veth to `br-int`
-   with external IDs. In privileged mode this is done via libovsdb (not
-   `ovs-vsctl`); unprivileged mode falls back to `ovs-vsctl`. Either way
-   the equivalent configuration is:
+   with external IDs through libovsdb in both modes. The privileged CNI
+   server uses its injected OVS client; the unprivileged shim creates a
+   short-lived client for each ADD or DEL, monitoring only the tables and
+   columns needed by that command. The client is closed when the command
+   finishes. The following CLI example illustrates the equivalent
+   configuration; the CNI code does not execute it:
 
 ```bash
 # Equivalent of the OVS port/interface configuration applied by ConfigureOVS():
@@ -191,9 +194,11 @@ ovs-vsctl add-port br-int abcd1234ef \
        external_ids:attached_mac="0a:58:0a:f4:00:05"
 ```
 
-4. Wait for OVN binding — poll OVS until `ovn-installed=true` is set
-   on the interface by ovn-controller, confirming that OpenFlow rules are
-   programmed and the port is active.
+4. Wait for OVN binding — watch the OVS Interface cache until
+   `ovn-installed=true` is set by ovn-controller, confirming that OpenFlow
+   rules are programmed and the port is active. Cache notifications wake
+   the wait early; bounded polling remains as a fallback for missed
+   notifications.
 5. Return CNI result — interfaces, IPs, MAC, and gateway are returned to
    the container runtime through the CNI shim (routes were already applied
    in the pod netns in step 2). Example result for the default network:

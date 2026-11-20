@@ -64,7 +64,7 @@ on the node and are represented as gauges.
 | `interface_rx_errors_total` | Gauge | None | Receive errors across interfaces. |
 | `interface_tx_errors_total` | Gauge | None | Transmit errors across interfaces. |
 | `interface_collisions_total` | Gauge | None | Transmit collisions across interfaces. |
-| `interface_up_wait_seconds_total` | Counter | None | Cumulative time spent waiting for pod OVS interfaces to become available. |
+| `interface_up_wait_seconds_total` | Counter | None | Cumulative elapsed time spent waiting for pod OVS interfaces to become available. Each wait records its actual duration, including early wakeups from cache notifications or cancellation and variable polling backoff, rather than a fixed polling interval. |
 
 ### Thread and Hardware-Offload Metrics
 

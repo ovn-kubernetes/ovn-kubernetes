@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"k8s.io/utils/ptr"
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
@@ -589,58 +591,73 @@ func TestOpenFlowManagerDefaultNetOVSBridgeFinder(t *testing.T) {
 	testCases := []struct {
 		name                  string
 		desc                  string
-		inputPortInfo         string
+		owner                 string
+		ifaceType             string
+		inputPortInfo         []string
 		expectedBridgeName    string
 		expectedPatchPortName string
 	}{
 		{
+			name: "matching name on the active bridge with the wrong type", ifaceType: "internal",
+			inputPortInfo: []string{"patch-br-ex_" + nodeName + "-to-br-int"},
+		},
+		{
+			name:               "stale bridge before the active bridge",
+			inputPortInfo:      []string{"patch-br-old_" + nodeName + "-to-br-int", "patch-br-ex_" + nodeName + "-to-br-int"},
+			expectedBridgeName: "br-ex", expectedPatchPortName: "patch-br-ex_" + nodeName + "-to-br-int",
+		},
+		{
+			name: "matching name on the wrong bridge", owner: "br-old",
+			inputPortInfo: []string{"patch-br-ex_" + nodeName + "-to-br-int"},
+		},
+		{
 			name:                  "empty input ports",
-			inputPortInfo:         "",
+			inputPortInfo:         nil,
 			expectedBridgeName:    "",
 			expectedPatchPortName: "",
 		},
 		{
 			name:                  "input ports without patch ports",
-			inputPortInfo:         "port1",
+			inputPortInfo:         []string{"port1"},
 			expectedBridgeName:    "",
 			expectedPatchPortName: "",
 		},
 		{
 			name: "input ports with a patch port",
-			inputPortInfo: `
-port1
-port2
-patch-br-ex_multi-homing-worker-0.maiqueb.org-to-br-int`,
+			inputPortInfo: []string{
+				"port1", "port2",
+				"patch-br-ex_multi-homing-worker-0.maiqueb.org-to-br-int",
+			},
 			expectedBridgeName:    "br-ex",
 			expectedPatchPortName: "patch-br-ex_multi-homing-worker-0.maiqueb.org-to-br-int",
 		},
 		{
 			name: "input ports with a patch port for a localnet network",
-			inputPortInfo: `
-port1
-port2
-patch-vlan2003_ovn_localnet_port-to-br-int`,
+			inputPortInfo: []string{
+				"port1", "port2",
+				"patch-vlan2003_ovn_localnet_port-to-br-int",
+			},
 			expectedBridgeName:    "",
 			expectedPatchPortName: "",
 		},
 		{
 			name: "input ports with a patch port for the default network and a localnet",
-			inputPortInfo: `
-port1
-port2
-patch-vlan2003_ovn_localnet_port-to-br-int
-patch-br-ex_multi-homing-worker-0.maiqueb.org-to-br-int`,
+			inputPortInfo: []string{
+				"port1", "port2",
+				"patch-vlan2003_ovn_localnet_port-to-br-int",
+				"patch-br-ex_multi-homing-worker-0.maiqueb.org-to-br-int",
+			},
 			expectedBridgeName:    "br-ex",
 			expectedPatchPortName: "patch-br-ex_multi-homing-worker-0.maiqueb.org-to-br-int",
 		},
 		{
 			name: "input ports with a patch port for the default network, a localnet, and an extra primary UDN",
-			inputPortInfo: `
-port1
-port2
-patch-vlan2003_ovn_localnet_port-to-br-int
-patch-br-ex_tenant-blue_multi-homing-worker-0.maiqueb.org-to-br-int
-patch-br-ex_multi-homing-worker-0.maiqueb.org-to-br-int`,
+			inputPortInfo: []string{
+				"port1", "port2",
+				"patch-vlan2003_ovn_localnet_port-to-br-int",
+				"patch-br-ex_tenant-blue_multi-homing-worker-0.maiqueb.org-to-br-int",
+				"patch-br-ex_multi-homing-worker-0.maiqueb.org-to-br-int",
+			},
 			expectedBridgeName:    "br-ex",
 			expectedPatchPortName: "patch-br-ex_multi-homing-worker-0.maiqueb.org-to-br-int",
 		},
@@ -648,7 +665,31 @@ patch-br-ex_multi-homing-worker-0.maiqueb.org-to-br-int`,
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			bridgeName, patchPortName := localnetPortInfo(nodeName, tc.inputPortInfo)
+			active := &vswitchd.Bridge{UUID: "active", Name: "br-ex"}
+			old := &vswitchd.Bridge{UUID: "old", Name: "br-old"}
+			data := []libovsdbtest.TestData{
+				&vswitchd.OpenvSwitch{UUID: "root", Bridges: []string{active.UUID, old.UUID},
+					ExternalIDs: map[string]string{"ovn-bridge-mappings": "other:br-old," + types.PhysicalNetworkName + ":br-ex"}},
+				active, old,
+			}
+			for _, name := range tc.inputPortInfo {
+				port := &vswitchd.Port{UUID: name + "-port", Name: name, Interfaces: []string{name + "-iface"}}
+				owner := active
+				if tc.owner == "br-old" || strings.HasPrefix(name, "patch-br-old_") {
+					owner = old
+				}
+				owner.Ports = append(owner.Ports, port.UUID)
+				ifaceType := tc.ifaceType
+				if ifaceType == "" {
+					ifaceType = "patch"
+				}
+				data = append(data, port, &vswitchd.Interface{UUID: name + "-iface", Name: name, Type: ifaceType})
+			}
+			c, cleanup, err := libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{OVSData: data})
+			require.NoError(t, err)
+			t.Cleanup(cleanup.Cleanup)
+			bridgeName, patchPortName, err := defaultNetworkPatchPort(c, nodeName)
+			require.NoError(t, err)
 			if bridgeName != tc.expectedBridgeName {
 				t.Errorf("Expected bridge name %q got %q", tc.expectedBridgeName, bridgeName)
 			}

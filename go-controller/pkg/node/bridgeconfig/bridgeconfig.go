@@ -4,6 +4,7 @@
 package bridgeconfig
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -79,11 +80,38 @@ func (netConfig *BridgeUDNConfiguration) IsDefaultNetwork() bool {
 	return netConfig.MasqCTMark == nodetypes.CtMarkOVN
 }
 
-func (netConfig *BridgeUDNConfiguration) setOfPatchPort() error {
-	ofportPatch, stderr, err := util.GetOVSOfPort("get", "Interface", netConfig.PatchPort, "ofport")
+func getInterfaceMACAddress(ovsClient libovsdbclient.Client, ifaceName string) (net.HardwareAddr, error) {
+	iface, err := ovsops.GetOVSInterface(ovsClient, ifaceName)
 	if err != nil {
-		return fmt.Errorf("failed while waiting on patch port %q to be created by ovn-controller and "+
-			"while getting ofport. stderr: %v, error: %v", netConfig.PatchPort, stderr, err)
+		return nil, fmt.Errorf("failed to get OVS interface %s while resolving its MAC address: %w", ifaceName, err)
+	}
+	mac := iface.MACInUse
+	if mac == nil || *mac == "" {
+		// A newly-created bridge's mac_in_use is populated asynchronously by
+		// ovs-vswitchd. NicToBridge pins the same address in other_config, which
+		// is available immediately in the OVSDB transaction result.
+		bridge, err := ovsops.GetBridge(ovsClient, ifaceName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get OVS bridge %s while resolving its MAC address: %w", ifaceName, err)
+		}
+		hwaddr := bridge.OtherConfig["hwaddr"]
+		if hwaddr == "" {
+			return nil, fmt.Errorf("interface %s has no MAC in use and bridge has no configured hwaddr", ifaceName)
+		}
+		mac = &hwaddr
+	}
+	address, err := net.ParseMAC(*mac)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse MAC address %q for OVS interface %s: %w", *mac, ifaceName, err)
+	}
+	return address, nil
+}
+
+func (netConfig *BridgeUDNConfiguration) setOfPatchPort(ovsClient libovsdbclient.Client) error {
+	ofportPatch, err := ovsops.GetOVSInterfaceOfPort(ovsClient, netConfig.PatchPort, false)
+	if err != nil {
+		return fmt.Errorf("failed while waiting on patch port %q to be created by ovn-controller and while getting ofport: %w",
+			netConfig.PatchPort, err)
 	}
 	netConfig.OfPortPatch = ofportPatch
 	return nil
@@ -261,13 +289,11 @@ func NewBridgeConfiguration(ovsClient libovsdbclient.Client, intfName, nodeName,
 					return nil, fmt.Errorf("nicToBridge failed for %s: %w", intfName, err)
 				}
 				if config.Gateway.DPUHostGatewayRepresentorInterface != "" {
-					_, stderr, repErr := util.RunOVSVsctl(
-						"--", "--may-exist", "add-port", bridgeName, config.Gateway.DPUHostGatewayRepresentorInterface,
-						"--", "set", "port", config.Gateway.DPUHostGatewayRepresentorInterface, "other-config:transient=true",
-					)
+					repErr := ovsops.CreateOrUpdateOVSPort(ovsClient, bridgeName, config.Gateway.DPUHostGatewayRepresentorInterface,
+						&vswitchd.Port{OtherConfig: map[string]string{"transient": "true"}}, &vswitchd.Interface{})
 					if repErr != nil {
-						return nil, fmt.Errorf("failed to add DPU host gateway representor %s to bridge %s: %w, stderr: %s",
-							config.Gateway.DPUHostGatewayRepresentorInterface, bridgeName, repErr, stderr)
+						return nil, fmt.Errorf("failed to add DPU host gateway representor %s to bridge %s: %w",
+							config.Gateway.DPUHostGatewayRepresentorInterface, bridgeName, repErr)
 					}
 					klog.Infof("Adding host representor interface %s to bridge %s", config.Gateway.DPUHostGatewayRepresentorInterface, bridgeName)
 					res.gwIfaceRep = config.Gateway.DPUHostGatewayRepresentorInterface
@@ -317,7 +343,7 @@ func NewBridgeConfiguration(ovsClient libovsdbclient.Client, intfName, nodeName,
 	}
 
 	if !isGWAcclInterface { // We do not have an accelerated device for Gateway interface
-		res.macAddress, err = util.GetOVSPortMACAddress(gwIntf)
+		res.macAddress, err = getInterfaceMACAddress(ovsClient, gwIntf)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get MAC address for ovs port %s: %w", gwIntf, err)
 		}
@@ -407,7 +433,7 @@ func NewUnmanagedBridgeConfiguration(ovsClient libovsdbclient.Client, bridgeName
 			}
 		}
 	} else {
-		gwIfaceRep, err = gatewayHostOVSInterface(bridgeName, gwIface)
+		gwIfaceRep, err = gatewayHostOVSInterface(ovsClient, bridgeName, gwIface)
 		if err != nil {
 			return nil, err
 		}
@@ -586,18 +612,19 @@ func (b *BridgeConfiguration) patchedNetConfigs() []*BridgeUDNConfiguration {
 	return result
 }
 
-// IsGatewayReady checks if patch ports of every netConfig are present.
+// IsGatewayReady waits for patch ports and the optional gateway representor
+// to have usable ofports before the one-shot bridge configuration runs.
 // used by gateway on newGateway readyFunc
 func (b *BridgeConfiguration) IsGatewayReady() bool {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 	for _, netConfig := range b.netConfig {
-		ready := gatewayReady(netConfig.PatchPort)
+		ready := gatewayReady(b.ovsClient, netConfig.PatchPort)
 		if !ready {
 			return false
 		}
 	}
-	return true
+	return b.gwIfaceRep == "" || gatewayReady(b.ovsClient, b.gwIfaceRep)
 }
 
 func (b *BridgeConfiguration) ConfigureBridgePorts() error {
@@ -605,17 +632,16 @@ func (b *BridgeConfiguration) ConfigureBridgePorts() error {
 	defer b.mutex.Unlock()
 	// Get ofport of patchPort
 	for _, netConfig := range b.netConfig {
-		if err := netConfig.setOfPatchPort(); err != nil {
+		if err := netConfig.setOfPatchPort(b.ovsClient); err != nil {
 			return fmt.Errorf("error setting bridge openflow ports for network with patchport %v: err: %v", netConfig.PatchPort, err)
 		}
 	}
 
 	if b.uplinkName != "" {
 		// Get ofport of physical interface
-		ofportPhys, stderr, err := util.GetOVSOfPort("get", "interface", b.uplinkName, "ofport")
+		ofportPhys, err := ovsops.GetOVSInterfaceOfPort(b.ovsClient, b.uplinkName, false)
 		if err != nil {
-			return fmt.Errorf("failed to get ofport of %s, stderr: %q, error: %v",
-				b.uplinkName, stderr, err)
+			return fmt.Errorf("failed to get ofport of %s: %v", b.uplinkName, err)
 		}
 		b.ofPortPhys = ofportPhys
 	}
@@ -624,10 +650,9 @@ func (b *BridgeConfiguration) ConfigureBridgePorts() error {
 	b.ofPortHost = nodetypes.OvsLocalPort
 	hostOVSInterfaceName := b.bridgeName
 	if b.gwIfaceRep != "" {
-		ofPortHost, stderr, err := util.RunOVSVsctl("get", "interface", b.gwIfaceRep, "ofport")
+		ofPortHost, err := ovsops.GetOVSInterfaceOfPort(b.ovsClient, b.gwIfaceRep, false)
 		if err != nil {
-			return fmt.Errorf("failed to get ofport of gateway representor %s, stderr: %q, error: %v",
-				b.gwIfaceRep, stderr, err)
+			return fmt.Errorf("failed to get ofport of gateway representor %s: %v", b.gwIfaceRep, err)
 		}
 		b.ofPortHost = ofPortHost
 		hostOVSInterfaceName = b.gwIfaceRep
@@ -635,31 +660,32 @@ func (b *BridgeConfiguration) ConfigureBridgePorts() error {
 
 	// Ensure the host port on the bridge carries the configured VLAN tag when requested.
 	if hostOVSInterfaceName != "" && config.Gateway.VLANID != 0 {
-		ifaceUUID, stderr, err := util.RunOVSVsctl("--data=bare", "--no-heading", "--columns=_uuid",
-			"find", "Interface", fmt.Sprintf("name=%s", hostOVSInterfaceName))
+		iface, err := ovsops.GetOVSInterface(b.ovsClient, hostOVSInterfaceName)
 		if err != nil {
-			return fmt.Errorf("failed to find interface %s on bridge %s, stderr: %q, error: %v",
-				hostOVSInterfaceName, b.bridgeName, stderr, err)
+			return fmt.Errorf("failed to find interface %s on bridge %s: %v", hostOVSInterfaceName, b.bridgeName, err)
 		}
-		ifaceUUID = strings.TrimSpace(ifaceUUID)
-		if ifaceUUID == "" {
-			return fmt.Errorf("failed to determine interface UUID for %s on bridge %s", hostOVSInterfaceName, b.bridgeName)
-		}
-
-		portName, stderr, err := util.RunOVSVsctl("--data=bare", "--no-heading", "--columns=name",
-			"find", "Port", fmt.Sprintf("interface=%s", ifaceUUID))
+		ports, err := ovsops.FindOVSPortsWithPredicate(b.ovsClient, func(port *vswitchd.Port) bool {
+			for _, ifaceUUID := range port.Interfaces {
+				if ifaceUUID == iface.UUID {
+					return true
+				}
+			}
+			return false
+		})
 		if err != nil {
-			return fmt.Errorf("failed to find port for interface %s on bridge %s, stderr: %q, error: %v",
-				hostOVSInterfaceName, b.bridgeName, stderr, err)
+			return fmt.Errorf("failed to find port for interface %s on bridge %s: %v", hostOVSInterfaceName, b.bridgeName, err)
 		}
-		portName = strings.TrimSpace(portName)
-		if portName == "" {
+		if len(ports) != 1 {
 			return fmt.Errorf("failed to determine port for host interface %s on bridge %s", hostOVSInterfaceName, b.bridgeName)
 		}
-		if _, stderr, err = util.RunOVSVsctl("set", "Port", portName,
-			fmt.Sprintf("tag=%d", config.Gateway.VLANID)); err != nil {
-			return fmt.Errorf("failed to set VLAN tag on port %s for bridge %s, stderr: %q, error: %v",
-				portName, b.bridgeName, stderr, err)
+		tag := int(config.Gateway.VLANID)
+		portUpdate := &vswitchd.Port{UUID: ports[0].UUID, Tag: &tag}
+		ops, err := b.ovsClient.Where(&vswitchd.Port{UUID: ports[0].UUID}).Update(portUpdate, &portUpdate.Tag)
+		if err != nil {
+			return fmt.Errorf("failed to build VLAN tag update for port %s on bridge %s: %v", ports[0].Name, b.bridgeName, err)
+		}
+		if err = ovsops.TransactAndCheckAndWaitForVSwitchd(context.Background(), b.ovsClient, ops); err != nil {
+			return fmt.Errorf("failed to set VLAN tag on port %s for bridge %s: %v", ports[0].Name, b.bridgeName, err)
 		}
 	}
 
@@ -700,7 +726,7 @@ func (b *BridgeConfiguration) SetNetworkOfPatchPort(netName string) error {
 	if !found {
 		return fmt.Errorf("failed to find network %s configuration on bridge %s", netName, b.bridgeName)
 	}
-	if err := netConfig.setOfPatchPort(); err != nil {
+	if err := netConfig.setOfPatchPort(b.ovsClient); err != nil {
 		return err
 	}
 
@@ -785,9 +811,9 @@ func (b *BridgeConfiguration) SetDropGARP(drop bool) {
 	b.dropGARP = drop
 }
 
-func gatewayReady(patchPort string) bool {
+func gatewayReady(ovsClient libovsdbclient.Client, patchPort string) bool {
 	// Get ofport of patchPort
-	ofport, _, err := util.GetOVSOfPort("--if-exists", "get", "interface", patchPort, "ofport")
+	ofport, err := ovsops.GetOVSInterfaceOfPort(ovsClient, patchPort, true)
 	if err != nil || len(ofport) == 0 {
 		return false
 	}
@@ -808,10 +834,9 @@ func getIntfName(ovsClient libovsdbclient.Client, gatewayIntf string) (string, e
 	if err != nil {
 		return "", err
 	}
-	_, stderr, err := util.RunOVSVsctl("get", "interface", intfName, "ofport")
+	_, err = ovsops.GetOVSInterfaceOfPort(ovsClient, intfName, false)
 	if err != nil {
-		return "", fmt.Errorf("failed to get ofport of %s, stderr: %q, error: %v",
-			intfName, stderr, err)
+		return "", fmt.Errorf("failed to get ofport of %s: %v", intfName, err)
 	}
 	return intfName, nil
 }
@@ -863,9 +888,9 @@ func bridgedGatewayNodeSetup(ovsClient libovsdbclient.Client, nodeName, bridgeNa
 	}
 	mapString += physicalNetworkName + ":" + bridgeName
 
-	if err := ovsops.UpdateOpenvSwitchExternalIDs(ovsClient, map[string]string{
+	if err := ovsops.UpdateOpenvSwitchSettings(ovsClient, map[string]string{
 		"ovn-bridge-mappings": mapString,
-	}); err != nil {
+	}, nil); err != nil {
 		return "", fmt.Errorf("failed to set ovn-bridge-mappings for ovs bridge %s: %w", bridgeName, err)
 	}
 
@@ -930,20 +955,21 @@ func representorOnBridge(ovsClient libovsdbclient.Client, bridge *vswitchd.Bridg
 	return fmt.Errorf("representor %s is not attached to OVS bridge %s", rep, bridge.Name)
 }
 
-func gatewayHostOVSInterface(bridgeName, gwIface string) (string, error) {
+func gatewayHostOVSInterface(ovsClient libovsdbclient.Client, bridgeName, gwIface string) (string, error) {
 	if gwIface == "" || gwIface == bridgeName {
 		return "", nil
 	}
 
-	if bridgeForInterface, _, err := util.RunOVSVsctl("port-to-br", gwIface); err == nil {
-		bridgeForInterface = strings.TrimSpace(bridgeForInterface)
-		if bridgeForInterface == bridgeName {
+	bridgeForInterface, err := ovsops.GetPortBridge(ovsClient, gwIface)
+	if err == nil {
+		if bridgeForInterface.Name == bridgeName {
 			return gwIface, nil
 		}
-		if bridgeForInterface != "" {
-			return "", fmt.Errorf("gateway interface %s belongs to OVS bridge %s, expected %s",
-				gwIface, bridgeForInterface, bridgeName)
-		}
+		return "", fmt.Errorf("gateway interface %s belongs to OVS bridge %s, expected %s",
+			gwIface, bridgeForInterface.Name, bridgeName)
+	}
+	if !errors.Is(err, libovsdbclient.ErrNotFound) {
+		return "", fmt.Errorf("failed to resolve OVS bridge for gateway interface %s: %w", gwIface, err)
 	}
 
 	gwIfaceRep, err := getRepresentor(gwIface)
@@ -951,15 +977,14 @@ func gatewayHostOVSInterface(bridgeName, gwIface string) (string, error) {
 		return "", fmt.Errorf("gateway interface %s is not the OVS bridge interface, an OVS port on bridge %s, or an accelerated VF/SF netdevice: %w",
 			gwIface, bridgeName, err)
 	}
-	bridgeForRep, stderr, err := util.RunOVSVsctl("port-to-br", gwIfaceRep)
+	bridgeForRep, err := ovsops.GetPortBridge(ovsClient, gwIfaceRep)
 	if err != nil {
-		return "", fmt.Errorf("failed to resolve OVS bridge for representor %s of gateway interface %s, stderr: %q, error: %w",
-			gwIfaceRep, gwIface, stderr, err)
+		return "", fmt.Errorf("failed to resolve OVS bridge for representor %s of gateway interface %s: %w",
+			gwIfaceRep, gwIface, err)
 	}
-	bridgeForRep = strings.TrimSpace(bridgeForRep)
-	if bridgeForRep != bridgeName {
+	if bridgeForRep.Name != bridgeName {
 		return "", fmt.Errorf("representor %s of gateway interface %s belongs to OVS bridge %s, expected %s",
-			gwIfaceRep, gwIface, bridgeForRep, bridgeName)
+			gwIfaceRep, gwIface, bridgeForRep.Name, bridgeName)
 	}
 	return gwIfaceRep, nil
 }
