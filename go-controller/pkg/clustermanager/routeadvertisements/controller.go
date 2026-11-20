@@ -330,7 +330,44 @@ func (c *Controller) Start() error {
 	if config.OVNKubernetesFeature.EnableEgressIP {
 		controllers = append(controllers, c.eipController, c.nsController)
 	}
-	return controllerutil.Start(controllers...)
+	if err := controllerutil.StartWithInitialSync(c.initialSync, controllers...); err != nil {
+		c.nm.DeRegisterNetworkRefReconciler(c.networkRefReconcilerID)
+		return fmt.Errorf("failed to start RouteAdvertisements controller: %w", err)
+	}
+	return nil
+}
+
+// initialSync discovers orphaned FRRConfigurations when no NAD still references
+// their deleted RA. A surviving reference already queues its RA through
+// network-manager startup. Own-write filtering can otherwise leave generated
+// FRRConfigurations undiscovered. Scan their owners once at startup to preserve
+// filtering of live generated-object events, which would otherwise cause extra
+// runtime enqueueing and reconciliation.
+// Workers wait for discovery; informer handlers already capture concurrent events.
+func (c *Controller) initialSync() error {
+	var errs []error
+	names := sets.New[string]()
+	frrConfigs, err := c.frrLister.List(labels.Everything())
+	if err != nil {
+		return fmt.Errorf("failed listing FRRConfigurations during startup: %w", err)
+	}
+	for _, frrConfig := range frrConfigs {
+		if owner := frrConfig.Labels[types.OvnRouteAdvertisementsKey]; owner != "" {
+			names.Insert(owner)
+		}
+	}
+	for _, name := range sets.List(names) {
+		_, err := c.raLister.Get(name)
+		if err == nil {
+			continue
+		}
+		if !apierrors.IsNotFound(err) {
+			errs = append(errs, fmt.Errorf("failed looking up RouteAdvertisements %q during startup: %w", name, err))
+			continue
+		}
+		c.raController.Reconcile(name)
+	}
+	return errors.Join(errs...)
 }
 
 func (c *Controller) Stop() {
