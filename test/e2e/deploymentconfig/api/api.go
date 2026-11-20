@@ -14,6 +14,10 @@ const (
 	L3UDNMultiSubnetConfig Config = "L3UDNMultiSubnet"
 	// UDNARPNDPFloodDisabled indicates wheter disabling UDN ARP/NDP flood setting is set true
 	UDNARPNDPFloodDisabled Config = "UDNARPNDPFloodDisabled"
+	// NoOverlay indicates whether the default network uses the no-overlay transport
+	NoOverlay Config = "NoOverlay"
+	// LinkLocalForwardingDisabled indicates whether the disable-link-local-forwarding gateway option is set
+	LinkLocalForwardingDisabled Config = "LinkLocalForwardingDisabled"
 )
 
 type ImageID int

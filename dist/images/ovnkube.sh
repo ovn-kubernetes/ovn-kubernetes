@@ -78,6 +78,7 @@ fi
 # OVN_ENCAP_IP - encap IP to be used for OVN traffic on the node. mandatory in case ovnkube-node-mode=="dpu"
 # OVN_HOST_NETWORK_NAMESPACE - namespace to classify host network traffic for applying network policies
 # OVN_DISABLE_FORWARDING - disable forwarding on OVNK controlled interfaces
+# OVN_DISABLE_LINK_LOCAL_FORWARDING - drop IPv4 link-local destinations in gateway routers and UDN VRFs
 # OVN_ENABLE_MULTI_EXTERNAL_GATEWAY - enable multi external gateway for ovn-kubernetes
 # OVN_ENABLE_OVNKUBE_IDENTITY - enable per node certificate ovn-kubernetes
 # OVN_METRICS_CONTROLLER_PORT - metrics port exposed by ovnkube-controller (default 9409)
@@ -197,6 +198,7 @@ ovn_hybrid_overlay_enable=${OVN_HYBRID_OVERLAY_ENABLE:-}
 ovn_hybrid_overlay_net_cidr=${OVN_HYBRID_OVERLAY_NET_CIDR:-}
 ovn_disable_snat_multiple_gws=${OVN_DISABLE_SNAT_MULTIPLE_GWS:-}
 ovn_disable_forwarding=${OVN_DISABLE_FORWARDING:-}
+ovn_disable_link_local_forwarding=${OVN_DISABLE_LINK_LOCAL_FORWARDING:-}
 ovn_disable_pkt_mtu_check=${OVN_DISABLE_PKT_MTU_CHECK:-}
 ovn_empty_lb_events=${OVN_EMPTY_LB_EVENTS:-}
 # OVN_V4_JOIN_SUBNET - v4 join subnet
@@ -1027,6 +1029,11 @@ ovnkube-controller() {
   fi
   echo "ovn_encap_port_flag=${ovn_encap_port_flag}"
 
+  disable_link_local_forwarding_flag=
+  if [[ ${ovn_disable_link_local_forwarding} == "true" ]]; then
+      disable_link_local_forwarding_flag="--disable-link-local-forwarding"
+  fi
+
   disable_pkt_mtu_check_flag=
   if [[ ${ovn_disable_pkt_mtu_check} == "true" ]]; then
       disable_pkt_mtu_check_flag="--disable-pkt-mtu-check"
@@ -1304,6 +1311,7 @@ ovnkube-controller() {
     ${ovn_allow_icmp_netpol_flag} \
     --cluster-subnets ${net_cidr} --k8s-service-cidr=${svc_cidr} \
     --gateway-mode=${ovn_gateway_mode} \
+    ${disable_link_local_forwarding_flag} \
     --host-network-namespace ${ovn_host_network_namespace} \
     --logfile-maxage=${ovnkube_logfile_maxage} \
     --logfile-maxbackups=${ovnkube_logfile_maxbackups} \
@@ -1394,6 +1402,11 @@ ovnkube-controller-with-node() {
       ovn_encap_port_flag="--encap-port=${ovn_encap_port}"
   fi
   echo "ovn_encap_port_flag=${ovn_encap_port_flag}"
+
+  disable_link_local_forwarding_flag=
+  if [[ ${ovn_disable_link_local_forwarding} == "true" ]]; then
+      disable_link_local_forwarding_flag="--disable-link-local-forwarding"
+  fi
 
   disable_pkt_mtu_check_flag=
   if [[ ${ovn_disable_pkt_mtu_check} == "true" ]]; then
@@ -1778,6 +1791,7 @@ ovnkube-controller-with-node() {
   /usr/bin/ovnkube --init-ovnkube-controller ${K8S_NODE} --init-node ${K8S_NODE} \
     ${anp_enabled_flag} \
     ${disable_forwarding_flag} \
+    ${disable_link_local_forwarding_flag} \
     ${disable_pkt_mtu_check_flag} \
     ${disable_snat_multiple_gws_flag} \
     ${egressfirewall_enabled_flag} \
@@ -2236,6 +2250,11 @@ ovn-node() {
       disable_forwarding_flag="--disable-forwarding"
   fi
 
+  disable_link_local_forwarding_flag=
+  if [[ ${ovn_disable_link_local_forwarding} == "true" ]]; then
+      disable_link_local_forwarding_flag="--disable-link-local-forwarding"
+  fi
+
   disable_pkt_mtu_check_flag=
   if [[ ${ovn_disable_pkt_mtu_check} == "true" ]]; then
       disable_pkt_mtu_check_flag="--disable-pkt-mtu-check"
@@ -2499,6 +2518,7 @@ ovn-node() {
   /usr/bin/ovnkube --init-node ${K8S_NODE} \
         ${anp_enabled_flag} \
         ${disable_forwarding_flag} \
+        ${disable_link_local_forwarding_flag} \
         ${disable_pkt_mtu_check_flag} \
         ${disable_snat_multiple_gws_flag} \
         ${egress_interface} \
