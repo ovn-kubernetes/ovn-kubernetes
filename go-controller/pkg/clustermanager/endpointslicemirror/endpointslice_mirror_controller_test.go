@@ -132,6 +132,7 @@ var _ = ginkgo.Describe("Cluster manager EndpointSlice mirror controller", func(
 				start(objs...)
 
 				nad := testing.GenerateNAD("l3-network", "l3-network", namespaceT.Name, types.Layer3Topology, "10.132.2.0/16/24", types.NetworkRolePrimary)
+				gomega.Expect(testing.EnsurePrimaryNADOwner(fakeClient.UserDefinedNetworkClient, nad)).To(gomega.Succeed())
 
 				_, err := fakeClient.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(namespaceT.Name).Create(
 					context.TODO(),
@@ -317,6 +318,7 @@ var _ = ginkgo.Describe("Cluster manager EndpointSlice mirror controller", func(
 				start(objs...)
 
 				nad := testing.GenerateNAD("l3-network", "l3-network", namespaceT.Name, types.Layer3Topology, "10.132.2.0/16/24", types.NetworkRolePrimary)
+				gomega.Expect(testing.EnsurePrimaryNADOwner(fakeClient.UserDefinedNetworkClient, nad)).To(gomega.Succeed())
 				_, err := fakeClient.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(namespaceT.Name).Create(
 					context.TODO(),
 					nad,
@@ -476,6 +478,7 @@ var _ = ginkgo.Describe("Cluster manager EndpointSlice mirror controller", func(
 				start(objs...)
 
 				nad := testing.GenerateNAD("l3-network", "l3-network", namespaceT.Name, types.Layer3Topology, "10.132.2.0/16/24", types.NetworkRolePrimary)
+				gomega.Expect(testing.EnsurePrimaryNADOwner(fakeClient.UserDefinedNetworkClient, nad)).To(gomega.Succeed())
 				_, err := fakeClient.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(namespaceT.Name).Create(
 					context.TODO(),
 					nad,
@@ -611,6 +614,7 @@ var _ = ginkgo.Describe("Cluster manager EndpointSlice mirror controller", func(
 		startWithNAD := func(subnets string, objs ...runtime.Object) {
 			start(objs...)
 			nad := testing.GenerateNAD("l2-network", "l2-network", "testns", types.Layer2Topology, subnets, types.NetworkRolePrimary)
+			gomega.Expect(testing.EnsurePrimaryNADOwner(fakeClient.UserDefinedNetworkClient, nad)).To(gomega.Succeed())
 			_, err := fakeClient.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("testns").Create(
 				context.TODO(), nad, metav1.CreateOptions{})
 			gomega.Expect(err).ToNot(gomega.HaveOccurred())

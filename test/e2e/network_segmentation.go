@@ -728,12 +728,6 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 					),
 				)
 			},
-			Entry("NetworkAttachmentDefinitions", func(_ context.Context, c *networkAttachmentConfigParams) error {
-				netConfig := newNetworkAttachmentConfig(*c)
-				nad := generateNAD(netConfig, f.ClientSet)
-				_, err := nadClient.NetworkAttachmentDefinitions(c.namespace).Create(context.Background(), nad, metav1.CreateOptions{})
-				return err
-			}),
 			Entry("UserDefinedNetwork", func(ctx context.Context, c *networkAttachmentConfigParams) error {
 				udnManifest := generateUserDefinedNetworkManifest(c, f.ClientSet)
 				cleanup, err := createManifest(c.namespace, udnManifest)
@@ -890,11 +884,7 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 				netConfigParams.namespace = f.Namespace.Name
 				filterSupportedNetworkConfig(f.ClientSet, &netConfigParams)
 				netConfig := newNetworkAttachmentConfig(netConfigParams)
-				_, err := nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(
-					context.Background(),
-					generateNAD(netConfig, f.ClientSet),
-					metav1.CreateOptions{},
-				)
+				err := createPrimaryUDN(f, &netConfig.networkAttachmentConfigParams)
 				framework.ExpectNoError(err)
 				testMulticastUDPTraffic(f, clientNodeInfo, serverNodeInfo, udnPodInterface)
 			},
@@ -925,11 +915,7 @@ var _ = Describe("Network Segmentation", feature.NetworkSegmentation, func() {
 				netConfigParams.namespace = f.Namespace.Name
 				filterSupportedNetworkConfig(f.ClientSet, &netConfigParams)
 				netConfig := newNetworkAttachmentConfig(netConfigParams)
-				_, err := nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(
-					context.Background(),
-					generateNAD(netConfig, f.ClientSet),
-					metav1.CreateOptions{},
-				)
+				err := createPrimaryUDN(f, &netConfig.networkAttachmentConfigParams)
 				framework.ExpectNoError(err)
 				testMulticastIGMPQuery(f, clientNodeInfo, serverNodeInfo)
 			},
@@ -2433,12 +2419,6 @@ spec:
 					),
 				)
 			},
-			Entry("NetworkAttachmentDefinitions", func(_ context.Context, c *networkAttachmentConfigParams) error {
-				netConfig := newNetworkAttachmentConfig(*c)
-				nad := generateNAD(netConfig, f.ClientSet)
-				_, err := nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(context.Background(), nad, metav1.CreateOptions{})
-				return err
-			}),
 			Entry("UserDefinedNetwork", func(ctx context.Context, c *networkAttachmentConfigParams) error {
 				udnManifest := generateUserDefinedNetworkManifest(c, f.ClientSet)
 				cleanup, err := createManifest(f.Namespace.Name, udnManifest)
@@ -4168,3 +4148,51 @@ var _ = Describe("Network Segmentation status.vrfName validation", feature.Netwo
 		}
 	})
 })
+
+func createPrimaryUDN(f *framework.Framework, params *networkAttachmentConfigParams) error {
+	params.networkName = ovnkubeutil.GenerateUDNNetworkName(params.namespace, params.name)
+	cleanup, err := createManifest(params.namespace, generateUserDefinedNetworkManifest(params, f.ClientSet))
+	if cleanup != nil {
+		DeferCleanup(cleanup)
+	}
+	if err != nil {
+		return err
+	}
+	Eventually(userDefinedNetworkReadyFunc(context.Background(), f.DynamicClient, params.namespace, params.name),
+		30*time.Second, time.Second).Should(Succeed())
+	return nil
+}
+
+func createPrimaryCUDN(f *framework.Framework, params *networkAttachmentConfigParams) error {
+	params.networkName = ovnkubeutil.GenerateCUDNNetworkName(params.name)
+	cleanup, err := createManifest("", generateClusterUserDefinedNetworkManifest(params, f.ClientSet))
+	if cleanup != nil {
+		DeferCleanup(cleanup)
+	}
+	if err != nil {
+		return err
+	}
+	name := params.name
+	DeferCleanup(func() {
+		_, err := e2ekubectl.RunKubectl("", "delete", "clusteruserdefinednetwork", name, "--wait=false", "--ignore-not-found")
+		Expect(err).NotTo(HaveOccurred())
+	})
+	Eventually(clusterUserDefinedNetworkReadyFunc(context.Background(), f.DynamicClient, name),
+		30*time.Second, time.Second).Should(Succeed())
+	return nil
+}
+
+func setPrimaryCUDNNamespaces(f *framework.Framework, name string, namespaces ...string) error {
+	patch, err := json.Marshal(map[string]interface{}{
+		"spec": map[string]interface{}{
+			"namespaceSelector": metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{
+				Key: "kubernetes.io/metadata.name", Operator: metav1.LabelSelectorOpIn, Values: namespaces,
+			}}},
+		},
+	})
+	if err != nil {
+		return err
+	}
+	_, err = f.DynamicClient.Resource(clusterUDNGVR).Patch(context.Background(), name, types.MergePatchType, patch, metav1.PatchOptions{})
+	return err
+}

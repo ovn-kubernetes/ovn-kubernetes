@@ -203,11 +203,7 @@ ips=$(ip -o addr show dev $iface | grep global | awk '{print $4}' | cut -d/ -f1 
 				By("Creating the attachment configuration")
 				netConfig := newNetworkAttachmentConfig(netConfigParams)
 				netConfig.namespace = f.Namespace.Name
-				_, err = nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(
-					context.Background(),
-					generateNAD(netConfig, f.ClientSet),
-					metav1.CreateOptions{},
-				)
+				err = createPrimaryUDN(f, &netConfig.networkAttachmentConfigParams)
 				Expect(err).NotTo(HaveOccurred())
 
 				By(fmt.Sprintf("Creating a UDN LoadBalancer service"))

@@ -3537,7 +3537,7 @@ func testEVPNClusterUdnNADWithEVPNCfg(name, namespace string, evpnCfg *ovncnityp
 	if err != nil {
 		panic(fmt.Sprintf("failed to marshal EVPN config: %v", err))
 	}
-	nad.Spec.Config = fmt.Sprintf(`{"cniVersion":"1.1.0","name":"cluster_udn_%s","type":"ovn-k8s-cni-overlay","netAttachDefName":"%s/%s","topology":"layer2","role":"primary","subnets":"10.10.0.0/16","transport":"evpn","evpn":%s}`, name, namespace, name, evpnJSON)
+	nad.Spec.Config = fmt.Sprintf(`{"cniVersion":"1.1.0","name":"cluster_udn_%s","type":"ovn-k8s-cni-overlay","netAttachDefName":"%s/%s","topology":"layer2","role":"secondary","subnets":"10.10.0.0/16","transport":"evpn","evpn":%s}`, name, namespace, name, evpnJSON)
 	return nad
 }
 

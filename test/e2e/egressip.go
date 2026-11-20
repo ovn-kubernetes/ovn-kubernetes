@@ -32,7 +32,6 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider"
 	infraapi "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/api"
 
-	nadclient "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/typed/k8s.cni.cncf.io/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8stypes "k8s.io/apimachinery/pkg/types"
@@ -963,17 +962,11 @@ var _ = ginkgo.Describe("e2e egress IP validation", feature.EgressIP, func() {
 			if isClusterDefaultNetwork(netConfigParams) {
 				return
 			}
-			// configure UDN
-			nadClient, err := nadclient.NewForConfig(f.ClientConfig())
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			netConfig := newNetworkAttachmentConfig(netConfigParams)
-			netConfig.namespace = f.Namespace.Name
-			_, err = nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Create(
-				context.Background(),
-				generateNAD(netConfig, f.ClientSet),
-				metav1.CreateOptions{},
-			)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			// Use a CUDN so tests can attach additional namespaces to the same primary network.
+			netConfigParams.name = randomNetworkMetaName()
+			netConfigParams.networkName = util.GenerateCUDNNetworkName(netConfigParams.name)
+			netConfigParams.namespace = f.Namespace.Name
+			gomega.Expect(createPrimaryCUDN(f, &netConfigParams)).To(gomega.Succeed())
 		})
 
 		ginkgo.AfterEach(func() {
@@ -3518,16 +3511,7 @@ spec:
 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 
 			ginkgo.By(fmt.Sprintf("namespace is connected to UDN, create a namespace attached to this primary as a %s UDN", netConfigParams.topology))
-			nadClient, err := nadclient.NewForConfig(f.ClientConfig())
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			netConfig := newNetworkAttachmentConfig(netConfigParams)
-			netConfig.namespace = otherNetworkNamespace.Name
-			_, err = nadClient.NetworkAttachmentDefinitions(otherNetworkNamespace.Name).Create(
-				context.Background(),
-				generateNAD(netConfig, f.ClientSet),
-				metav1.CreateOptions{},
-			)
-			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Expect(setPrimaryCUDNNamespaces(f, netConfigParams.name, f.Namespace.Name, otherNetworkNamespace.Name)).To(gomega.Succeed())
 			egressNodeAvailabilityHandler := egressNodeAvailabilityHandlerViaLabel{f}
 			ginkgo.By("1. Set one node as available for egress")
 			egressNodeAvailabilityHandler.Enable(egress1Node.name)
@@ -4401,16 +4385,8 @@ spec:
 				})
 				ginkgo.By(fmt.Sprintf("namespace is connected to CDN, create a namespace with %s primary UDN", otherNetworkAttachParms.topology))
 				// create primary UDN
-				nadClient, err := nadclient.NewForConfig(f.ClientConfig())
-				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				netConfig := newNetworkAttachmentConfig(otherNetworkAttachParms)
-				netConfig.namespace = otherNetworkNamespace.Name
-				_, err = nadClient.NetworkAttachmentDefinitions(otherNetworkNamespace.Name).Create(
-					context.Background(),
-					generateNAD(netConfig, f.ClientSet),
-					metav1.CreateOptions{},
-				)
-				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				otherNetworkAttachParms.namespace = otherNetworkNamespace.Name
+				gomega.Expect(createPrimaryUDN(f, &otherNetworkAttachParms)).To(gomega.Succeed())
 			} else {
 				ginkgo.By(fmt.Sprintf("Building other namespace api object for CDN, basename %s", f.BaseName))
 				otherNetworkNamespace, err = f.CreateNamespace(context.Background(), f.BaseName, map[string]string{

@@ -180,6 +180,7 @@ func (o *FakeOVN) start(objects ...runtime.Object) {
 	anpObjects := []runtime.Object{}
 	ipamClaimObjects := []runtime.Object{}
 	uplinkObjects := []runtime.Object{}
+	udnClient := udnclientfake.NewSimpleClientset()
 	v1Objects := []runtime.Object{}
 	nads := []nettypes.NetworkAttachmentDefinition{}
 	nadClient := fakenadclient.NewSimpleClientset()
@@ -201,8 +202,10 @@ func (o *FakeOVN) start(objects ...runtime.Object) {
 			// must provision the NAD tracker manually, as per
 			// https://github.com/ovn-kubernetes/ovn-kubernetes/blob/65c79af35b2c22f90c863debefa15c4fb1f088cb/go-controller/vendor/k8s.io/client-go/testing/fixture.go#L341
 			// since the NADs use arbitrary API registration names, which `UnsafeGuessKindToResource` cannot resolve.
-			for _, nad := range o.Items {
-				if err := nadClient.Tracker().Create(schema.GroupVersionResource(nadGVR()), &nad, nad.Namespace); err != nil {
+			for i := range o.Items {
+				nad := &o.Items[i]
+				gomega.Expect(ovntest.EnsurePrimaryNADOwner(udnClient, nad)).To(gomega.Succeed())
+				if err := nadClient.Tracker().Create(schema.GroupVersionResource(nadGVR()), nad, nad.Namespace); err != nil {
 					panic(err)
 				}
 			}
@@ -237,7 +240,7 @@ func (o *FakeOVN) start(objects ...runtime.Object) {
 		AdminPolicyRouteClient:   adminpolicybasedroutefake.NewSimpleClientset(apbExternalRouteObjects...),
 		IPAMClaimsClient:         fakeipamclaimclient.NewSimpleClientset(ipamClaimObjects...),
 		NetworkAttchDefClient:    nadClient,
-		UserDefinedNetworkClient: udnclientfake.NewSimpleClientset(),
+		UserDefinedNetworkClient: udnClient,
 		UplinkClient:             uplinkfake.NewSimpleClientset(uplinkObjects...),
 		VTEPClient:               vtepfake.NewSimpleClientset(),
 	}
