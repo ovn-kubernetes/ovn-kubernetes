@@ -18,6 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
 	utilnet "k8s.io/utils/net"
+	"k8s.io/utils/ptr"
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
@@ -183,6 +184,10 @@ type Layer2UserDefinedNetworkController struct {
 	syncZoneICFailed            sync.Map
 	syncEIPNodeRerouteFailed    sync.Map
 	nodeClusterRouterPortFailed sync.Map
+
+	// gatewaySyncedAdvertised records, per node, whether the network was
+	// advertised when its gateway was last synchronized successfully.
+	gatewaySyncedAdvertised sync.Map
 
 	// Cluster-wide router default Control Plane Protection (COPP) UUID
 	defaultCOPPUUID string
@@ -554,6 +559,54 @@ func (oc *Layer2UserDefinedNetworkController) MarkGatewaySyncNeeded(nodeName str
 	oc.gatewaysFailed.Store(nodeName, true)
 }
 
+// localNodeSyncs returns what an add (oldNode nil) or update of the local
+// node has to sync.
+func (oc *Layer2UserDefinedNetworkController) localNodeSyncs(oldNode, newNode *corev1.Node, oldState, newState *nodecontroller.NodeAnnotationState) *nodeSyncs {
+	if oldNode == nil {
+		// An add syncs everything, whatever is marked failed: a mark
+		// can be set before the node's first add has succeeded, such
+		// as by reconcile when the network's advertisement changes,
+		// and syncing only what is marked would then leave the rest
+		// of the node's topology uncreated. Every sync is
+		// create-or-update, so a retried add redoes what already
+		// succeeded at no more than the cost of doing it.
+		return &nodeSyncs{
+			syncMgmtPort:          true,
+			syncGw:                true,
+			syncReroute:           true,
+			syncClusterRouterPort: true,
+		}
+	}
+	nodeSubnetChange := nodeSubnetChangedForUDN(oldNode, newNode, oc.GetNetworkName(), oldState, newState)
+	_, mgmtUpdateFailed := oc.mgmtPortFailed.Load(newNode.Name)
+	shouldSyncMgmtPort := mgmtUpdateFailed || nodeSubnetChange
+	_, gwUpdateFailed := oc.gatewaysFailed.Load(newNode.Name)
+	shouldSyncGW := gwUpdateFailed ||
+		oc.gatewayAdvertisementChanged(newNode.Name) ||
+		gatewayChanged(oldNode, newNode, oldState, newState, oc.GetNetworkName()) ||
+		nodeChassisChanged(oldNode, newNode) ||
+		hostCIDRsChanged(oldNode, newNode) ||
+		nodeGatewayMTUSupportChanged(oldNode, newNode)
+	_, syncRerouteFailed := oc.syncEIPNodeRerouteFailed.Load(newNode.Name)
+	shouldSyncReroute := syncRerouteFailed || util.NodeHostCIDRsAnnotationChanged(oldNode, newNode)
+	_, clusterRouterPortFailed := oc.nodeClusterRouterPortFailed.Load(newNode.Name)
+	return &nodeSyncs{
+		syncMgmtPort:          shouldSyncMgmtPort,
+		syncGw:                shouldSyncGW,
+		syncReroute:           shouldSyncReroute,
+		syncClusterRouterPort: clusterRouterPortFailed,
+	}
+}
+
+// gatewayAdvertisementChanged reports whether the current advertisement state
+// differs from the state applied by the last successful gateway synchronization.
+// Checking the applied state makes a newer reconciliation retry durable even if
+// an older in-flight synchronization clears its failure marker after it finishes.
+func (oc *Layer2UserDefinedNetworkController) gatewayAdvertisementChanged(nodeName string) bool {
+	synced, ok := oc.gatewaySyncedAdvertised.Load(nodeName)
+	return !ok || synced.(bool) != util.IsPodNetworkAdvertisedAtNode(oc, nodeName)
+}
+
 // ReconcileNode reconciles a node for a layer2 UDN controller.
 func (oc *Layer2UserDefinedNetworkController) ReconcileNode(ctx context.Context, oldNode, newNode *corev1.Node, oldState, newState *nodecontroller.NodeAnnotationState) error {
 	if newNode == nil {
@@ -564,48 +617,7 @@ func (oc *Layer2UserDefinedNetworkController) ReconcileNode(ctx context.Context,
 	}
 
 	if oc.isLocalNode(newNode) {
-		var nodeParams *nodeSyncs
-		if oldNode == nil {
-			_, syncMgmtPort := oc.mgmtPortFailed.Load(newNode.Name)
-			_, syncGw := oc.gatewaysFailed.Load(newNode.Name)
-			_, syncReroute := oc.syncEIPNodeRerouteFailed.Load(newNode.Name)
-			_, syncClusterRouterPort := oc.nodeClusterRouterPortFailed.Load(newNode.Name)
-			if syncMgmtPort || syncGw || syncReroute || syncClusterRouterPort {
-				nodeParams = &nodeSyncs{
-					syncMgmtPort:          syncMgmtPort,
-					syncGw:                syncGw,
-					syncReroute:           syncReroute,
-					syncClusterRouterPort: syncClusterRouterPort,
-				}
-			} else {
-				nodeParams = &nodeSyncs{
-					syncMgmtPort:          true,
-					syncGw:                true,
-					syncReroute:           true,
-					syncClusterRouterPort: true,
-				}
-			}
-		} else {
-			nodeSubnetChange := nodeSubnetChangedForUDN(oldNode, newNode, oc.GetNetworkName(), oldState, newState)
-			_, mgmtUpdateFailed := oc.mgmtPortFailed.Load(newNode.Name)
-			shouldSyncMgmtPort := mgmtUpdateFailed || nodeSubnetChange
-			_, gwUpdateFailed := oc.gatewaysFailed.Load(newNode.Name)
-			shouldSyncGW := gwUpdateFailed ||
-				gatewayChanged(oldNode, newNode, oldState, newState, oc.GetNetworkName()) ||
-				nodeChassisChanged(oldNode, newNode) ||
-				hostCIDRsChanged(oldNode, newNode) ||
-				nodeGatewayMTUSupportChanged(oldNode, newNode)
-			_, syncRerouteFailed := oc.syncEIPNodeRerouteFailed.Load(newNode.Name)
-			shouldSyncReroute := syncRerouteFailed || util.NodeHostCIDRsAnnotationChanged(oldNode, newNode)
-			_, clusterRouterPortFailed := oc.nodeClusterRouterPortFailed.Load(newNode.Name)
-			nodeParams = &nodeSyncs{
-				syncMgmtPort:          shouldSyncMgmtPort,
-				syncGw:                shouldSyncGW,
-				syncReroute:           shouldSyncReroute,
-				syncClusterRouterPort: clusterRouterPortFailed,
-			}
-		}
-		return oc.addUpdateLocalNodeEvent(ctx, newNode, nodeParams)
+		return oc.addUpdateLocalNodeEvent(ctx, newNode, oc.localNodeSyncs(oldNode, newNode, oldState, newState))
 	}
 
 	if config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
@@ -733,6 +745,7 @@ func (oc *Layer2UserDefinedNetworkController) addUpdateLocalNodeEvent(_ context.
 						return err
 					}
 				}
+				oc.gatewaySyncedAdvertised.Store(node.Name, isUDNAdvertised)
 				oc.gatewaysFailed.Delete(node.Name)
 				return nil
 			}()
@@ -918,6 +931,7 @@ func (oc *Layer2UserDefinedNetworkController) deleteNodeEvent(node *corev1.Node)
 				return fmt.Errorf("failed to cleanup gateway on node %q: %w", node.Name, err)
 			}
 			oc.gatewayManagers.Delete(node.Name)
+			oc.gatewaySyncedAdvertised.Delete(node.Name)
 		}
 	} else if oc.hasInterconnectTransport() {
 		if err := oc.cleanupInterconnectSetupForRemoteNode(node); err != nil {
@@ -968,11 +982,69 @@ func (oc *Layer2UserDefinedNetworkController) addOrUpdateUDNClusterSubnetEgressS
 	router := &nbdb.LogicalRouter{
 		Name: routerName,
 	}
-	if err := libovsdbops.CreateOrUpdateNATs(oc.nbClient, router, nats...); err != nil {
+	if err := oc.reconcileUDNClusterSubnetEgressSNATs(router, nats); err != nil {
 		return fmt.Errorf("failed to update SNAT for cluster on router: %q for network %q, error: %w",
 			routerName, oc.GetNetworkName(), err)
 	}
 	return nil
+}
+
+// reconcileUDNClusterSubnetEgressSNATs replaces obsolete forms of the Layer2
+// cluster-subnet SNAT in the same transaction that creates the desired forms.
+// Advertisement changes can replace one match-based SNAT with two
+// allowed_ext_ips SNATs, or vice versa. CreateOrUpdateNATsOps intentionally
+// treats the allowed_ext_ips rows as distinct, so it cannot remove the rows
+// that belonged to the previous advertisement state by itself.
+func (oc *Layer2UserDefinedNetworkController) reconcileUDNClusterSubnetEgressSNATs(
+	router *nbdb.LogicalRouter, desiredNATs []*nbdb.NAT) error {
+	routerNATs, err := libovsdbops.GetRouterNATs(oc.nbClient, router)
+	if err != nil {
+		return fmt.Errorf("failed to list existing NATs on router %q: %w", router.Name, err)
+	}
+
+	ops, err := libovsdbops.CreateOrUpdateNATsOps(oc.nbClient, nil, router, desiredNATs...)
+	if err != nil {
+		return fmt.Errorf("failed to build desired SNAT operations on router %q: %w", router.Name, err)
+	}
+
+	desiredUUIDs := sets.New[string]()
+	for _, desiredNAT := range desiredNATs {
+		desiredUUIDs.Insert(desiredNAT.UUID)
+	}
+
+	staleNATs := []*nbdb.NAT{}
+	for _, routerNAT := range routerNATs {
+		if desiredUUIDs.Has(routerNAT.UUID) {
+			continue
+		}
+		for _, desiredNAT := range desiredNATs {
+			if sameUDNClusterSubnetEgressSNAT(routerNAT, desiredNAT) {
+				staleNATs = append(staleNATs, routerNAT)
+				break
+			}
+		}
+	}
+
+	if len(staleNATs) > 0 {
+		ops, err = libovsdbops.DeleteNATsOps(oc.nbClient, ops, router, staleNATs...)
+		if err != nil {
+			return fmt.Errorf("failed to build stale SNAT cleanup operations on router %q: %w", router.Name, err)
+		}
+	}
+
+	if _, err := libovsdbops.TransactAndCheck(oc.nbClient, ops); err != nil {
+		return fmt.Errorf("failed to reconcile SNATs on router %q: %w", router.Name, err)
+	}
+	return nil
+}
+
+func sameUDNClusterSubnetEgressSNAT(existing, desired *nbdb.NAT) bool {
+	return existing.Type == nbdb.NATTypeSNAT &&
+		existing.LogicalIP == desired.LogicalIP &&
+		existing.ExternalIP == desired.ExternalIP &&
+		ptr.Equal(existing.LogicalPort, desired.LogicalPort) &&
+		existing.ExternalIDs[types.NetworkExternalID] == desired.ExternalIDs[types.NetworkExternalID] &&
+		existing.ExternalIDs[types.TopologyExternalID] == desired.ExternalIDs[types.TopologyExternalID]
 }
 
 func (oc *Layer2UserDefinedNetworkController) nodeGatewayConfig(node *corev1.Node, isPodNetworkAdvertised bool) (*GatewayConfig, error) {

@@ -9,6 +9,7 @@ import (
 
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ktesting "k8s.io/client-go/testing"
@@ -160,6 +161,9 @@ func AddVTEPApplyReactor(fakeClient *vtepfake.Clientset) {
 				return true, nil, err
 			}
 
+			if apiequality.Semantic.DeepEqual(vtep.Status, patchData.Status) {
+				return true, vtep, nil
+			}
 			vtep.Status = patchData.Status
 		} else {
 			type MetadataPatch struct {
@@ -173,11 +177,16 @@ func AddVTEPApplyReactor(fakeClient *vtepfake.Clientset) {
 				return true, nil, err
 			}
 
+			if apiequality.Semantic.DeepEqual(vtep.Finalizers, patchData.Metadata.Finalizers) {
+				return true, vtep, nil
+			}
 			vtep.Finalizers = patchData.Metadata.Finalizers
 		}
 
-		_ = fakeClient.Tracker().Update(
-			vtepv1.SchemeGroupVersion.WithResource("vteps"), vtep, "")
+		if err := fakeClient.Tracker().Update(
+			vtepv1.SchemeGroupVersion.WithResource("vteps"), vtep, ""); err != nil {
+			return true, nil, err
+		}
 
 		// Simulate API server garbage collection: when an object has a
 		// non-zero DeletionTimestamp and no remaining finalizers, the real
