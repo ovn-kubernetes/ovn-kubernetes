@@ -6070,7 +6070,7 @@ func TestController_updateRAStatusDegraded(t *testing.T) {
 func TestSharedNADRetainsBothAdvertisements(t *testing.T) {
 	g := gomega.NewWithT(t)
 	ctx := context.Background()
-	stale := &nadtypes.NetworkAttachmentDefinition{ObjectMeta: metav1.ObjectMeta{Namespace: "blue", Name: "blue", ResourceVersion: "1"}}
+	stale := &nadtypes.NetworkAttachmentDefinition{ObjectMeta: metav1.ObjectMeta{Namespace: "blue", Name: "blue", UID: "original", ResourceVersion: "1"}}
 	indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
 	g.Expect(indexer.Add(stale)).To(gomega.Succeed())
 
@@ -6167,6 +6167,13 @@ func TestSharedNADRetainsBothAdvertisements(t *testing.T) {
 	egressOnly.Annotations[types.OvnRouteAdvertisementsIntentKey] = nad.Annotations[types.OvnRouteAdvertisementsIntentKey]
 	checkEvent(changedVRF, egressOnly) // West keeps its reference after dropping pod advertisement.
 	checkEvent(egressOnly, nad)
+
+	replacement := nad.DeepCopy()
+	replacement.UID = "replacement"
+	g.Expect(indexer.Update(replacement)).To(gomega.Succeed(), "recreate the NAD between selection and patch planning")
+	updates, err = c.getNADUpdates("west", &util.RouteAdvertisementsIntent{TargetVRF: "green"}, []*nadtypes.NetworkAttachmentDefinition{stale})
+	g.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("blue/blue")), "retry selection against the replacement")
+	g.Expect(updates).To(gomega.BeEmpty(), "a replacement cannot inherit west's selection")
 }
 
 func TestController_rejectedUpdateWithdrawsConfigurations(t *testing.T) {

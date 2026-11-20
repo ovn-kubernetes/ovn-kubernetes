@@ -29,6 +29,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	ktypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	corelisters "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
@@ -2337,9 +2338,9 @@ func (c *Controller) independentNADUpdates(ra string, intent *util.RouteAdvertis
 
 func (c *Controller) getNADUpdates(ra string, intent *util.RouteAdvertisementsIntent, nads []*nadtypes.NetworkAttachmentDefinition) ([]nadUpdate, error) {
 	var updates []nadUpdate
-	selected := sets.New[string]()
+	selected := make(map[string]ktypes.UID, len(nads))
 	for _, nad := range nads {
-		selected.Insert(nad.Namespace + "/" + nad.Name)
+		selected[nad.Namespace+"/"+nad.Name] = nad.UID
 	}
 
 	// An RA can be deleted right after its last NAD patch. The reconcile
@@ -2357,9 +2358,14 @@ func (c *Controller) getNADUpdates(ra string, intent *util.RouteAdvertisementsIn
 		raSet := sets.New(ras...)
 		nadName := nad.Namespace + "/" + nad.Name
 		next := intent
-		if selected.Has(nadName) {
+		if uid, ok := selected[nadName]; ok {
+			// A CUDN can recreate this name after selection. Retry with its
+			// replacement before publishing the previous network's intent.
+			if uid != nad.UID {
+				continue
+			}
 			raSet.Insert(ra)
-			selected.Delete(nadName)
+			delete(selected, nadName)
 		} else {
 			raSet.Delete(ra)
 			next = nil
@@ -2396,8 +2402,8 @@ func (c *Controller) getNADUpdates(ra string, intent *util.RouteAdvertisementsIn
 			})
 		}
 	}
-	if selected.Len() != 0 {
-		return updates, fmt.Errorf("failed to annotate NADs that were not found %v", selected.UnsortedList())
+	if len(selected) != 0 {
+		return updates, fmt.Errorf("selected NADs disappeared or were replaced before annotation: %v", slices.Sorted(maps.Keys(selected)))
 	}
 	return updates, nil
 }
