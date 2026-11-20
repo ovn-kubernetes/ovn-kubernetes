@@ -234,6 +234,7 @@ func getNodePrimaryIfAddrs(watchFactory factory.NodeWatchFactory, nodeName strin
 // It is split from initGatewayMainStart to allow for the gateway object and openflow manager to be created
 // before the rest of the gateway functionality is started.
 func (nc *DefaultNodeNetworkController) initGatewayPreStart(
+	ctx context.Context,
 	subnets []*net.IPNet,
 	nodeAnnotator kube.Annotator,
 	mgmtPort managementport.Interface,
@@ -273,6 +274,7 @@ func (nc *DefaultNodeNetworkController) initGatewayPreStart(
 	case config.GatewayModeLocal, config.GatewayModeShared:
 		klog.Info("Preparing Gateway")
 		gw, err = newGateway(
+			ctx,
 			nc.name,
 			subnets,
 			gatewayNextHops,
@@ -322,7 +324,7 @@ func (nc *DefaultNodeNetworkController) initGatewayPreStart(
 		return gw.readyFunc()
 	}
 
-	if err := nodeAnnotator.Run(); err != nil {
+	if err := nodeAnnotator.Run(ctx); err != nil {
 		return nil, fmt.Errorf("failed to set node %s annotations: %w", nc.name, err)
 	}
 
@@ -401,7 +403,7 @@ func interfaceForEXGW(ovsClient libovsdbclient.Client, intfName string) (string,
 }
 
 // TODO(adrianc): revisit if support for nodeIPManager is needed.
-func (nc *DefaultNodeNetworkController) initGatewayDPUHostPreStart(kubeNodeIP net.IP, nodeAnnotator kube.Annotator) error {
+func (nc *DefaultNodeNetworkController) initGatewayDPUHostPreStart(ctx context.Context, kubeNodeIP net.IP, nodeAnnotator kube.Annotator) error {
 	klog.Info("Initializing Shared Gateway Functionality for Gateway PreStart on DPU host")
 
 	// Find the network interface that has the Kubernetes node IP assigned to it
@@ -453,7 +455,7 @@ func (nc *DefaultNodeNetworkController) initGatewayDPUHostPreStart(kubeNodeIP ne
 	}
 
 	// Apply all node annotations to the Kubernetes node object
-	if err := nodeAnnotator.Run(); err != nil {
+	if err := nodeAnnotator.Run(ctx); err != nil {
 		return fmt.Errorf("failed to set node %s annotations: %w", nc.name, err)
 	}
 
@@ -469,7 +471,7 @@ func (nc *DefaultNodeNetworkController) initGatewayDPUHostPreStart(kubeNodeIP ne
 	}
 
 	// Masquerade config mostly done on node, update annotation
-	if err := updateMasqueradeAnnotation(nc.name, nc.Kube); err != nil {
+	if err := updateMasqueradeAnnotation(ctx, nc.name, nc.Kube); err != nil {
 		return fmt.Errorf("failed to update masquerade subnet annotation on node: %s, error: %v", nc.name, err)
 	}
 
@@ -491,7 +493,7 @@ func (nc *DefaultNodeNetworkController) initGatewayDPUHostPreStart(kubeNodeIP ne
 	return nil
 }
 
-func (nc *DefaultNodeNetworkController) initGatewayDPUHost() error {
+func (nc *DefaultNodeNetworkController) initGatewayDPUHost(ctx context.Context) error {
 	// A DPU host gateway is complementary to the shared gateway running
 	// on the DPU embedded CPU. it performs some initializations and
 	// watch on services for nftables rule updates and run a loadBalancerHealth checker
@@ -502,11 +504,11 @@ func (nc *DefaultNodeNetworkController) initGatewayDPUHost() error {
 	gw := nc.Gateway.(*gateway)
 	gw.nodeIPManager = newAddressManager(nc.name, nc.Kube, nil, nc.watchFactory, nil, nc.ovsClient)
 	if config.Gateway.NodeportEnable {
-		if err := initGatewayNFTables(); err != nil {
+		if err := initGatewayNFTables(ctx); err != nil {
 			return err
 		}
 		if util.IsNetworkSegmentationSupportEnabled() {
-			if err := configureUDNServicesNFTables(); err != nil {
+			if err := configureUDNServicesNFTables(ctx); err != nil {
 				return fmt.Errorf("unable to configure UDN nftables: %w", err)
 			}
 		}
@@ -584,7 +586,7 @@ func CleanupClusterNode(ctx context.Context, name string) error {
 	return nil
 }
 
-func (nc *DefaultNodeNetworkController) updateGatewayMAC(link netlink.Link) error {
+func (nc *DefaultNodeNetworkController) updateGatewayMAC(ctx context.Context, link netlink.Link) error {
 	// TBD-merge for dpu-host mode: if interface mac of the dpu-host interface that connects to the
 	// gateway bridge on the dpu changes, we need to update dpu's gatewayBridge.macAddress L3 gateway
 	// annotation (see BridgeForInterface)
@@ -610,7 +612,7 @@ func (nc *DefaultNodeNetworkController) updateGatewayMAC(link netlink.Link) erro
 	}
 	// MAC must have changed, update node
 	nc.Gateway.SetDefaultGatewayBridgeMAC(link.Attrs().HardwareAddr)
-	if err := nc.Gateway.Reconcile(); err != nil {
+	if err := nc.Gateway.Reconcile(ctx); err != nil {
 		return fmt.Errorf("failed to reconcile gateway for MAC address update: %w", err)
 	}
 	nodeAnnotator := kube.NewNodeAnnotator(nc.Kube, node.Name)
@@ -618,7 +620,7 @@ func (nc *DefaultNodeNetworkController) updateGatewayMAC(link netlink.Link) erro
 	if err := util.SetL3GatewayConfig(nodeAnnotator, l3gwConf); err != nil {
 		return fmt.Errorf("failed to update L3 gateway config annotation for node: %s, error: %w", node.Name, err)
 	}
-	if err := nodeAnnotator.Run(); err != nil {
+	if err := nodeAnnotator.Run(ctx); err != nil {
 		return fmt.Errorf("failed to set node %s annotations: %w", nc.name, err)
 	}
 

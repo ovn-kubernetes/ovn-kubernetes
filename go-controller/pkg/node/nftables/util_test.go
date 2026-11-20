@@ -134,7 +134,7 @@ func TestAddObjects(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error parsing initial state: %v", err)
 			}
-			err = AddObjects(tc.objs)
+			err = AddObjects(context.Background(), tc.objs)
 			if err != nil {
 				t.Fatalf("unexpected error adding objects: %v", err)
 			}
@@ -366,7 +366,7 @@ func TestDeleteObjects(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error parsing initial state: %v", err)
 			}
-			err = DeleteObjects(tc.objs)
+			err = DeleteObjects(context.Background(), tc.objs)
 			if err != nil {
 				t.Fatalf("unexpected error deleting objects: %v", err)
 			}
@@ -534,7 +534,7 @@ func TestSyncObjects(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error parsing initial state: %v", err)
 			}
-			err = SyncObjects(tc.containers, tc.contents)
+			err = SyncObjects(context.Background(), tc.containers, tc.contents)
 			if tc.err {
 				if err == nil {
 					t.Fatalf("expected an error but got none")
@@ -573,14 +573,14 @@ func TestDeleteElementsIfMatchingConcurrentReplacement(t *testing.T) {
 	fake := SetFakeNFTablesHelper()
 	original := &knftables.Element{Map: "owners", Key: []string{"80"}, Value: []string{"1"}}
 	replacement := &knftables.Element{Map: "owners", Key: []string{"80"}, Value: []string{"2"}}
-	if err := AddObjects([]knftables.Object{&knftables.Map{Name: "owners", Type: "inet_service : mark"}, original}); err != nil {
+	if err := AddObjects(context.Background(), []knftables.Object{&knftables.Map{Name: "owners", Type: "inet_service : mark"}, original}); err != nil {
 		t.Fatalf("initialize ownership map: %v", err)
 	}
 	paused := &pausedMapLookup{Interface: fake, listed: make(chan struct{}), resume: make(chan struct{})}
 	nftHelper = paused
 	t.Cleanup(func() { nftHelper = fake })
 	deleted := make(chan error, 1)
-	go func() { deleted <- DeleteElementsIfMatching([]knftables.Object{original}) }()
+	go func() { deleted <- DeleteElementsIfMatching(context.Background(), []knftables.Object{original}) }()
 	select {
 	case <-paused.listed:
 	case <-time.After(5 * time.Second):
@@ -591,7 +591,7 @@ func TestDeleteElementsIfMatchingConcurrentReplacement(t *testing.T) {
 	added := make(chan error, 1)
 	go func() {
 		close(started)
-		added <- AddObjects([]knftables.Object{replacement})
+		added <- AddObjects(context.Background(), []knftables.Object{replacement})
 	}()
 	<-started
 	// The replacement must wait while the conditional deletion owns its snapshot.

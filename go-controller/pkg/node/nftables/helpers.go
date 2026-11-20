@@ -26,7 +26,7 @@ func SetFakeNFTablesHelper() *knftables.Fake {
 	fake := knftables.NewFake(knftables.InetFamily, OVNKubernetesNFTablesName)
 	tx := fake.NewTransaction()
 	tx.Add(&knftables.Table{})
-	_ = fake.Run(context.TODO(), tx)
+	_ = fake.Run(context.Background(), tx)
 
 	nftHelper = fake
 	return fake
@@ -42,7 +42,8 @@ func GetNFTablesHelper() (knftables.Interface, error) {
 		}
 		tx := nft.NewTransaction()
 		tx.Add(&knftables.Table{})
-		err = nft.Run(context.TODO(), tx)
+		ctx := context.Background()
+		err = nft.Run(ctx, tx)
 		if err != nil {
 			return nil, err
 		}
@@ -57,7 +58,7 @@ func SetFakeEgressIPNFTablesHelper() *knftables.Fake {
 	fake := knftables.NewFake(knftables.NetDevFamily, OVNKubernetesEgressIPNFTablesName)
 	tx := fake.NewTransaction()
 	tx.Add(&knftables.Table{})
-	_ = fake.Run(context.TODO(), tx)
+	_ = fake.Run(context.Background(), tx)
 
 	nftEgressIPHelper = fake
 	return fake

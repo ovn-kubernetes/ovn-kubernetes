@@ -491,7 +491,7 @@ var _ = Describe("Cluster Manager Status Manager", func() {
 		config.OVNKubernetesFeature.EnableAdminNetworkPolicy = true
 		zones := sets.New("zone1", "zone2")
 		start(zones)
-		statusManager.onZoneUpdate(sets.New("zone1", "zone2", "zone3")) // add
+		statusManager.onZoneUpdate(context.Background(), sets.New("zone1", "zone2", "zone3")) // add
 		// the actual status update for zones is done in ovnkube-controller but here we just want to
 		// check if a zone delete at least triggers the API List calls which means we are triggering
 		// the SSA logic to delete/clear that status. Real cleanup cannot be tested since fakeClient
@@ -528,7 +528,7 @@ var _ = Describe("Cluster Manager Status Manager", func() {
 			klog.Infof("Got an patch spec action for %v", patch.GetResource())
 			return false, nil, nil
 		})
-		statusManager.onZoneUpdate(sets.New("zone1")) // delete "zone2", "zone3"
+		statusManager.onZoneUpdate(context.Background(), sets.New("zone1")) // delete "zone2", "zone3"
 		// ensure list was called only once for each resource even if multiple zones are deleted
 		Eventually(func() uint32 {
 			return atomic.LoadUint32(&anpsWereListed)
@@ -601,7 +601,7 @@ var _ = Describe("Cluster Manager Status Manager", func() {
 
 		// Simulate deleting zone2 (now zones = {zone1})
 		// This will trigger message-based cleanup because len(messages)=2 > zones.Len()=1
-		statusManager.onZoneUpdate(sets.New("zone1"))
+		statusManager.onZoneUpdate(context.Background(), sets.New("zone1"))
 
 		// Verify cleanup was called for the deleted zone
 		// NOTE: Due to fake client limitations (doesn't support SSA), cleanup may be called

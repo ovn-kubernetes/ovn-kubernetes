@@ -214,7 +214,7 @@ func (g *BridgeEIPAddrManager) GetCache() *MarkIPsCache {
 	return g.cache
 }
 
-func (g *BridgeEIPAddrManager) AddEgressIP(eip *egressipv1.EgressIP) (bool, error) {
+func (g *BridgeEIPAddrManager) AddEgressIP(ctx context.Context, eip *egressipv1.EgressIP) (bool, error) {
 	ip, pktMark, shouldSkip, err := g.parseAndValidateEIP(eip)
 	if err != nil {
 		return false, fmt.Errorf("failed to add EgressIP gateway config because unable to parse and validate EgressIP: %v", err)
@@ -224,7 +224,7 @@ func (g *BridgeEIPAddrManager) AddEgressIP(eip *egressipv1.EgressIP) (bool, erro
 	}
 	// must always add to cache before adding IP because we want to inform node ip handler that this is not a valid node IP
 	g.cache.insertMarkIP(pktMark, ip)
-	if err = g.addIPToAnnotation(ip); err != nil {
+	if err = g.addIPToAnnotation(ctx, ip); err != nil {
 		return false, fmt.Errorf("failed to add EgressIP gateway config because unable to add EgressIP IP to Node annotation: %v", err)
 	}
 	if err = g.addIPBridge(ip); err != nil {
@@ -233,7 +233,7 @@ func (g *BridgeEIPAddrManager) AddEgressIP(eip *egressipv1.EgressIP) (bool, erro
 	return true, nil
 }
 
-func (g *BridgeEIPAddrManager) UpdateEgressIP(oldEIP, newEIP *egressipv1.EgressIP) (bool, error) {
+func (g *BridgeEIPAddrManager) UpdateEgressIP(ctx context.Context, oldEIP, newEIP *egressipv1.EgressIP) (bool, error) {
 	// Parse and validate old EgressIP
 	oldIP, oldMark, oldSkip, err := g.parseAndValidateEIP(oldEIP)
 	if err != nil {
@@ -281,7 +281,7 @@ func (g *BridgeEIPAddrManager) UpdateEgressIP(oldEIP, newEIP *egressipv1.EgressI
 	if !newSkip {
 		addIPs = []net.IP{newIP}
 	}
-	if err = g.updateAnnotationIPs(addIPs, delIPs); err != nil {
+	if err = g.updateAnnotationIPs(ctx, addIPs, delIPs); err != nil {
 		return isUpdated, fmt.Errorf("failed to update EgressIP gateway config because unable to update Node annotation: %v", err)
 	}
 
@@ -296,7 +296,7 @@ func (g *BridgeEIPAddrManager) UpdateEgressIP(oldEIP, newEIP *egressipv1.EgressI
 	return isUpdated, nil
 }
 
-func (g *BridgeEIPAddrManager) DeleteEgressIP(eip *egressipv1.EgressIP) (bool, error) {
+func (g *BridgeEIPAddrManager) DeleteEgressIP(ctx context.Context, eip *egressipv1.EgressIP) (bool, error) {
 	ip, pktMark, shouldSkip, err := g.parseAndValidateEIP(eip)
 	if err != nil {
 		return false, fmt.Errorf("failed to delete EgressIP gateway config because unable to parse and validate EgressIP: %v", err)
@@ -309,13 +309,13 @@ func (g *BridgeEIPAddrManager) DeleteEgressIP(eip *egressipv1.EgressIP) (bool, e
 		return false, fmt.Errorf("failed to delete EgressIP gateway config because failed to delete address from link: %v", err)
 	}
 	g.cache.deleteMarkIP(pktMark, ip)
-	if err = g.deleteIPsFromAnnotation(ip); err != nil {
+	if err = g.deleteIPsFromAnnotation(ctx, ip); err != nil {
 		return false, fmt.Errorf("failed to delete EgressIP gateway config because failed to delete EgressIP IP from Node annotation: %v", err)
 	}
 	return true, nil
 }
 
-func (g *BridgeEIPAddrManager) SyncEgressIP(objs []interface{}) error {
+func (g *BridgeEIPAddrManager) SyncEgressIP(ctx context.Context, objs []interface{}) error {
 	// caller must synchronise
 	annotIPs, err := g.getAnnotationIPs()
 	if err != nil {
@@ -357,7 +357,7 @@ func (g *BridgeEIPAddrManager) SyncEgressIP(objs []interface{}) error {
 		ipsToDel = append(ipsToDel, annotIP)
 	}
 	if len(ipsToAdd) > 0 || len(ipsToDel) > 0 {
-		if err = g.updateAnnotationIPs(ipsToAdd, ipsToDel); err != nil {
+		if err = g.updateAnnotationIPs(ctx, ipsToAdd, ipsToDel); err != nil {
 			return fmt.Errorf("failed to update EgressIP IPs in Node annotation: %v", err)
 		}
 	}
@@ -368,7 +368,7 @@ func (g *BridgeEIPAddrManager) SyncEgressIP(objs []interface{}) error {
 
 // updateAnnotationLocked updates the node's egress IPs
 // Must be called with nodeAnnotationMu locked
-func (g *BridgeEIPAddrManager) updateAnnotationLocked(updatedIPs sets.Set[string]) error {
+func (g *BridgeEIPAddrManager) updateAnnotationLocked(ctx context.Context, updatedIPs sets.Set[string]) error {
 	return retry.OnError(retry.DefaultRetry, util.IsNodeAnnotationPatchRetryable, func() error {
 		node, err := g.nodeLister.Get(g.nodeName)
 		if err != nil {
@@ -383,13 +383,13 @@ func (g *BridgeEIPAddrManager) updateAnnotationLocked(updatedIPs sets.Set[string
 			nodeToUpdate.Annotations = map[string]string{}
 		}
 		nodeToUpdate.Annotations[util.OVNNodeBridgeEgressIPs] = string(patch)
-		return g.kube.PatchNodeStatusAnnotations(context.TODO(), node, nodeToUpdate)
+		return g.kube.PatchNodeStatusAnnotations(ctx, node, nodeToUpdate)
 	})
 }
 
 // updateAnnotationIPs atomically adds and deletes IPs from the node annotation
 // in a single patch. Either addIPs or delIPs may be nil.
-func (g *BridgeEIPAddrManager) updateAnnotationIPs(addIPs, delIPs []net.IP) error {
+func (g *BridgeEIPAddrManager) updateAnnotationIPs(ctx context.Context, addIPs, delIPs []net.IP) error {
 	g.nodeAnnotationMu.Lock()
 	defer g.nodeAnnotationMu.Unlock()
 	updatedIPs := sets.New[string](g.annotationIPs.UnsortedList()...)
@@ -398,19 +398,19 @@ func (g *BridgeEIPAddrManager) updateAnnotationIPs(addIPs, delIPs []net.IP) erro
 	if updatedIPs.Equal(g.annotationIPs) {
 		return nil
 	}
-	if err := g.updateAnnotationLocked(updatedIPs); err != nil {
+	if err := g.updateAnnotationLocked(ctx, updatedIPs); err != nil {
 		return err
 	}
 	g.annotationIPs = updatedIPs
 	return nil
 }
 
-func (g *BridgeEIPAddrManager) addIPToAnnotation(candidateIP net.IP) error {
-	return g.updateAnnotationIPs([]net.IP{candidateIP}, nil)
+func (g *BridgeEIPAddrManager) addIPToAnnotation(ctx context.Context, candidateIP net.IP) error {
+	return g.updateAnnotationIPs(ctx, []net.IP{candidateIP}, nil)
 }
 
-func (g *BridgeEIPAddrManager) deleteIPsFromAnnotation(candidateIPs ...net.IP) error {
-	return g.updateAnnotationIPs(nil, candidateIPs)
+func (g *BridgeEIPAddrManager) deleteIPsFromAnnotation(ctx context.Context, candidateIPs ...net.IP) error {
+	return g.updateAnnotationIPs(ctx, nil, candidateIPs)
 }
 
 func (g *BridgeEIPAddrManager) addIPBridge(ip net.IP) error {

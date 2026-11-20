@@ -138,7 +138,8 @@ func NewManagementPortController(
 	}
 
 	// setup NFT sets early as gateway initialization depends on it
-	err = SetupManagementPortNFTSets()
+	ctx := context.Background()
+	err = SetupManagementPortNFTSets(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -218,7 +219,7 @@ func (mp *managementPortOVS) create() error {
 		return fmt.Errorf("failed to add port to br-int: stdout %q, stderr %q, error: %w", stdout, stderr, err)
 	}
 
-	return createPlatformManagementPort(types.K8sMgmtIntfName, mp.cfg, mp.routeManager)
+	return createPlatformManagementPort(context.Background(), types.K8sMgmtIntfName, mp.cfg, mp.routeManager)
 }
 
 func (mp *managementPortOVS) reconcilePeriod() time.Duration {
@@ -226,10 +227,10 @@ func (mp *managementPortOVS) reconcilePeriod() time.Duration {
 }
 
 func (mp *managementPortOVS) doReconcile() error {
-	return createPlatformManagementPort(types.K8sMgmtIntfName, mp.cfg, mp.routeManager)
+	return createPlatformManagementPort(context.Background(), types.K8sMgmtIntfName, mp.cfg, mp.routeManager)
 }
 
-func tearDownManagementPortConfig(link netlink.Link) error {
+func tearDownManagementPortConfig(ctx context.Context, link netlink.Link) error {
 	if err := util.LinkAddrFlush(link); err != nil {
 		return err
 	}
@@ -255,7 +256,7 @@ func tearDownManagementPortConfig(link netlink.Link) error {
 	tx.Delete(&knftables.Chain{
 		Name: nftMgmtPortChain,
 	})
-	err = nft.Run(context.TODO(), tx)
+	err = nft.Run(ctx, tx)
 	if err != nil && !knftables.IsNotFound(err) {
 		return fmt.Errorf("could not clear the nftables chain for management port: %v", err)
 	}
@@ -467,7 +468,7 @@ func setupManagementPortConfig(link netlink.Link, cfg *managementPortConfig, rou
 // setupManagementPortNFTSets sets up the NFT sets that the management port SNAR
 // rules rely on. These sets are written to by other componets so they are setup
 // independantly and as early as possible.
-func SetupManagementPortNFTSets() error {
+func SetupManagementPortNFTSets(ctx context.Context) error {
 	nft, err := nodenft.GetNFTablesHelper()
 	if err != nil {
 		return err
@@ -502,7 +503,7 @@ func SetupManagementPortNFTSets() error {
 		Flags:   []knftables.SetFlag{knftables.IntervalFlag},
 	})
 
-	err = nft.Run(context.TODO(), tx)
+	err = nft.Run(ctx, tx)
 	if err != nil {
 		return fmt.Errorf("could not add nftables sets for management port: %v", err)
 	}
@@ -511,7 +512,7 @@ func SetupManagementPortNFTSets() error {
 
 // setupManagementPortNFTChain sets up the management port SNAT chain and rules.
 // Relies on the sets from setupManagementPortNFTSets.
-func setupManagementPortNFTChain(interfaceName string, cfg *managementPortConfig) error {
+func setupManagementPortNFTChain(ctx context.Context, interfaceName string, cfg *managementPortConfig) error {
 	counterIfDebug := ""
 	if config.Logging.Level > 4 {
 		counterIfDebug = "counter"
@@ -646,14 +647,14 @@ func setupManagementPortNFTChain(interfaceName string, cfg *managementPortConfig
 		})
 	}
 
-	err = nft.Run(context.TODO(), tx)
+	err = nft.Run(ctx, tx)
 	if err != nil {
 		return fmt.Errorf("could not update nftables rule for management port: %v", err)
 	}
 	return nil
 }
 
-func UpdateNoSNATSubnetsSets(node *corev1.Node, getSubnetsFn func(*corev1.Node) ([]string, error)) error {
+func UpdateNoSNATSubnetsSets(ctx context.Context, node *corev1.Node, getSubnetsFn func(*corev1.Node) ([]string, error)) error {
 	subnetsList, err := getSubnetsFn(node)
 	if err != nil {
 		return fmt.Errorf("error retrieving subnets list: %w", err)
@@ -701,13 +702,13 @@ func UpdateNoSNATSubnetsSets(node *corev1.Node, getSubnetsFn func(*corev1.Node) 
 		tx.Add(elem)
 	}
 
-	return nft.Run(context.TODO(), tx)
+	return nft.Run(ctx, tx)
 }
 
 // createPlatformManagementPort creates a management port attached to the node switch
 // that lets the node access its pods via their private IP address. This is used
 // for health checking and other management tasks.
-func createPlatformManagementPort(interfaceName string, cfg *managementPortConfig, routeManager *routemanager.Controller) error {
+func createPlatformManagementPort(ctx context.Context, interfaceName string, cfg *managementPortConfig, routeManager *routemanager.Controller) error {
 	var link netlink.Link
 	link, err := util.LinkSetUp(interfaceName)
 	if err != nil {
@@ -716,7 +717,7 @@ func createPlatformManagementPort(interfaceName string, cfg *managementPortConfi
 	if err := setupManagementPortConfig(link, cfg, routeManager); err != nil {
 		return err
 	}
-	if err := setupManagementPortNFTChain(interfaceName, cfg); err != nil {
+	if err := setupManagementPortNFTChain(ctx, interfaceName, cfg); err != nil {
 		return err
 	}
 	DelLegacyMgtPortIptRules()
@@ -781,7 +782,8 @@ func unconfigureMgmtNetdevicePort(ovsClient libovsdbclient.Client, mgmtPortName 
 	}
 
 	klog.Infof("Found existing management interface %s. Unconfiguring it", mgmtPortName)
-	if err = tearDownManagementPortConfig(link); err != nil {
+	ctx := context.Background()
+	if err = tearDownManagementPortConfig(ctx, link); err != nil {
 		return fmt.Errorf("teardown failed: %v", err)
 	}
 

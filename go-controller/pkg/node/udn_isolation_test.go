@@ -97,7 +97,7 @@ add set inet ovn-kubernetes %s { type %s ; }
 				newElems["ns1/pod1"] = sets.New(getElem("1.1.1.2"))
 				newElems["ns1/pod2"] = sets.New(getElem("1.1.1.2"))
 				newElems["ns2/pod1"] = sets.New(getElem("1.1.1.3"))
-				Expect(s.fullSync(nft, newElems)).To(Succeed())
+				Expect(s.fullSync(context.Background(), nft, newElems)).To(Succeed())
 				Expect(nodenft.MatchNFTRules(getExpectedDump("1.1.1.2", "1.1.1.3"), nft.Dump())).To(Succeed())
 
 				Expect(s.podElements).To(Equal(newElems))
@@ -145,7 +145,7 @@ add set inet ovn-kubernetes %s { type %s ; }
 				newElems["ns1/pod1"] = sets.New(getElem("1.1.1.2"))
 				newElems["ns1/pod2"] = sets.New(getElem("1.1.1.2"))
 				newElems["ns2/pod1"] = sets.New(getElem("1.1.1.3"))
-				Expect(s.fullSync(nft, newElems)).To(Succeed())
+				Expect(s.fullSync(context.Background(), nft, newElems)).To(Succeed())
 
 				s.updatePodElementsTX("ns1/pod1", sets.New(getElem("1.1.1.1")), tx)
 				Expect(nft.Run(context.Background(), tx)).To(Succeed())
@@ -187,7 +187,7 @@ add set inet ovn-kubernetes %s { type %s ; }
 				newElems["ns1/pod1"] = sets.New(getElem("1.1.1.2"))
 				newElems["ns1/pod2"] = sets.New(getElem("1.1.1.2"))
 				newElems["ns2/pod1"] = sets.New(getElem("1.1.1.3"))
-				Expect(s.fullSync(nft, newElems)).To(Succeed())
+				Expect(s.fullSync(context.Background(), nft, newElems)).To(Succeed())
 
 				s.updatePodElementsTX("ns1/pod1", sets.New[string](), tx)
 				Expect(nft.Run(context.Background(), tx)).To(Succeed())
@@ -298,9 +298,9 @@ add rule inet ovn-kubernetes udn-isolation ip6 daddr @udn-pod-default-ips-v6 dro
 		manager.kubeletCgroupPath = "kubelet.slice/kubelet.service"
 		nft = nodenft.SetFakeNFTablesHelper()
 		manager.nft = nft
-		err = manager.setupUDNIsolationFromHost()
+		err = manager.setupUDNIsolationFromHost(context.Background())
 		Expect(err).NotTo(HaveOccurred())
-		err = controller.StartWithInitialSync(manager.podInitialSync, manager.podController)
+		err = controller.StartWithInitialSync(func() error { return manager.podInitialSync(context.Background()) }, manager.podController)
 		Expect(err).NotTo(HaveOccurred())
 	}
 
@@ -350,8 +350,8 @@ add rule inet ovn-kubernetes udn-isolation ip6 daddr @udn-pod-default-ips-v6 dro
 		manager.nft = nft
 
 		Expect(wf.Start()).To(Succeed())
-		Expect(manager.setupUDNIsolationFromHost()).To(Succeed())
-		Expect(manager.podInitialSync()).To(Succeed())
+		Expect(manager.setupUDNIsolationFromHost(context.Background())).To(Succeed())
+		Expect(manager.podInitialSync(context.Background())).To(Succeed())
 	})
 
 	It("correctly generates initial rules", func() {
@@ -666,12 +666,12 @@ add rule inet ovn-kubernetes udn-isolation ip6 daddr @udn-open-ports-icmp-v6 met
 		It("allows kubelet to reach UDN pods when the kubelet cgroup is known", func() {
 			manager.kubeletCgroupPath = "kubelet.slice/kubelet.service"
 
-			Expect(manager.setupUDNIsolationFromHost()).To(Succeed())
+			Expect(manager.setupUDNIsolationFromHost(context.Background())).To(Succeed())
 			Expect(nodenft.MatchNFTRules(expectedDump("kubelet.slice/kubelet.service"), fakeNFT.Dump())).To(Succeed())
 		})
 
 		It("still isolates UDN pods when the kubelet cgroup is unknown", func() {
-			Expect(manager.setupUDNIsolationFromHost()).To(Succeed())
+			Expect(manager.setupUDNIsolationFromHost(context.Background())).To(Succeed())
 			Expect(nodenft.MatchNFTRules(expectedDump(""), fakeNFT.Dump())).To(Succeed())
 		})
 	})
@@ -747,7 +747,7 @@ add rule inet ovn-kubernetes udn-isolation ip6 daddr @udn-open-ports-icmp-v6 met
 			// the kernel rejects the match, as one built without CONFIG_NFT_SOCKET does.
 			manager.nft = &nftRunFailer{Interface: fakeNFT, failures: 1}
 
-			manager.setKubeletCgroupPath(cgroupRoot)
+			manager.setKubeletCgroupPath(context.Background(), cgroupRoot)
 
 			Expect(manager.kubeletCgroupPath).To(BeEmpty(), "the kubelet rule is left out")
 			var event string
@@ -757,7 +757,7 @@ add rule inet ovn-kubernetes udn-isolation ip6 daddr @udn-open-ports-icmp-v6 met
 
 			// host isolation is still set up, only the kubelet rule is missing.
 			manager.nft = fakeNFT
-			Expect(manager.setupUDNIsolationFromHost()).To(Succeed())
+			Expect(manager.setupUDNIsolationFromHost(context.Background())).To(Succeed())
 			Expect(nodenft.MatchNFTRules(expectedDump(""), fakeNFT.Dump())).To(Succeed(), "UDN pods stay isolated from the host")
 		})
 
@@ -766,25 +766,25 @@ add rule inet ovn-kubernetes udn-isolation ip6 daddr @udn-open-ports-icmp-v6 met
 			Expect(os.MkdirAll(filepath.Join(cgroupRoot, "podruntime", "kubelet"), 0o755)).To(Succeed(), "create cgroup dir")
 			config.OvnKubeNode.KubeletCgroupPath = "podruntime/kubelet"
 
-			manager.setKubeletCgroupPath(cgroupRoot)
+			manager.setKubeletCgroupPath(context.Background(), cgroupRoot)
 
 			Expect(manager.kubeletCgroupPath).To(Equal("podruntime/kubelet"), "the configured path is used")
 			Expect(recorder.Events).NotTo(Receive(), "nothing is reported")
-			Expect(manager.setupUDNIsolationFromHost()).To(Succeed())
+			Expect(manager.setupUDNIsolationFromHost(context.Background())).To(Succeed())
 			Expect(nodenft.MatchNFTRules(expectedDump("podruntime/kubelet"), fakeNFT.Dump())).To(Succeed(), "kubelet rule is installed")
 		})
 	})
 
 	Context("socket cgroupv2 kernel support", func() {
 		It("reports support and leaves nothing behind", func() {
-			Expect(manager.socketCgroupv2MatchSupported("kubelet.slice/kubelet.service")).To(Succeed(), "match is supported")
+			Expect(manager.socketCgroupv2MatchSupported(context.Background(), "kubelet.slice/kubelet.service")).To(Succeed(), "match is supported")
 			Expect(fakeNFT.Dump()).NotTo(ContainSubstring(socketMatchProbeChain), "probe chain is removed")
 		})
 
 		It("reports no support when the kernel rejects the match", func() {
 			manager.nft = &nftRunFailer{Interface: fakeNFT, failures: 1}
 
-			Expect(manager.socketCgroupv2MatchSupported("kubelet.slice/kubelet.service")).NotTo(Succeed(), "match is unsupported")
+			Expect(manager.socketCgroupv2MatchSupported(context.Background(), "kubelet.slice/kubelet.service")).NotTo(Succeed(), "match is unsupported")
 		})
 	})
 
@@ -854,7 +854,7 @@ add rule inet ovn-kubernetes udn-isolation ip6 daddr @udn-open-ports-icmp-v6 met
 
 		BeforeEach(func() {
 			manager.kubeletCgroupPath = originalPath
-			Expect(manager.setupUDNIsolationFromHost()).To(Succeed())
+			Expect(manager.setupUDNIsolationFromHost(context.Background())).To(Succeed())
 			Expect(nodenft.MatchNFTRules(expectedDump(originalPath), fakeNFT.Dump())).To(Succeed(), "rules start on the original path")
 			manager.kubeletCgroupPath = reresolvedPath
 		})
@@ -902,7 +902,7 @@ add rule inet ovn-kubernetes udn-isolation ip6 daddr @udn-open-ports-icmp-v6 met
 		cgroupRoot := GinkgoT().TempDir()
 		Expect(os.MkdirAll(filepath.Join(cgroupRoot, "kubelet.slice", kubeletCgroupName), 0o755)).To(Succeed(), "create cgroup dir")
 
-		manager.setKubeletCgroupPath(cgroupRoot)
+		manager.setKubeletCgroupPath(context.Background(), cgroupRoot)
 
 		Expect(manager.kubeletCgroupPath).To(BeEmpty(), "the kubelet rule is left out even though kubelet's cgroup exists")
 		var event string
@@ -911,7 +911,7 @@ add rule inet ovn-kubernetes udn-isolation ip6 daddr @udn-open-ports-icmp-v6 met
 		Expect(event).To(ContainSubstring("unprivileged mode"), "event blames the mode, not the host")
 
 		// host isolation is still set up, only the kubelet rule is missing.
-		Expect(manager.setupUDNIsolationFromHost()).To(Succeed())
+		Expect(manager.setupUDNIsolationFromHost(context.Background())).To(Succeed())
 		Expect(nodenft.MatchNFTRules(expectedDump(""), fakeNFT.Dump())).To(Succeed(), "UDN pods stay isolated from the host")
 	})
 

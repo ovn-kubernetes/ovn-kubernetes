@@ -7,6 +7,7 @@
 package node
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -23,7 +24,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
-func initLocalGateway(hostSubnets []*net.IPNet, mgmtPort managementport.Interface) error {
+func initLocalGateway(ctx context.Context, hostSubnets []*net.IPNet, mgmtPort managementport.Interface) error {
 	if config.IsModeDPU() {
 		return nil
 	}
@@ -51,7 +52,7 @@ func initLocalGateway(hostSubnets []*net.IPNet, mgmtPort managementport.Interfac
 	}
 
 	if len(allCIDRs) > 0 {
-		if err := initLocalGatewayNFTNATRules(allCIDRs...); err != nil {
+		if err := initLocalGatewayNFTNATRules(ctx, allCIDRs...); err != nil {
 			return fmt.Errorf("failed to setup nftables masquerade rules: %w", err)
 		}
 	}

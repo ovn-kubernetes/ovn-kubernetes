@@ -112,19 +112,19 @@ func (h *gwEventHandler) GetResourceFromInformerCache(key string) (interface{}, 
 // the function was executed from iterateRetryResources, AddResource adds the
 // specified object to the cluster according to its type and returns the error,
 // if any, yielded during object creation.
-func (h *gwEventHandler) AddResource(_ context.Context, obj interface{}, _ bool) error {
+func (h *gwEventHandler) AddResource(ctx context.Context, obj interface{}, _ bool) error {
 	switch h.objType {
 	case factory.ServiceForGatewayType:
 		svc := obj.(*corev1.Service)
-		return h.g.AddService(svc)
+		return h.g.AddService(ctx, svc)
 
 	case factory.EndpointSliceForGatewayType:
 		endpointSlice := obj.(*discovery.EndpointSlice)
-		return h.g.AddEndpointSlice(endpointSlice)
+		return h.g.AddEndpointSlice(ctx, endpointSlice)
 
 	case factory.EgressIPType:
 		eip := obj.(*egressipv1.EgressIP)
-		return h.g.AddEgressIP(eip)
+		return h.g.AddEgressIP(ctx, eip)
 
 	default:
 		return fmt.Errorf("no add function for object type %s", h.objType)
@@ -135,22 +135,22 @@ func (h *gwEventHandler) AddResource(_ context.Context, obj interface{}, _ bool)
 // the specified object in the cluster to its version in newObj according to its type
 // and returns the error, if any, yielded during the object update. The inRetryCache
 // boolean argument is to indicate if the given resource is in the retryCache or not.
-func (h *gwEventHandler) UpdateResource(_ context.Context, oldObj, newObj interface{}, _ bool) error {
+func (h *gwEventHandler) UpdateResource(ctx context.Context, oldObj, newObj interface{}, _ bool) error {
 	switch h.objType {
 	case factory.ServiceForGatewayType:
 		oldSvc := oldObj.(*corev1.Service)
 		newSvc := newObj.(*corev1.Service)
-		return h.g.UpdateService(oldSvc, newSvc)
+		return h.g.UpdateService(ctx, oldSvc, newSvc)
 
 	case factory.EndpointSliceForGatewayType:
 		oldEndpointSlice := oldObj.(*discovery.EndpointSlice)
 		newEndpointSlice := newObj.(*discovery.EndpointSlice)
-		return h.g.UpdateEndpointSlice(oldEndpointSlice, newEndpointSlice)
+		return h.g.UpdateEndpointSlice(ctx, oldEndpointSlice, newEndpointSlice)
 
 	case factory.EgressIPType:
 		oldEIP := oldObj.(*egressipv1.EgressIP)
 		newEIP := newObj.(*egressipv1.EgressIP)
-		return h.g.UpdateEgressIP(oldEIP, newEIP)
+		return h.g.UpdateEgressIP(ctx, oldEIP, newEIP)
 
 	default:
 		return fmt.Errorf("no update function for object type %s", h.objType)
@@ -161,26 +161,26 @@ func (h *gwEventHandler) UpdateResource(_ context.Context, oldObj, newObj interf
 // deletes the object from the cluster according to the delete logic of its resource type.
 // cachedObj is the internal cache entry for this object, used for now for pods and network
 // policies.
-func (h *gwEventHandler) DeleteResource(_ context.Context, obj, _ interface{}) error {
+func (h *gwEventHandler) DeleteResource(ctx context.Context, obj, _ interface{}) error {
 	switch h.objType {
 	case factory.ServiceForGatewayType:
 		svc := obj.(*corev1.Service)
-		return h.g.DeleteService(svc)
+		return h.g.DeleteService(ctx, svc)
 
 	case factory.EndpointSliceForGatewayType:
 		endpointSlice := obj.(*discovery.EndpointSlice)
-		return h.g.DeleteEndpointSlice(endpointSlice)
+		return h.g.DeleteEndpointSlice(ctx, endpointSlice)
 
 	case factory.EgressIPType:
 		eip := obj.(*egressipv1.EgressIP)
-		return h.g.DeleteEgressIP(eip)
+		return h.g.DeleteEgressIP(ctx, eip)
 
 	default:
 		return fmt.Errorf("no delete function for object type %s", h.objType)
 	}
 }
 
-func (h *gwEventHandler) SyncFunc(_ context.Context, objs []interface{}) error {
+func (h *gwEventHandler) SyncFunc(ctx context.Context, objs []interface{}) error {
 	var syncFunc func([]interface{}) error
 
 	if h.syncFunc != nil {
@@ -194,10 +194,10 @@ func (h *gwEventHandler) SyncFunc(_ context.Context, objs []interface{}) error {
 			syncFunc = nil
 
 		case factory.ServiceForGatewayType:
-			syncFunc = h.g.SyncServices
+			syncFunc = func(objs []interface{}) error { return h.g.SyncServices(ctx, objs) }
 
 		case factory.EgressIPType:
-			syncFunc = h.g.SyncEgressIP
+			syncFunc = func(objs []interface{}) error { return h.g.SyncEgressIP(ctx, objs) }
 
 		default:
 			return fmt.Errorf("no sync function for object type %s", h.objType)

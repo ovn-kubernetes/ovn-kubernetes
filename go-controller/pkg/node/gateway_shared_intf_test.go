@@ -376,10 +376,10 @@ func setupServiceAndEndpointSliceWithRules(npw *nodePortWatcher, nft knftables.I
 	}
 
 	// Add service and endpoint slice
-	err := npw.AddService(service)
+	err := npw.AddService(context.Background(), service)
 	Expect(err).NotTo(HaveOccurred())
 
-	err = npw.AddEndpointSlice(epSlice)
+	err = npw.AddEndpointSlice(context.Background(), epSlice)
 	Expect(err).NotTo(HaveOccurred())
 
 	// Verify nftables rules were created
@@ -434,7 +434,7 @@ var _ = Describe("DeleteEndpointSlice", func() {
 
 		// Since the tests here never call startNodePortWatcher(), we have to call
 		// initGatewayNFTables() ourselves to set up the sets, maps, etc.
-		err = initGatewayNFTables()
+		err = initGatewayNFTables(context.Background())
 		Expect(err).NotTo(HaveOccurred())
 	})
 
@@ -479,7 +479,7 @@ var _ = Describe("DeleteEndpointSlice", func() {
 			_, err := watcher.GetService(testNamespace, testService)
 			return err
 		}).Should(Succeed())
-		Expect(npw.AddService(svc)).To(Succeed())
+		Expect(npw.AddService(context.Background(), svc)).To(Succeed())
 		originalFlows := npw.ofm.defaultBridge.flows()
 		originalNFT := nft.(*knftables.Fake).Dump()
 		Expect(originalFlows).NotTo(BeEmpty())
@@ -519,14 +519,14 @@ var _ = Describe("DeleteEndpointSlice", func() {
 				}).Should(BeTrue())
 			}
 			waitForSlice(ep)
-			Expect(npw.AddEndpointSlice(ep)).To(Succeed())
+			Expect(npw.AddEndpointSlice(context.Background(), ep)).To(Succeed())
 			// Named target ports can change while addresses stay the same.
 			changedPort := ep.DeepCopy()
 			changedPort.Ports[0].Port = ptr.To(int32(5202))
 			_, err = fakeClient.KubeClient.DiscoveryV1().EndpointSlices(testNamespace).Update(context.Background(), changedPort, metav1.UpdateOptions{})
 			Expect(err).NotTo(HaveOccurred())
 			waitForSlice(changedPort)
-			Expect(npw.UpdateEndpointSlice(ep, changedPort)).To(Succeed())
+			Expect(npw.UpdateEndpointSlice(context.Background(), ep, changedPort)).To(Succeed())
 			ep = changedPort
 			for _, ready := range []bool{false, true} {
 				next := ep.DeepCopy()
@@ -537,7 +537,7 @@ var _ = Describe("DeleteEndpointSlice", func() {
 				_, err = fakeClient.KubeClient.DiscoveryV1().EndpointSlices(testNamespace).Update(context.Background(), next, metav1.UpdateOptions{})
 				Expect(err).NotTo(HaveOccurred())
 				waitForSlice(next)
-				Expect(npw.UpdateEndpointSlice(ep, next)).To(Succeed())
+				Expect(npw.UpdateEndpointSlice(context.Background(), ep, next)).To(Succeed())
 				ep = next
 			}
 			Expect(fakeClient.KubeClient.DiscoveryV1().EndpointSlices(testNamespace).Delete(context.Background(), ep.Name, metav1.DeleteOptions{})).To(Succeed())
@@ -545,14 +545,14 @@ var _ = Describe("DeleteEndpointSlice", func() {
 				slices, err := watcher.GetServiceEndpointSlices(testNamespace, testService, networkName)
 				return err == nil && len(slices) == 0
 			}).Should(BeTrue())
-			Expect(npw.DeleteEndpointSlice(ep)).To(Succeed())
+			Expect(npw.DeleteEndpointSlice(context.Background(), ep)).To(Succeed())
 			Expect(npw.ofm.flowChan).To(BeEmpty(), "endpoint changes must not schedule removal/reinstallation of unchanged steering")
 			Expect(npw.ofm.defaultBridge.flows()).To(ConsistOf(originalFlows))
 			Expect(nft.(*knftables.Fake).Dump()).To(Equal(originalNFT))
 		}
 
 		// Actual Service deletion must still remove steering and host rules.
-		Expect(delServiceRules(svc, nil, npw)).To(Succeed())
+		Expect(delServiceRules(context.Background(), svc, nil, npw)).To(Succeed())
 		Expect(npw.ofm.flowChan).NotTo(BeEmpty())
 		Expect(npw.ofm.defaultBridge.flows()).To(BeEmpty())
 		verifyNFTablesRule(nft, "10.96.0.2", 5201, 32001, false, "deleted Service must not retain host rules")
@@ -594,7 +594,7 @@ var _ = Describe("DeleteEndpointSlice", func() {
 			return nil
 		}}, 4)
 		Expect(util.SetExec(fexec)).To(Succeed())
-		Expect(addServiceRules(svc, &util.DefaultNetInfo{}, nil, false, npw)).To(Succeed())
+		Expect(addServiceRules(context.Background(), svc, &util.DefaultNetInfo{}, nil, false, npw)).To(Succeed())
 		originalFlows := npw.ofm.defaultBridge.flows()
 		originalNFT := nft.(*knftables.Fake).Dump()
 		updating = true
@@ -605,7 +605,7 @@ var _ = Describe("DeleteEndpointSlice", func() {
 			nil,
 		} {
 			hasHost := endpoints != nil
-			Expect(npw.updateEndpointRules(svc, &util.DefaultNetInfo{}, old, endpoints, hasHost)).To(Succeed())
+			Expect(npw.updateEndpointRules(context.Background(), svc, &util.DefaultNetInfo{}, old, endpoints, hasHost)).To(Succeed())
 			if hasHost {
 				Expect(npw.ofm.defaultBridge.flows()).NotTo(ConsistOf(originalFlows))
 			}
@@ -647,7 +647,7 @@ var _ = Describe("DeleteEndpointSlice", func() {
 		fexec := ovntest.NewFakeExec()
 		fexec.AddRepeatedFakeCmd(&ovntest.ExpectedCmd{Cmd: "ovs-ofctl show breth0"}, 3)
 		Expect(util.SetExec(fexec)).To(Succeed())
-		Expect(npw.AddService(svc)).To(Succeed())
+		Expect(npw.AddService(context.Background(), svc)).To(Succeed())
 		originalFlows := npw.ofm.defaultBridge.flows()
 		originalNFT := fakeNFT.Dump()
 
@@ -682,7 +682,7 @@ var _ = Describe("DeleteEndpointSlice", func() {
 		} else {
 			delete(fakeNFT.Table.Maps, nftablesITPServicesMapV4)
 		}
-		Expect(npw.AddEndpointSlice(slices[0])).To(MatchError(ContainSubstring("no such")))
+		Expect(npw.AddEndpointSlice(context.Background(), slices[0])).To(MatchError(ContainSubstring("no such")))
 		Expect(npw.ofm.defaultBridge.flows()).NotTo(ConsistOf(originalFlows))
 		Expect(npw.ofm.defaultBridge.groupCache).NotTo(BeEmpty(), "host forwarding must be installed before nftables fails")
 		if failDelete {
@@ -713,11 +713,11 @@ var _ = Describe("DeleteEndpointSlice", func() {
 			return count
 		}).Should(BeZero())
 		if deleteSlices {
-			Expect(npw.DeleteEndpointSlice(slices[0])).To(Succeed())
+			Expect(npw.DeleteEndpointSlice(context.Background(), slices[0])).To(Succeed())
 		} else {
 			empty := slices[0].DeepCopy()
 			empty.Endpoints = nil
-			Expect(npw.UpdateEndpointSlice(slices[0], empty)).To(Succeed())
+			Expect(npw.UpdateEndpointSlice(context.Background(), slices[0], empty)).To(Succeed())
 		}
 		Expect(npw.ofm.defaultBridge.flows()).To(ConsistOf(originalFlows))
 		Expect(npw.ofm.defaultBridge.groupCache).To(BeEmpty(), "withdrawn endpoints must not retain direct-host groups")
@@ -725,7 +725,7 @@ var _ = Describe("DeleteEndpointSlice", func() {
 		for len(npw.ofm.flowChan) > 0 {
 			<-npw.ofm.flowChan
 		}
-		Expect(npw.AddEndpointSlice(slices[0])).To(Succeed())
+		Expect(npw.AddEndpointSlice(context.Background(), slices[0])).To(Succeed())
 		Expect(npw.ofm.flowChan).To(BeEmpty(), "successful reconciliation must clear the dirty state")
 		Expect(fakeNFT.Dump()).To(Equal(originalNFT))
 		Expect(fexec.CalledMatchesExpected()).To(BeTrue(), fexec.ErrorDesc)
@@ -750,7 +750,7 @@ var _ = Describe("DeleteEndpointSlice", func() {
 			[]corev1.ServicePort{{Name: "http", Protocol: corev1.ProtocolTCP, Port: 80, TargetPort: intstr.FromInt(8080), NodePort: 32001}},
 			corev1.ServiceTypeNodePort, nil, corev1.ServiceStatus{}, true, true)
 		svc.Spec.ClusterIPs = []string{"10.96.0.2", "fd00:10:96::2"}
-		Expect(addServiceRules(svc, &util.DefaultNetInfo{}, nil, false, npw)).To(Succeed())
+		Expect(addServiceRules(context.Background(), svc, &util.DefaultNetInfo{}, nil, false, npw)).To(Succeed())
 		originalFlows := npw.ofm.defaultBridge.flows()
 		originalNFT := fakeNFT.Dump()
 		old := &serviceConfig{service: svc}
@@ -760,10 +760,10 @@ var _ = Describe("DeleteEndpointSlice", func() {
 		}}
 		// IPv4 flows are installed, IPv6 fails, and nftables still commits.
 		npw.gatewayIPv6 = ""
-		Expect(npw.updateEndpointRules(svc, &util.DefaultNetInfo{}, old, endpoints, true)).To(MatchError(ContainSubstring("gateway IP not available for protocol tcp6")))
+		Expect(npw.updateEndpointRules(context.Background(), svc, &util.DefaultNetInfo{}, old, endpoints, true)).To(MatchError(ContainSubstring("gateway IP not available for protocol tcp6")))
 		Expect(npw.ofm.defaultBridge.groupCache).NotTo(BeEmpty())
 		Expect(fakeNFT.Dump()).NotTo(Equal(originalNFT))
-		Expect(npw.updateEndpointRules(svc, &util.DefaultNetInfo{}, old, nil, false)).To(Succeed())
+		Expect(npw.updateEndpointRules(context.Background(), svc, &util.DefaultNetInfo{}, old, nil, false)).To(Succeed())
 		Expect(npw.ofm.defaultBridge.flows()).To(ConsistOf(originalFlows))
 		Expect(npw.ofm.defaultBridge.groupCache).To(BeEmpty())
 		Expect(fakeNFT.Dump()).To(Equal(originalNFT), "the committed host configuration must be remembered for cleanup")
@@ -800,7 +800,7 @@ var _ = Describe("DeleteEndpointSlice", func() {
 		// Two ports at initial setup, adding host backends, and four slice changes.
 		fexec.AddRepeatedFakeCmd(&ovntest.ExpectedCmd{Cmd: "ovs-ofctl show breth0"}, 12)
 		Expect(util.SetExec(fexec)).To(Succeed())
-		Expect(npw.AddService(svc)).To(Succeed())
+		Expect(npw.AddService(context.Background(), svc)).To(Succeed())
 		normalFlows := make(map[string][]string)
 		for key, flows := range npw.ofm.defaultBridge.flowCache {
 			normalFlows[key] = flows
@@ -830,7 +830,7 @@ var _ = Describe("DeleteEndpointSlice", func() {
 			Expect(err).NotTo(HaveOccurred())
 			return len(slices)
 		}).Should(Equal(8))
-		Expect(npw.AddEndpointSlice(httpSlices[0])).To(Succeed())
+		Expect(npw.AddEndpointSlice(context.Background(), httpSlices[0])).To(Succeed())
 		hostFlows := make(map[string][]string)
 		for key, flows := range npw.ofm.defaultBridge.flowCache {
 			hostFlows[key] = flows
@@ -854,11 +854,11 @@ var _ = Describe("DeleteEndpointSlice", func() {
 				return apierrors.IsNotFound(err) || err == nil && len(current.Endpoints) == 0
 			}).Should(BeTrue())
 			if deleteSlices {
-				Expect(npw.DeleteEndpointSlice(ep)).To(Succeed())
+				Expect(npw.DeleteEndpointSlice(context.Background(), ep)).To(Succeed())
 			} else {
 				next := ep.DeepCopy()
 				next.Endpoints = nil
-				Expect(npw.UpdateEndpointSlice(ep, next)).To(Succeed())
+				Expect(npw.UpdateEndpointSlice(context.Background(), ep, next)).To(Succeed())
 			}
 		}
 		// Restore the complete normal HTTP entries (including ARP/NDP bypass)
@@ -901,7 +901,7 @@ var _ = Describe("DeleteEndpointSlice", func() {
 			npw.networkManager = &mockNetworkManagerWithInvalidPrimaryNetworkError{}
 
 			// Call DeleteEndpointSlice - should not return error
-			err := npw.DeleteEndpointSlice(epSlice)
+			err := npw.DeleteEndpointSlice(context.Background(), epSlice)
 
 			// Should gracefully handle UDN deletion (no error)
 			Expect(err).NotTo(HaveOccurred())
@@ -920,7 +920,7 @@ var _ = Describe("DeleteEndpointSlice", func() {
 			npw.networkManager = &mockNetworkManagerWithError{}
 
 			// Call DeleteEndpointSlice - should return error
-			err := npw.DeleteEndpointSlice(epSlice)
+			err := npw.DeleteEndpointSlice(context.Background(), epSlice)
 
 			// Should return error for other types of failures
 			Expect(err).To(HaveOccurred())
@@ -939,7 +939,7 @@ var _ = Describe("DeleteEndpointSlice", func() {
 			epSlice := newEndpointSlice(testService, testNamespace, nil, nil)
 
 			// Call DeleteEndpointSlice when service not in cache
-			err := npw.DeleteEndpointSlice(epSlice)
+			err := npw.DeleteEndpointSlice(context.Background(), epSlice)
 
 			// Should return nil (no-op when not in cache)
 			Expect(err).NotTo(HaveOccurred())
@@ -953,7 +953,7 @@ var _ = Describe("DeleteEndpointSlice", func() {
 
 			// Simulate namespace not found error
 			npw.networkManager = &mockNetworkManagerWithNamespaceNotFoundError{}
-			err := npw.DeleteEndpointSlice(epSlice)
+			err := npw.DeleteEndpointSlice(context.Background(), epSlice)
 			// Verify no error (graceful handling)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -1006,7 +1006,7 @@ var _ = Describe("SyncServices", func() {
 
 		// Since the tests here never call startNodePortWatcher(), we have to call
 		// initGatewayNFTables() ourselves to set up the sets, maps, etc.
-		err = initGatewayNFTables()
+		err = initGatewayNFTables(context.Background())
 		Expect(err).NotTo(HaveOccurred())
 	})
 
@@ -1102,8 +1102,8 @@ var _ = Describe("SyncServices", func() {
 			npw.networkManager = invalidNetworkManager
 			npwnft := newNodePortWatcherNFTables(invalidNetworkManager)
 
-			Expect(npw.AddService(service)).To(Succeed())
-			Expect(npwnft.AddService(service)).To(Succeed())
+			Expect(npw.AddService(context.Background(), service)).To(Succeed())
+			Expect(npwnft.AddService(context.Background(), service)).To(Succeed())
 			verifyNFTablesRule(nft, "10.96.0.19", 80, 30090, false,
 				"nftables rule should not be created when primary network is invalid")
 		})
@@ -1121,7 +1121,7 @@ var _ = Describe("SyncServices", func() {
 
 			npw.networkManager = &mockNetworkManagerWithInvalidPrimaryNetworkSkip{}
 
-			err := npw.SyncServices([]interface{}{service})
+			err := npw.SyncServices(context.Background(), []interface{}{service})
 			Expect(err).NotTo(HaveOccurred())
 
 			verifyNFTablesRule(nft, "10.96.0.20", 80, 30091, false,
@@ -1143,7 +1143,7 @@ var _ = Describe("SyncServices", func() {
 
 			npw.networkManager = &mockNetworkManagerWithNamespaceNotFoundError{}
 
-			err := npw.SyncServices([]interface{}{service})
+			err := npw.SyncServices(context.Background(), []interface{}{service})
 			Expect(err).NotTo(HaveOccurred())
 
 			verifyNFTablesRule(nft, "10.96.0.21", 80, 30094, false,
@@ -1165,7 +1165,7 @@ var _ = Describe("SyncServices", func() {
 
 			npw.networkManager = &mockNetworkManagerWithInactiveNode{}
 
-			err := npw.SyncServices([]interface{}{service})
+			err := npw.SyncServices(context.Background(), []interface{}{service})
 			Expect(err).NotTo(HaveOccurred())
 
 			verifyNFTablesRule(nft, "10.96.0.30", 80, 30092, false,
@@ -1222,7 +1222,7 @@ var _ = Describe("SyncServices", func() {
 			}
 			Expect(watcher.EndpointSliceInformer().GetStore().Add(epSlice)).To(Succeed())
 
-			err = npw.SyncServices([]interface{}{service})
+			err = npw.SyncServices(context.Background(), []interface{}{service})
 			Expect(err).NotTo(HaveOccurred())
 
 			verifyNFTablesRule(nft, "10.96.0.40", 80, 30093, true,

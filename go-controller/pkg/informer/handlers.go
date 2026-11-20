@@ -4,21 +4,23 @@
 package informer
 
 import (
+	"context"
+
 	corev1 "k8s.io/api/core/v1"
 	discovery "k8s.io/api/discovery/v1"
 )
 
 type ServiceEventHandler interface {
-	AddService(*corev1.Service) error
-	DeleteService(*corev1.Service) error
-	UpdateService(old, new *corev1.Service) error
-	SyncServices([]interface{}) error
+	AddService(context.Context, *corev1.Service) error
+	DeleteService(context.Context, *corev1.Service) error
+	UpdateService(ctx context.Context, old, new *corev1.Service) error
+	SyncServices(context.Context, []interface{}) error
 }
 
 type EndpointSliceEventHandler interface {
-	AddEndpointSlice(*discovery.EndpointSlice) error
-	DeleteEndpointSlice(*discovery.EndpointSlice) error
-	UpdateEndpointSlice(old, new *discovery.EndpointSlice) error
+	AddEndpointSlice(context.Context, *discovery.EndpointSlice) error
+	DeleteEndpointSlice(context.Context, *discovery.EndpointSlice) error
+	UpdateEndpointSlice(ctx context.Context, old, new *discovery.EndpointSlice) error
 }
 
 type ServiceAndEndpointsEventHandler interface {

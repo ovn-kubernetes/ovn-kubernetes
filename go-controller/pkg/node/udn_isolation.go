@@ -138,7 +138,7 @@ func findKubeletCgroupPath(cgroupRoot string) (string, error) {
 // expression at all and rejects the rule.
 // The check uses the same match the isolation rules install, so support is decided for
 // the exact rule rather than an approximation of it.
-func (m *UDNHostIsolationManager) socketCgroupv2MatchSupported(cgroupPath string) error {
+func (m *UDNHostIsolationManager) socketCgroupv2MatchSupported(ctx context.Context, cgroupPath string) error {
 	tx := m.nft.NewTransaction()
 	tx.Add(&knftables.Chain{
 		Name:     socketMatchProbeChain,
@@ -154,7 +154,7 @@ func (m *UDNHostIsolationManager) socketCgroupv2MatchSupported(cgroupPath string
 	tx.Delete(&knftables.Chain{
 		Name: socketMatchProbeChain,
 	})
-	return m.nft.Run(context.TODO(), tx)
+	return m.nft.Run(ctx, tx)
 }
 
 // kubeletCgroupPathToUse returns the cgroup path to match kubelet traffic on, relative
@@ -183,7 +183,7 @@ func (m *UDNHostIsolationManager) kubeletCgroupPathToUse(cgroupRoot string) (str
 // kubelet probes to primary UDN pods are reported as unsupported and the path is left
 // empty, which leaves the kubelet rule out of the isolation chain. Host isolation
 // itself is unaffected.
-func (m *UDNHostIsolationManager) setKubeletCgroupPath(cgroupRoot string) {
+func (m *UDNHostIsolationManager) setKubeletCgroupPath(ctx context.Context, cgroupRoot string) {
 	if config.UnprivilegedMode {
 		// The kernel reads the level of the socket cgroupv2 match relative to the
 		// cgroup namespace of the process that loads the rule. An unprivileged
@@ -202,7 +202,7 @@ func (m *UDNHostIsolationManager) setKubeletCgroupPath(cgroupRoot string) {
 		m.reportKubeletProbesUnsupported(err.Error())
 		return
 	}
-	if err := m.socketCgroupv2MatchSupported(path); err != nil {
+	if err := m.socketCgroupv2MatchSupported(ctx, path); err != nil {
 		m.reportKubeletProbesUnsupported(fmt.Sprintf("the kernel does not support the nftables socket cgroupv2 match: %v", err))
 		return
 	}
@@ -240,9 +240,9 @@ func (m *UDNHostIsolationManager) Start(ctx context.Context) error {
 
 	// A failure to resolve the kubelet cgroup is not fatal: host isolation is still set
 	// up, only the rule that lets kubelet reach primary UDN pods is left out.
-	m.setKubeletCgroupPath(unifiedMountpoint)
+	m.setKubeletCgroupPath(ctx, unifiedMountpoint)
 
-	if err = m.setupUDNIsolationFromHost(); err != nil {
+	if err = m.setupUDNIsolationFromHost(ctx); err != nil {
 		return fmt.Errorf("failed to setup UDN host isolation: %w", err)
 	}
 	// The tracker only exists to re-resolve the kubelet cgroup match, so it is pointless
@@ -262,7 +262,7 @@ func (m *UDNHostIsolationManager) Start(ctx context.Context) error {
 			return fmt.Errorf("failed to run kubelet restart tracker: %w", err)
 		}
 	}
-	return controller.StartWithInitialSync(m.podInitialSync, m.podController)
+	return controller.StartWithInitialSync(func() error { return m.podInitialSync(ctx) }, m.podController)
 }
 
 func (m *UDNHostIsolationManager) Stop() {
@@ -270,7 +270,7 @@ func (m *UDNHostIsolationManager) Stop() {
 }
 
 // CleanupUDNHostIsolation removes all nftables chains and sets created by UDNHostIsolationManager.
-func CleanupUDNHostIsolation() error {
+func CleanupUDNHostIsolation(ctx context.Context) error {
 	nft, err := nodenft.GetNFTablesHelper()
 	if err != nil {
 		return fmt.Errorf("failed getting nftables helper: %w", err)
@@ -303,10 +303,10 @@ func CleanupUDNHostIsolation() error {
 		Name: nftablesUDNOpenPortsICMPv6,
 		Type: "ipv6_addr",
 	})
-	return nft.Run(context.TODO(), tx)
+	return nft.Run(ctx, tx)
 }
 
-func (m *UDNHostIsolationManager) setupUDNIsolationFromHost() error {
+func (m *UDNHostIsolationManager) setupUDNIsolationFromHost(ctx context.Context) error {
 	tx := m.nft.NewTransaction()
 	tx.Add(&knftables.Chain{
 		Name:     UDNIsolationChain,
@@ -350,7 +350,7 @@ func (m *UDNHostIsolationManager) setupUDNIsolationFromHost() error {
 	})
 	m.addRules(tx)
 
-	err := m.nft.Run(context.TODO(), tx)
+	err := m.nft.Run(ctx, tx)
 	if err != nil {
 		return fmt.Errorf("could not setup nftables rules for UDN from host isolation: %v", err)
 	}
@@ -444,14 +444,14 @@ func (m *UDNHostIsolationManager) addRules(tx *knftables.Transaction) {
 	}
 }
 
-func (m *UDNHostIsolationManager) updateKubeletCgroup() error {
+func (m *UDNHostIsolationManager) updateKubeletCgroup(ctx context.Context) error {
 	tx := m.nft.NewTransaction()
 	tx.Flush(&knftables.Chain{
 		Name: UDNIsolationChain,
 	})
 	m.addRules(tx)
 
-	err := m.nft.Run(context.TODO(), tx)
+	err := m.nft.Run(ctx, tx)
 	if err != nil {
 		return fmt.Errorf("could not update nftables rule for management port: %v", err)
 	}
@@ -524,7 +524,9 @@ func (m *UDNHostIsolationManager) handleKubeletRestartSignal(signal *dbus.Signal
 		return
 	}
 	klog.Info("Kubelet restarted, re-applying isolation")
-	if err := m.updateKubeletCgroup(); err != nil {
+	// Each restart event is the root of its own work; the context is not tied to
+	// the tracker lifetime.
+	if err := m.updateKubeletCgroup(context.Background()); err != nil {
 		klog.Errorf("Failed to re-apply isolation: %v", err)
 	}
 }
@@ -602,7 +604,7 @@ func (m *UDNHostIsolationManager) runKubeletRestartTracker(ctx context.Context) 
 	return nil
 }
 
-func (m *UDNHostIsolationManager) podInitialSync() error {
+func (m *UDNHostIsolationManager) podInitialSync(ctx context.Context) error {
 	udnPodIPsv4 := map[string]sets.Set[string]{}
 	udnPodIPsv6 := map[string]sets.Set[string]{}
 	udnOpenPortsICMPv4 := map[string]sets.Set[string]{}
@@ -641,22 +643,22 @@ func (m *UDNHostIsolationManager) podInitialSync() error {
 		udnOpenPortsv4[podKey] = pi.openPortsv4
 		udnOpenPortsv6[podKey] = pi.openPortsv6
 	}
-	if err = m.udnPodIPsv4.fullSync(m.nft, udnPodIPsv4); err != nil {
+	if err = m.udnPodIPsv4.fullSync(ctx, m.nft, udnPodIPsv4); err != nil {
 		return err
 	}
-	if err = m.udnPodIPsv6.fullSync(m.nft, udnPodIPsv6); err != nil {
+	if err = m.udnPodIPsv6.fullSync(ctx, m.nft, udnPodIPsv6); err != nil {
 		return err
 	}
-	if err = m.udnOpenPortsICMPv4.fullSync(m.nft, udnOpenPortsICMPv4); err != nil {
+	if err = m.udnOpenPortsICMPv4.fullSync(ctx, m.nft, udnOpenPortsICMPv4); err != nil {
 		return err
 	}
-	if err = m.udnOpenPortsICMPv6.fullSync(m.nft, udnOpenPortsICMPv6); err != nil {
+	if err = m.udnOpenPortsICMPv6.fullSync(ctx, m.nft, udnOpenPortsICMPv6); err != nil {
 		return err
 	}
-	if err = m.udnOpenPortsv4.fullSync(m.nft, udnOpenPortsv4); err != nil {
+	if err = m.udnOpenPortsv4.fullSync(ctx, m.nft, udnOpenPortsv4); err != nil {
 		return err
 	}
-	if err = m.udnOpenPortsv6.fullSync(m.nft, udnOpenPortsv6); err != nil {
+	if err = m.udnOpenPortsv6.fullSync(ctx, m.nft, udnOpenPortsv6); err != nil {
 		return err
 	}
 	return nil
@@ -672,7 +674,7 @@ func podNeedsUpdate(oldObj, newObj *corev1.Pod) bool {
 		oldObj.Annotations[util.UDNOpenPortsAnnotationName] != newObj.Annotations[util.UDNOpenPortsAnnotationName]
 }
 
-func (m *UDNHostIsolationManager) reconcilePod(_ context.Context, key string) error {
+func (m *UDNHostIsolationManager) reconcilePod(ctx context.Context, key string) error {
 	namespace, name, err := cache.SplitMetaNamespaceKey(key)
 	if err != nil {
 		klog.Errorf("UDNHostIsolationManager failed to split meta namespace cache key %s for pod: %v", key, err)
@@ -682,7 +684,7 @@ func (m *UDNHostIsolationManager) reconcilePod(_ context.Context, key string) er
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			// Pod was deleted, clean up.
-			return m.updateWithPodInfo(key, &podInfo{})
+			return m.updateWithPodInfo(ctx, key, &podInfo{})
 		}
 		return fmt.Errorf("failed to fetch pod %s in namespace %s", name, namespace)
 	}
@@ -694,7 +696,7 @@ func (m *UDNHostIsolationManager) reconcilePod(_ context.Context, key string) er
 		// this pod doesn't need to be updated
 		return nil
 	}
-	err = m.updateWithPodInfo(key, pi)
+	err = m.updateWithPodInfo(ctx, key, pi)
 	return errors.Join(err, parseErr)
 }
 
@@ -747,7 +749,7 @@ func (m *UDNHostIsolationManager) getPodInfo(podKey string, pod *corev1.Pod) (*p
 
 // updateWithPodInfo updates the nftables sets with given podInfo for a given pod.
 // empty podInfo will delete the pod from all sets.
-func (m *UDNHostIsolationManager) updateWithPodInfo(podKey string, pi *podInfo) error {
+func (m *UDNHostIsolationManager) updateWithPodInfo(ctx context.Context, podKey string, pi *podInfo) error {
 	tx := m.nft.NewTransaction()
 	m.udnPodIPsv4.updatePodElementsTX(podKey, pi.ipsv4, tx)
 	m.udnPodIPsv6.updatePodElementsTX(podKey, pi.ipsv6, tx)
@@ -760,7 +762,7 @@ func (m *UDNHostIsolationManager) updateWithPodInfo(podKey string, pi *podInfo) 
 		return nil
 	}
 
-	err := m.nft.Run(context.TODO(), tx)
+	err := m.nft.Run(ctx, tx)
 	if err != nil {
 		return fmt.Errorf("could not update nftables set for UDN pods: %v", err)
 	}
@@ -889,7 +891,7 @@ func (n *nftPodElementsSet) updatePodElementsAfterTX(namespacedName string, elem
 
 // fullSync should be called on restart to sync all pods elements.
 // It flushes existing elements, and adds new elements.
-func (n *nftPodElementsSet) fullSync(nft knftables.Interface, podsElements map[string]sets.Set[string]) error {
+func (n *nftPodElementsSet) fullSync(ctx context.Context, nft knftables.Interface, podsElements map[string]sets.Set[string]) error {
 	tx := nft.NewTransaction()
 	tx.Flush(&knftables.Set{
 		Name: n.setName,
@@ -910,7 +912,7 @@ func (n *nftPodElementsSet) fullSync(nft knftables.Interface, podsElements map[s
 		}
 		n.podElements[podName] = podElements
 	}
-	err := nft.Run(context.TODO(), tx)
+	err := nft.Run(ctx, tx)
 	if err != nil {
 		clear(n.podElements)
 		return fmt.Errorf("initial pods sync for UDN host isolation failed: %w", err)

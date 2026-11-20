@@ -643,7 +643,7 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 		nodeHostCIDRs = sets.New(fmt.Sprintf("%s/24", node1.NodeIP))
 		err = util.SetNodeHostCIDRs(nodeAnnotator, nodeHostCIDRs)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		err = nodeAnnotator.Run()
+		err = nodeAnnotator.Run(context.Background())
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 		nbClient, sbClient, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(dbSetup)
@@ -760,7 +760,7 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			ginkgo.By("Syncing node with OVNK")
-			node, err := oc.kube.GetNodeForWindows(testNode.Name)
+			node, err := oc.kube.GetNodeForWindows(context.Background(), testNode.Name)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			err = oc.syncNodeManagementPortDefault(node, node.Name, []*net.IPNet{subnet})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -840,7 +840,7 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 			gomega.Expect(util.SetL3GatewayConfig(nodeAnnotator, dualStackGatewayConfig)).To(gomega.Succeed())
 			gomega.Expect(util.SetNodeHostSubnetAnnotation(nodeAnnotator, ovntest.MustParseIPNets(node1.NodeSubnet, "aef0:0:0:1::/64"))).To(gomega.Succeed())
 			gomega.Expect(util.SetNodeHostCIDRs(nodeAnnotator, sets.New(fmt.Sprintf("%s/24", node1.NodeIP), "fd99::2/64"))).To(gomega.Succeed())
-			gomega.Expect(nodeAnnotator.Run()).To(gomega.Succeed())
+			gomega.Expect(nodeAnnotator.Run(context.Background())).To(gomega.Succeed())
 
 			recordingClient := libovsdbtest.NewRecordingClient(nbClient)
 			oc.nbClient = recordingClient
@@ -1061,7 +1061,7 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 			// modify the node and trigger an update
 			err = nodeAnnotator.Set("foobar", "baz")
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
-			err = nodeAnnotator.Run()
+			err = nodeAnnotator.Run(context.Background())
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			gomega.Consistently(func() uint32 {
 				return atomic.LoadUint32(&podsWereListed)
@@ -1315,7 +1315,7 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 			gomega.Expect(nodeAnnotator.Set(util.OVNNodeEncapIPs, []string{node1.NodeIP})).To(gomega.Succeed())
 			gomega.Expect(nodeAnnotator.Set(util.OvnTransitSwitchPortAddr,
 				map[string]string{"ipv4": "100.88.0.2/16"})).To(gomega.Succeed())
-			gomega.Expect(nodeAnnotator.Run()).To(gomega.Succeed())
+			gomega.Expect(nodeAnnotator.Run(context.Background())).To(gomega.Succeed())
 
 			startFakeController(oc, wg)
 
@@ -1374,7 +1374,7 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 			gomega.Expect(nodeAnnotator.Set(util.OVNNodeEncapIPs, []string{node1.NodeIP})).To(gomega.Succeed())
 			gomega.Expect(nodeAnnotator.Set(util.OvnTransitSwitchPortAddr,
 				map[string]string{"ipv4": "100.88.0.2/16", "ipv6": "fd97::2/64"})).To(gomega.Succeed())
-			gomega.Expect(nodeAnnotator.Run()).To(gomega.Succeed())
+			gomega.Expect(nodeAnnotator.Run(context.Background())).To(gomega.Succeed())
 
 			startFakeController(oc, wg)
 
@@ -1462,7 +1462,7 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 			gomega.Expect(nodeAnnotator.Set(util.OVNNodeEncapIPs, []string{node1.NodeIP})).To(gomega.Succeed())
 			gomega.Expect(nodeAnnotator.Set(util.OvnTransitSwitchPortAddr,
 				map[string]string{"ipv4": "100.88.0.2/16"})).To(gomega.Succeed())
-			gomega.Expect(nodeAnnotator.Run()).To(gomega.Succeed())
+			gomega.Expect(nodeAnnotator.Run(context.Background())).To(gomega.Succeed())
 
 			startFakeController(oc, wg)
 
@@ -1488,7 +1488,7 @@ var _ = ginkgo.Describe("Default network controller operations", func() {
 			node1.GatewayRouterNextHop = "172.16.16.111"
 			l3Config := node1.gatewayConfig(config.GatewayModeShared, uint(vlanID))
 			gomega.Expect(util.SetL3GatewayConfig(nodeAnnotator, l3Config)).To(gomega.Succeed())
-			gomega.Expect(nodeAnnotator.Run()).To(gomega.Succeed())
+			gomega.Expect(nodeAnnotator.Run(context.Background())).To(gomega.Succeed())
 
 			ginkgo.By("waiting for the gateway sync to fail and set the marker")
 			// as above, allow for a serialized in-flight reconciliation plus

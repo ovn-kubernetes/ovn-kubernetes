@@ -174,9 +174,7 @@ func NewEFController(
 		Informer:    efInformer.Informer(),
 		Lister:      efInformer.Lister().List,
 		MaxAttempts: controller.InfiniteAttempts,
-		Reconcile: func(_ context.Context, key string) error {
-			return c.sync(key)
-		},
+		Reconcile:   c.sync,
 		ObjNeedsUpdate: func(old, new *egressfirewallapi.EgressFirewall) bool {
 			return old == nil || new == nil || !reflect.DeepEqual(old.Spec, new.Spec)
 		},
@@ -383,7 +381,7 @@ func (oc *EFController) Stop() {
 	oc.nadReconcilerID = 0
 }
 
-func (oc *EFController) sync(key string) (updateErr error) {
+func (oc *EFController) sync(ctx context.Context, key string) (updateErr error) {
 	klog.V(5).Infof("Syncing EgressFirewall %s", key)
 	namespace, efName, err := cache.SplitMetaNamespaceKey(key)
 	if err != nil {
@@ -406,7 +404,7 @@ func (oc *EFController) sync(key string) (updateErr error) {
 			if skipStatusUpdate {
 				return
 			}
-			if statusErr := oc.setEgressFirewallStatus(ef, updateErr); statusErr != nil {
+			if statusErr := oc.setEgressFirewallStatus(ctx, ef, updateErr); statusErr != nil {
 				updateErr = utilerrors.Join(updateErr, fmt.Errorf("failed to update egress firewall status %s, error: %w",
 					GetEgressFirewallNamespacedName(ef), statusErr))
 			}
@@ -905,7 +903,7 @@ func (oc *EFController) deleteEgressFirewallRule(namespace, pgName string, ruleI
 	return err
 }
 
-func (oc *EFController) setEgressFirewallStatus(egressFirewall *egressfirewallapi.EgressFirewall, handlerErr error) error {
+func (oc *EFController) setEgressFirewallStatus(ctx context.Context, egressFirewall *egressfirewallapi.EgressFirewall, handlerErr error) error {
 	var newMsg string
 	if handlerErr != nil {
 		newMsg = types.EgressFirewallErrorMsg + ": " + handlerErr.Error()
@@ -952,7 +950,7 @@ func (oc *EFController) setEgressFirewallStatus(egressFirewall *egressfirewallap
 	applyObj := egressfirewallapply.EgressFirewall(egressFirewall.Name, egressFirewall.Namespace).
 		WithStatus(egressfirewallapply.EgressFirewallStatus().
 			WithMessages(newMsg))
-	_, err := oc.kube.EgressFirewallClient.K8sV1().EgressFirewalls(egressFirewall.Namespace).ApplyStatus(context.TODO(), applyObj, applyOptions)
+	_, err := oc.kube.EgressFirewallClient.K8sV1().EgressFirewalls(egressFirewall.Namespace).ApplyStatus(ctx, applyObj, applyOptions)
 
 	return err
 }

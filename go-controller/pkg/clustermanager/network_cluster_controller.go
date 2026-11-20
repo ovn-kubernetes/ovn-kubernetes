@@ -657,7 +657,7 @@ func (ncc *networkClusterController) ReconcileNode(ctx context.Context, oldNode,
 			ncc.clearScheduledNodeCleanup(nodeName)
 		}
 		err = ncc.nodeAllocator.HandleAddUpdateNodeEvent(ctx, newNode)
-		ncc.handleAddUpdateNodeResult(newNode, err)
+		ncc.handleAddUpdateNodeResult(ctx, newNode, err)
 	default:
 		// update case
 		nodeName = newNode.Name
@@ -671,7 +671,7 @@ func (ncc *networkClusterController) ReconcileNode(ctx context.Context, oldNode,
 			return nil
 		}
 		err = ncc.nodeAllocator.HandleAddUpdateNodeEvent(ctx, newNode)
-		ncc.handleAddUpdateNodeResult(newNode, err)
+		ncc.handleAddUpdateNodeResult(ctx, newNode, err)
 	}
 
 	statusErr := ncc.updateNetworkStatus(ctx, nodeName, err)
@@ -680,9 +680,9 @@ func (ncc *networkClusterController) ReconcileNode(ctx context.Context, oldNode,
 
 // Add/update failures need to keep the node in the retry set so later node events
 // force reconciliation again even if no relevant annotations changed.
-func (ncc *networkClusterController) handleAddUpdateNodeResult(node *corev1.Node, err error) {
+func (ncc *networkClusterController) handleAddUpdateNodeResult(ctx context.Context, node *corev1.Node, err error) {
 	if err == nil {
-		ncc.clearInitialNodeNetworkUnavailableCondition(node)
+		ncc.clearInitialNodeNetworkUnavailableCondition(ctx, node)
 		ncc.nodeSyncFailed.Delete(node.Name)
 		return
 	}
@@ -1049,7 +1049,7 @@ func (h *networkClusterControllerEventHandler) GetResourceFromInformerCache(key 
 // TODO: make upstream kubelet more flexible with overlays and GCE so this
 // condition doesn't get added for network plugins that don't want it, and then
 // we can remove this function.
-func (ncc *networkClusterController) clearInitialNodeNetworkUnavailableCondition(origNode *corev1.Node) {
+func (ncc *networkClusterController) clearInitialNodeNetworkUnavailableCondition(ctx context.Context, origNode *corev1.Node) {
 	// If it is not a Cloud Provider node, then nothing to do.
 	if origNode.Spec.ProviderID == "" {
 		return
@@ -1074,7 +1074,7 @@ func (ncc *networkClusterController) clearInitialNodeNetworkUnavailableCondition
 					condition.Reason = "RouteCreated"
 					condition.Message = "ovn-kube cleared kubelet-set NoRouteCreated"
 					condition.LastTransitionTime = metav1.Now()
-					if err = ncc.kube.PatchNodeStatus(oldNode, node); err == nil {
+					if err = ncc.kube.PatchNodeStatus(ctx, oldNode, node); err == nil {
 						cleared = true
 					}
 				}

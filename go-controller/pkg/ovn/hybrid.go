@@ -359,7 +359,7 @@ func (oc *DefaultNetworkController) removeHybridLRPolicySharedGW(node *corev1.No
 }
 
 // takes the node name and allocates the hybrid overlay distributed router ip address
-func (oc *DefaultNetworkController) allocateHybridOverlayDRIP(node *corev1.Node) error {
+func (oc *DefaultNetworkController) allocateHybridOverlayDRIP(ctx context.Context, node *corev1.Node) error {
 	if atomic.LoadUint32(&oc.allInitialPodsProcessed) == 0 {
 		return fmt.Errorf("cannot allocate hybrid overlay distributed router ip for nodes until all initial pods are processed")
 	}
@@ -381,7 +381,7 @@ func (oc *DefaultNetworkController) allocateHybridOverlayDRIP(node *corev1.Node)
 		sliceHybridOverlayDRIP = append(sliceHybridOverlayDRIP, ip.IP.String())
 	}
 
-	err = oc.kube.SetAnnotationsOnNode(context.TODO(), node.Name, map[string]interface{}{hotypes.HybridOverlayDRIP: strings.Join(sliceHybridOverlayDRIP, ",")})
+	err = oc.kube.SetAnnotationsOnNode(ctx, node.Name, map[string]interface{}{hotypes.HybridOverlayDRIP: strings.Join(sliceHybridOverlayDRIP, ",")})
 	if err != nil {
 		return fmt.Errorf("cannot set hybrid annotation on node %s: %v", node.Name, err)
 	}

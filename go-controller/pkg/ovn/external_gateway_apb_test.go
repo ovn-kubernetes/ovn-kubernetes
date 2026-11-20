@@ -2976,7 +2976,7 @@ var _ = ginkgo.Describe("OVN for APB External Route Operations", func() {
 				l3Config := node1.gatewayConfig(config.GatewayModeLocal, vlanID)
 				err := util.SetL3GatewayConfig(nodeAnnotator, l3Config)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				err = nodeAnnotator.Run()
+				err = nodeAnnotator.Run(context.Background())
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				// add address set with one legit IP that exists in a ecmp route, and one that doesn't

@@ -91,7 +91,7 @@ var _ = Describe("Kube", func() {
 					newAnnotations = map[string]interface{}{"foobar": "foobarfoobar", "foobarbaz": "foobarbazfoobarbaz"}
 
 					// update the annotations
-					err := kube.SetAnnotationsOnPod(pod.Namespace, pod.Name, newAnnotations)
+					err := kube.SetAnnotationsOnPod(context.Background(), pod.Namespace, pod.Name, newAnnotations)
 					Expect(err).ToNot(HaveOccurred())
 
 					// load the updated pod
@@ -564,7 +564,7 @@ var _ = Describe("Kube", func() {
 			newNode.Status.Conditions[0].Status = corev1.ConditionFalse
 			newNode.Status.Conditions[0].Reason = "RouteCreated"
 
-			err = kube.PatchNodeStatus(oldNode, newNode)
+			err = kube.PatchNodeStatus(context.Background(), oldNode, newNode)
 			Expect(err).ToNot(HaveOccurred())
 
 			node, err := kube.KClient.CoreV1().Nodes().Get(context.TODO(), "my-node", metav1.GetOptions{})
@@ -628,7 +628,7 @@ var _ = Describe("Kube", func() {
 			newNode := oldNode.DeepCopy()
 			newNode.Status.Conditions[0].Reason = "KubeletReady-Updated"
 
-			err = kube.PatchNodeStatus(oldNode, newNode)
+			err = kube.PatchNodeStatus(context.Background(), oldNode, newNode)
 			Expect(err).ToNot(HaveOccurred())
 
 			node, err := kube.KClient.CoreV1().Nodes().Get(context.TODO(), "my-node", metav1.GetOptions{})

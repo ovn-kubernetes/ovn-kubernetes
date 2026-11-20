@@ -93,11 +93,11 @@ var _ = Describe("Informer Event Handler Tests", func() {
 		e, err := NewDefaultEventHandler(
 			"test",
 			f.Core().V1().Pods().Informer(),
-			func(interface{}) error {
+			func(context.Context, interface{}) error {
 				atomic.AddInt32(&adds, 1)
 				return nil
 			},
-			func(interface{}) error {
+			func(context.Context, interface{}) error {
 				atomic.AddInt32(&deletes, 1)
 				return nil
 			},
@@ -160,11 +160,11 @@ var _ = Describe("Informer Event Handler Tests", func() {
 		e, err := NewDefaultEventHandler(
 			"test",
 			f.Core().V1().Pods().Informer(),
-			func(interface{}) error {
+			func(context.Context, interface{}) error {
 				atomic.AddInt32(&adds, 1)
 				return nil
 			},
-			func(interface{}) error {
+			func(context.Context, interface{}) error {
 				atomic.AddInt32(&deletes, 1)
 				return nil
 			},
@@ -234,11 +234,11 @@ var _ = Describe("Informer Event Handler Tests", func() {
 		e, err := NewDefaultEventHandler(
 			"test",
 			f.Core().V1().Pods().Informer(),
-			func(interface{}) error {
+			func(context.Context, interface{}) error {
 				atomic.AddInt32(&adds, 1)
 				return nil
 			},
-			func(interface{}) error {
+			func(context.Context, interface{}) error {
 				atomic.AddInt32(&deletes, 1)
 				return nil
 			},
@@ -322,11 +322,11 @@ var _ = Describe("Informer Event Handler Tests", func() {
 		e, err := NewDefaultEventHandler(
 			"test",
 			f.Core().V1().Pods().Informer(),
-			func(interface{}) error {
+			func(context.Context, interface{}) error {
 				atomic.AddInt32(&adds, 1)
 				return nil
 			},
-			func(interface{}) error {
+			func(context.Context, interface{}) error {
 				atomic.AddInt32(&deletes, 1)
 				return nil
 			},
@@ -397,11 +397,11 @@ var _ = Describe("Informer Event Handler Tests", func() {
 		e, err := NewDefaultEventHandler(
 			"test",
 			f.Core().V1().Pods().Informer(),
-			func(interface{}) error {
+			func(context.Context, interface{}) error {
 				atomic.AddInt32(&adds, 1)
 				return nil
 			},
-			func(interface{}) error {
+			func(context.Context, interface{}) error {
 				atomic.AddInt32(&deletes, 1)
 				return nil
 			},
@@ -472,11 +472,11 @@ var _ = Describe("Informer Event Handler Tests", func() {
 		e, err := NewDefaultEventHandler(
 			"test",
 			f.Core().V1().Pods().Informer(),
-			func(interface{}) error {
+			func(context.Context, interface{}) error {
 				atomic.AddInt32(&adds, 1)
 				return nil
 			},
-			func(interface{}) error {
+			func(context.Context, interface{}) error {
 				atomic.AddInt32(&deletes, 1)
 				return nil
 			},
@@ -533,10 +533,10 @@ var _ = Describe("Event Handler Internals", func() {
 			informer:       factory.Core().V1().Pods().Informer(),
 			deletedIndexer: cache.NewIndexer(cache.DeletionHandlingMetaNamespaceKeyFunc, cache.Indexers{}),
 			workqueue:      workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]()),
-			add: func(interface{}) error {
+			add: func(context.Context, interface{}) error {
 				return nil
 			},
-			delete: func(interface{}) error {
+			delete: func(context.Context, interface{}) error {
 				return nil
 			},
 			updateFilter: ReceiveAllUpdates,
@@ -557,10 +557,10 @@ var _ = Describe("Event Handler Internals", func() {
 			informer:       factory.Core().V1().Pods().Informer(),
 			deletedIndexer: cache.NewIndexer(cache.DeletionHandlingMetaNamespaceKeyFunc, cache.Indexers{}),
 			workqueue:      workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]()),
-			add: func(interface{}) error {
+			add: func(context.Context, interface{}) error {
 				return nil
 			},
-			delete: func(interface{}) error {
+			delete: func(context.Context, interface{}) error {
 				return nil
 			},
 			updateFilter: ReceiveAllUpdates,
@@ -586,10 +586,10 @@ var _ = Describe("Event Handler Internals", func() {
 			informer:       factory.Core().V1().Pods().Informer(),
 			deletedIndexer: cache.NewIndexer(cache.DeletionHandlingMetaNamespaceKeyFunc, cache.Indexers{}),
 			workqueue:      workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]()),
-			add: func(interface{}) error {
+			add: func(context.Context, interface{}) error {
 				return nil
 			},
-			delete: func(interface{}) error {
+			delete: func(context.Context, interface{}) error {
 				return nil
 			},
 			updateFilter: ReceiveAllUpdates,

@@ -4,6 +4,7 @@
 package egressip
 
 import (
+	"context"
 	"fmt"
 	"net"
 
@@ -96,7 +97,7 @@ var _ = ginkgo.DescribeTable("initNFTables", func(tc initNFTablesTestCase) {
 
 	c := &Controller{v4: tc.v4, v6: tc.v6}
 
-	err := c.initNFTables()
+	err := c.initNFTables(context.Background())
 	if tc.expectInitErr != "" {
 		gomega.Expect(err).Should(gomega.MatchError(tc.expectInitErr))
 		return

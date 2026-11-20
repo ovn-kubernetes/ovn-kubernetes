@@ -4,6 +4,7 @@
 package egressip
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -73,7 +74,7 @@ var _ = ginkgo.Describe("Gateway EgressIP", func() {
 			addrMgr, stopFn := initBridgeEIPAddrManager(nodeName, bridgeName, emptyAnnotation)
 			defer stopFn()
 			eip := getEIPAssignedToNode(nodeName, mark, ipV4Addr)
-			isUpdated, err := addrMgr.AddEgressIP(eip)
+			isUpdated, err := addrMgr.AddEgressIP(context.Background(), eip)
 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "should process a valid EgressIP")
 			gomega.Expect(isUpdated).Should(gomega.BeTrue())
 			gomega.Eventually(func() []string {
@@ -90,7 +91,7 @@ var _ = ginkgo.Describe("Gateway EgressIP", func() {
 			addrMgr, stopFn := initBridgeEIPAddrManager(nodeName, bridgeName, emptyAnnotation)
 			defer stopFn()
 			eip := getEIPAssignedToNode(nodeName, "", ipV4Addr)
-			isUpdated, err := addrMgr.AddEgressIP(eip)
+			isUpdated, err := addrMgr.AddEgressIP(context.Background(), eip)
 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "should process a valid EgressIP")
 			gomega.Expect(isUpdated).Should(gomega.BeFalse())
 			node, err := addrMgr.nodeLister.Get(nodeName)
@@ -105,7 +106,7 @@ var _ = ginkgo.Describe("Gateway EgressIP", func() {
 			addrMgr, stopFn := initBridgeEIPAddrManager(nodeName, bridgeName, emptyAnnotation)
 			defer stopFn()
 			eip := getEIPAssignedToNode(nodeName, "not-an-integer", ipV4Addr)
-			isUpdated, err := addrMgr.AddEgressIP(eip)
+			isUpdated, err := addrMgr.AddEgressIP(context.Background(), eip)
 			gomega.Expect(err).Should(gomega.HaveOccurred(), "should process a valid EgressIP")
 			gomega.Expect(isUpdated).Should(gomega.BeFalse())
 			node, err := addrMgr.nodeLister.Get(nodeName)
@@ -125,7 +126,7 @@ var _ = ginkgo.Describe("Gateway EgressIP", func() {
 			addrMgr, stopFn := initBridgeEIPAddrManager(nodeName, bridgeName, generateAnnotFromIPs(ipV4Addr2))
 			defer stopFn()
 			eip := getEIPAssignedToNode(nodeName, mark, ipV4Addr)
-			isUpdated, err := addrMgr.AddEgressIP(eip)
+			isUpdated, err := addrMgr.AddEgressIP(context.Background(), eip)
 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "should process a valid EgressIP")
 			gomega.Expect(isUpdated).Should(gomega.BeTrue())
 			gomega.Eventually(func() []string {
@@ -146,7 +147,7 @@ var _ = ginkgo.Describe("Gateway EgressIP", func() {
 			addrMgr, stopFn := initBridgeEIPAddrManagerWithHostCIDRs(nodeName, bridgeName, emptyAnnotation, []string{secondarySubnet})
 			defer stopFn()
 			eip := getEIPAssignedToNode(nodeName, mark, secondaryIP)
-			isUpdated, err := addrMgr.AddEgressIP(eip)
+			isUpdated, err := addrMgr.AddEgressIP(context.Background(), eip)
 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "should not error for secondary network IP")
 			gomega.Expect(isUpdated).Should(gomega.BeFalse(), "should not update for secondary network IP")
 			node, err := addrMgr.nodeLister.Get(nodeName)
@@ -169,7 +170,7 @@ var _ = ginkgo.Describe("Gateway EgressIP", func() {
 			defer stopFn()
 			assignedEIP := getEIPAssignedToNode(nodeName, mark, ipV4Addr)
 			unassignedEIP := getEIPNotAssignedToNode(mark, ipV4Addr)
-			isUpdated, err := addrMgr.UpdateEgressIP(unassignedEIP, assignedEIP)
+			isUpdated, err := addrMgr.UpdateEgressIP(context.Background(), unassignedEIP, assignedEIP)
 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "should process a valid EgressIP")
 			gomega.Expect(isUpdated).Should(gomega.BeTrue())
 			gomega.Eventually(func() []string {
@@ -193,10 +194,10 @@ var _ = ginkgo.Describe("Gateway EgressIP", func() {
 			defer stopFn()
 			assignedEIP := getEIPAssignedToNode(nodeName, mark, ipV4Addr)
 			unassignedEIP := getEIPNotAssignedToNode(mark, ipV4Addr)
-			isUpdated, err := addrMgr.UpdateEgressIP(unassignedEIP, assignedEIP)
+			isUpdated, err := addrMgr.UpdateEgressIP(context.Background(), unassignedEIP, assignedEIP)
 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "should process a valid EgressIP")
 			gomega.Expect(isUpdated).Should(gomega.BeTrue())
-			isUpdated, err = addrMgr.UpdateEgressIP(assignedEIP, unassignedEIP)
+			isUpdated, err = addrMgr.UpdateEgressIP(context.Background(), assignedEIP, unassignedEIP)
 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "should process a valid EgressIP")
 			gomega.Expect(isUpdated).Should(gomega.BeTrue())
 			gomega.Eventually(func() []string {
@@ -224,10 +225,10 @@ var _ = ginkgo.Describe("Gateway EgressIP", func() {
 			unassignedEIP := getEIPNotAssignedToNode(mark, ipV4Addr)
 			assignedEIP1 := getEIPAssignedToNode(nodeName, mark, ipV4Addr)
 			assignedEIP2 := getEIPAssignedToNode(nodeName, mark2, ipV4Addr2)
-			isUpdated, err := addrMgr.UpdateEgressIP(unassignedEIP, assignedEIP1)
+			isUpdated, err := addrMgr.UpdateEgressIP(context.Background(), unassignedEIP, assignedEIP1)
 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "should process a valid EgressIP")
 			gomega.Expect(isUpdated).Should(gomega.BeTrue())
-			isUpdated, err = addrMgr.UpdateEgressIP(assignedEIP1, assignedEIP2)
+			isUpdated, err = addrMgr.UpdateEgressIP(context.Background(), assignedEIP1, assignedEIP2)
 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "should process a valid EgressIP")
 			gomega.Expect(isUpdated).Should(gomega.BeTrue())
 			gomega.Eventually(func() []string {
@@ -256,10 +257,10 @@ var _ = ginkgo.Describe("Gateway EgressIP", func() {
 			addrMgr, stopFn := initBridgeEIPAddrManager(nodeName, bridgeName, emptyAnnotation)
 			defer stopFn()
 			eip := getEIPAssignedToNode(nodeName, mark, ipV4Addr)
-			isUpdated, err := addrMgr.AddEgressIP(eip)
+			isUpdated, err := addrMgr.AddEgressIP(context.Background(), eip)
 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "should process a valid EgressIP")
 			gomega.Expect(isUpdated).Should(gomega.BeTrue())
-			isUpdated, err = addrMgr.DeleteEgressIP(eip)
+			isUpdated, err = addrMgr.DeleteEgressIP(context.Background(), eip)
 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "should process a valid EgressIP")
 			gomega.Expect(isUpdated).Should(gomega.BeTrue())
 			gomega.Eventually(func() []string {
@@ -277,7 +278,7 @@ var _ = ginkgo.Describe("Gateway EgressIP", func() {
 			addrMgr, stopFn := initBridgeEIPAddrManager(nodeName, bridgeName, generateAnnotFromIPs(ipV4Addr2))
 			defer stopFn()
 			eip := getEIPNotAssignedToNode(mark, ipV4Addr)
-			isUpdated, err := addrMgr.DeleteEgressIP(eip)
+			isUpdated, err := addrMgr.DeleteEgressIP(context.Background(), eip)
 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "should process a valid EgressIP")
 			gomega.Expect(isUpdated).Should(gomega.BeFalse())
 			node, err := addrMgr.nodeLister.Get(nodeName)
@@ -302,7 +303,7 @@ var _ = ginkgo.Describe("Gateway EgressIP", func() {
 			eipAssigned1 := getEIPAssignedToNode(nodeName, mark, ipV4Addr)
 			eipAssigned2 := getEIPAssignedToNode(nodeName, mark2, ipV4Addr2)
 			eipUnassigned3 := getEIPNotAssignedToNode(mark3, ipV4Addr3)
-			err := addrMgr.SyncEgressIP([]interface{}{eipAssigned1, eipAssigned2, eipUnassigned3})
+			err := addrMgr.SyncEgressIP(context.Background(), []interface{}{eipAssigned1, eipAssigned2, eipUnassigned3})
 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "should process valid EgressIPs")
 			gomega.Eventually(func() []string {
 				node, err := addrMgr.nodeLister.Get(nodeName)
@@ -328,7 +329,7 @@ var _ = ginkgo.Describe("Gateway EgressIP", func() {
 			defer stopFn()
 			eipAssigned1 := getEIPAssignedToNode(nodeName, mark, ipV4Addr)
 			eipAssigned2 := getEIPAssignedToNode(nodeName, mark2, ipV4Addr2)
-			err := addrMgr.SyncEgressIP([]interface{}{eipAssigned1, eipAssigned2})
+			err := addrMgr.SyncEgressIP(context.Background(), []interface{}{eipAssigned1, eipAssigned2})
 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "should process valid EgressIPs")
 			gomega.Eventually(func() []string {
 				node, err := addrMgr.nodeLister.Get(nodeName)
@@ -347,7 +348,7 @@ var _ = ginkgo.Describe("Gateway EgressIP", func() {
 			addrMgr, stopFn := initBridgeEIPAddrManager(nodeName, bridgeName, emptyAnnotation) // previously configured IP
 			defer stopFn()
 			eipAssigned := getEIPAssignedToNode(nodeName, "", ipV4Addr)
-			err := addrMgr.SyncEgressIP([]interface{}{eipAssigned})
+			err := addrMgr.SyncEgressIP(context.Background(), []interface{}{eipAssigned})
 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "should process valid EgressIPs")
 			node, err := addrMgr.nodeLister.Get(nodeName)
 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "node should be present within kapi")
@@ -385,7 +386,7 @@ var _ = ginkgo.Describe("Gateway EgressIP", func() {
 
 			// Sync with a valid OVN network EgressIP - should clean up the secondary IP and add the new one
 			validEIP := getEIPAssignedToNode(nodeName, mark2, ipV4Addr)
-			err = addrMgr.SyncEgressIP([]interface{}{validEIP})
+			err = addrMgr.SyncEgressIP(context.Background(), []interface{}{validEIP})
 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred(), "should sync and clean up mistaken secondary network EgressIP")
 
 			// Verify cleanup: secondary IP removed from cache, annotation, and bridge

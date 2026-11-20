@@ -39,9 +39,9 @@ func (_m *Interface) Events() v1.EventInterface {
 	return r0
 }
 
-// GetNodeForWindows provides a mock function with given fields: name
-func (_m *Interface) GetNodeForWindows(name string) (*corev1.Node, error) {
-	ret := _m.Called(name)
+// GetNodeForWindows provides a mock function with given fields: ctx, name
+func (_m *Interface) GetNodeForWindows(ctx context.Context, name string) (*corev1.Node, error) {
+	ret := _m.Called(ctx, name)
 
 	if len(ret) == 0 {
 		panic("no return value specified for GetNodeForWindows")
@@ -49,19 +49,19 @@ func (_m *Interface) GetNodeForWindows(name string) (*corev1.Node, error) {
 
 	var r0 *corev1.Node
 	var r1 error
-	if rf, ok := ret.Get(0).(func(string) (*corev1.Node, error)); ok {
-		return rf(name)
+	if rf, ok := ret.Get(0).(func(context.Context, string) (*corev1.Node, error)); ok {
+		return rf(ctx, name)
 	}
-	if rf, ok := ret.Get(0).(func(string) *corev1.Node); ok {
-		r0 = rf(name)
+	if rf, ok := ret.Get(0).(func(context.Context, string) *corev1.Node); ok {
+		r0 = rf(ctx, name)
 	} else {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).(*corev1.Node)
 		}
 	}
 
-	if rf, ok := ret.Get(1).(func(string) error); ok {
-		r1 = rf(name)
+	if rf, ok := ret.Get(1).(func(context.Context, string) error); ok {
+		r1 = rf(ctx, name)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -69,9 +69,9 @@ func (_m *Interface) GetNodeForWindows(name string) (*corev1.Node, error) {
 	return r0, r1
 }
 
-// GetNodesForWindows provides a mock function with no fields
-func (_m *Interface) GetNodesForWindows() ([]*corev1.Node, error) {
-	ret := _m.Called()
+// GetNodesForWindows provides a mock function with given fields: ctx
+func (_m *Interface) GetNodesForWindows(ctx context.Context) ([]*corev1.Node, error) {
+	ret := _m.Called(ctx)
 
 	if len(ret) == 0 {
 		panic("no return value specified for GetNodesForWindows")
@@ -79,19 +79,19 @@ func (_m *Interface) GetNodesForWindows() ([]*corev1.Node, error) {
 
 	var r0 []*corev1.Node
 	var r1 error
-	if rf, ok := ret.Get(0).(func() ([]*corev1.Node, error)); ok {
-		return rf()
+	if rf, ok := ret.Get(0).(func(context.Context) ([]*corev1.Node, error)); ok {
+		return rf(ctx)
 	}
-	if rf, ok := ret.Get(0).(func() []*corev1.Node); ok {
-		r0 = rf()
+	if rf, ok := ret.Get(0).(func(context.Context) []*corev1.Node); ok {
+		r0 = rf(ctx)
 	} else {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).([]*corev1.Node)
 		}
 	}
 
-	if rf, ok := ret.Get(1).(func() error); ok {
-		r1 = rf()
+	if rf, ok := ret.Get(1).(func(context.Context) error); ok {
+		r1 = rf(ctx)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -99,17 +99,17 @@ func (_m *Interface) GetNodesForWindows() ([]*corev1.Node, error) {
 	return r0, r1
 }
 
-// PatchNode provides a mock function with given fields: old, new
-func (_m *Interface) PatchNode(old *corev1.Node, new *corev1.Node) error {
-	ret := _m.Called(old, new)
+// PatchNode provides a mock function with given fields: ctx, old, new
+func (_m *Interface) PatchNode(ctx context.Context, old *corev1.Node, new *corev1.Node) error {
+	ret := _m.Called(ctx, old, new)
 
 	if len(ret) == 0 {
 		panic("no return value specified for PatchNode")
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(*corev1.Node, *corev1.Node) error); ok {
-		r0 = rf(old, new)
+	if rf, ok := ret.Get(0).(func(context.Context, *corev1.Node, *corev1.Node) error); ok {
+		r0 = rf(ctx, old, new)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -117,17 +117,17 @@ func (_m *Interface) PatchNode(old *corev1.Node, new *corev1.Node) error {
 	return r0
 }
 
-// PatchNodeStatus provides a mock function with given fields: old, new
-func (_m *Interface) PatchNodeStatus(old *corev1.Node, new *corev1.Node) error {
-	ret := _m.Called(old, new)
+// PatchNodeStatus provides a mock function with given fields: ctx, old, new
+func (_m *Interface) PatchNodeStatus(ctx context.Context, old *corev1.Node, new *corev1.Node) error {
+	ret := _m.Called(ctx, old, new)
 
 	if len(ret) == 0 {
 		panic("no return value specified for PatchNodeStatus")
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(*corev1.Node, *corev1.Node) error); ok {
-		r0 = rf(old, new)
+	if rf, ok := ret.Get(0).(func(context.Context, *corev1.Node, *corev1.Node) error); ok {
+		r0 = rf(ctx, old, new)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -171,17 +171,17 @@ func (_m *Interface) PatchPodStatusAnnotations(ctx context.Context, oldPod *core
 	return r0
 }
 
-// SetAnnotationsOnNamespace provides a mock function with given fields: namespaceName, annotations
-func (_m *Interface) SetAnnotationsOnNamespace(namespaceName string, annotations map[string]interface{}) error {
-	ret := _m.Called(namespaceName, annotations)
+// SetAnnotationsOnNamespace provides a mock function with given fields: ctx, namespaceName, annotations
+func (_m *Interface) SetAnnotationsOnNamespace(ctx context.Context, namespaceName string, annotations map[string]interface{}) error {
+	ret := _m.Called(ctx, namespaceName, annotations)
 
 	if len(ret) == 0 {
 		panic("no return value specified for SetAnnotationsOnNamespace")
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(string, map[string]interface{}) error); ok {
-		r0 = rf(namespaceName, annotations)
+	if rf, ok := ret.Get(0).(func(context.Context, string, map[string]interface{}) error); ok {
+		r0 = rf(ctx, namespaceName, annotations)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -207,17 +207,17 @@ func (_m *Interface) SetAnnotationsOnNode(ctx context.Context, nodeName string, 
 	return r0
 }
 
-// SetAnnotationsOnNodeWithFieldManager provides a mock function with given fields: nodeName, annotations, fieldManager
-func (_m *Interface) SetAnnotationsOnNodeWithFieldManager(nodeName string, annotations map[string]interface{}, fieldManager string) error {
-	ret := _m.Called(nodeName, annotations, fieldManager)
+// SetAnnotationsOnNodeWithFieldManager provides a mock function with given fields: ctx, nodeName, annotations, fieldManager
+func (_m *Interface) SetAnnotationsOnNodeWithFieldManager(ctx context.Context, nodeName string, annotations map[string]interface{}, fieldManager string) error {
+	ret := _m.Called(ctx, nodeName, annotations, fieldManager)
 
 	if len(ret) == 0 {
 		panic("no return value specified for SetAnnotationsOnNodeWithFieldManager")
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(string, map[string]interface{}, string) error); ok {
-		r0 = rf(nodeName, annotations, fieldManager)
+	if rf, ok := ret.Get(0).(func(context.Context, string, map[string]interface{}, string) error); ok {
+		r0 = rf(ctx, nodeName, annotations, fieldManager)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -225,17 +225,17 @@ func (_m *Interface) SetAnnotationsOnNodeWithFieldManager(nodeName string, annot
 	return r0
 }
 
-// SetAnnotationsOnPod provides a mock function with given fields: namespace, podName, annotations
-func (_m *Interface) SetAnnotationsOnPod(namespace string, podName string, annotations map[string]interface{}) error {
-	ret := _m.Called(namespace, podName, annotations)
+// SetAnnotationsOnPod provides a mock function with given fields: ctx, namespace, podName, annotations
+func (_m *Interface) SetAnnotationsOnPod(ctx context.Context, namespace string, podName string, annotations map[string]interface{}) error {
+	ret := _m.Called(ctx, namespace, podName, annotations)
 
 	if len(ret) == 0 {
 		panic("no return value specified for SetAnnotationsOnPod")
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(string, string, map[string]interface{}) error); ok {
-		r0 = rf(namespace, podName, annotations)
+	if rf, ok := ret.Get(0).(func(context.Context, string, string, map[string]interface{}) error); ok {
+		r0 = rf(ctx, namespace, podName, annotations)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -243,17 +243,17 @@ func (_m *Interface) SetAnnotationsOnPod(namespace string, podName string, annot
 	return r0
 }
 
-// SetAnnotationsOnService provides a mock function with given fields: namespace, serviceName, annotations
-func (_m *Interface) SetAnnotationsOnService(namespace string, serviceName string, annotations map[string]interface{}) error {
-	ret := _m.Called(namespace, serviceName, annotations)
+// SetAnnotationsOnService provides a mock function with given fields: ctx, namespace, serviceName, annotations
+func (_m *Interface) SetAnnotationsOnService(ctx context.Context, namespace string, serviceName string, annotations map[string]interface{}) error {
+	ret := _m.Called(ctx, namespace, serviceName, annotations)
 
 	if len(ret) == 0 {
 		panic("no return value specified for SetAnnotationsOnService")
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(string, string, map[string]interface{}) error); ok {
-		r0 = rf(namespace, serviceName, annotations)
+	if rf, ok := ret.Get(0).(func(context.Context, string, string, map[string]interface{}) error); ok {
+		r0 = rf(ctx, namespace, serviceName, annotations)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -261,17 +261,17 @@ func (_m *Interface) SetAnnotationsOnService(namespace string, serviceName strin
 	return r0
 }
 
-// SetLabelsOnNode provides a mock function with given fields: nodeName, labels
-func (_m *Interface) SetLabelsOnNode(nodeName string, labels map[string]interface{}) error {
-	ret := _m.Called(nodeName, labels)
+// SetLabelsOnNode provides a mock function with given fields: ctx, nodeName, labels
+func (_m *Interface) SetLabelsOnNode(ctx context.Context, nodeName string, labels map[string]interface{}) error {
+	ret := _m.Called(ctx, nodeName, labels)
 
 	if len(ret) == 0 {
 		panic("no return value specified for SetLabelsOnNode")
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(string, map[string]interface{}) error); ok {
-		r0 = rf(nodeName, labels)
+	if rf, ok := ret.Get(0).(func(context.Context, string, map[string]interface{}) error); ok {
+		r0 = rf(ctx, nodeName, labels)
 	} else {
 		r0 = ret.Error(0)
 	}

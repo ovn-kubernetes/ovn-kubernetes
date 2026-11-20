@@ -90,7 +90,7 @@ var _ = Describe("Node", func() {
 			client := fake.NewSimpleClientset(node)
 			nc := newController(&kube.Kube{KClient: client})
 
-			Expect(nc.removeStaleDPUHostAddressAnnotation()).To(Succeed())
+			Expect(nc.removeStaleDPUHostAddressAnnotation(context.Background())).To(Succeed())
 
 			updatedNode, err := client.CoreV1().Nodes().Get(context.Background(), nodeName, metav1.GetOptions{})
 			Expect(err).NotTo(HaveOccurred())
@@ -108,7 +108,7 @@ var _ = Describe("Node", func() {
 			client := fake.NewSimpleClientset(node)
 			nc := newController(&kube.Kube{KClient: client})
 
-			Expect(nc.removeStaleDPUHostAddressAnnotation()).To(Succeed())
+			Expect(nc.removeStaleDPUHostAddressAnnotation(context.Background())).To(Succeed())
 
 			updatedNode, err := client.CoreV1().Nodes().Get(context.Background(), nodeName, metav1.GetOptions{})
 			Expect(err).NotTo(HaveOccurred())
@@ -126,7 +126,7 @@ var _ = Describe("Node", func() {
 			}).Return(fmt.Errorf("patch failed"))
 			nc := newController(kubeMock)
 
-			err := nc.removeStaleDPUHostAddressAnnotation()
+			err := nc.removeStaleDPUHostAddressAnnotation(context.Background())
 			Expect(err).To(MatchError(And(
 				ContainSubstring("failed to remove stale"),
 				ContainSubstring("patch failed"),
@@ -893,9 +893,9 @@ var _ = Describe("Node", func() {
 					cnnci := NewCommonNodeNetworkControllerInfo(kubeFakeClient, fakeClient.AdminPolicyRouteClient, wf, nil, nodeName, routeManager)
 					nc = newDefaultNodeNetworkController(cnnci, stop, wg, routeManager, nil, nil)
 					nc.initRetryFrameworkForNode()
-					err = setupRemoteNodeNFTSets()
+					err = setupRemoteNodeNFTSets(context.Background())
 					Expect(err).NotTo(HaveOccurred())
-					err = setupPMTUDNFTChain()
+					err = setupPMTUDNFTChain(context.Background())
 					Expect(err).NotTo(HaveOccurred())
 					nc.Gateway = &gateway{
 						openflowManager: &openflowManager{
@@ -1004,9 +1004,9 @@ add element inet ovn-kubernetes remote-node-ips-v4 { 169.254.254.61 }
 					cnnci := NewCommonNodeNetworkControllerInfo(kubeFakeClient, fakeClient.AdminPolicyRouteClient, wf, nil, nodeName, routeManager)
 					nc = newDefaultNodeNetworkController(cnnci, stop, wg, routeManager, nil, nil)
 					nc.initRetryFrameworkForNode()
-					err = setupRemoteNodeNFTSets()
+					err = setupRemoteNodeNFTSets(context.Background())
 					Expect(err).NotTo(HaveOccurred())
-					err = setupPMTUDNFTChain()
+					err = setupPMTUDNFTChain(context.Background())
 					Expect(err).NotTo(HaveOccurred())
 					nc.Gateway = &gateway{
 						openflowManager: &openflowManager{
@@ -1157,9 +1157,9 @@ add element inet ovn-kubernetes remote-node-ips-v4 { 169.254.253.61 }
 					cnnci := NewCommonNodeNetworkControllerInfo(kubeFakeClient, fakeClient.AdminPolicyRouteClient, wf, nil, nodeName, routeManager)
 					nc = newDefaultNodeNetworkController(cnnci, stop, wg, routeManager, nil, nil)
 					nc.initRetryFrameworkForNode()
-					err = setupRemoteNodeNFTSets()
+					err = setupRemoteNodeNFTSets(context.Background())
 					Expect(err).NotTo(HaveOccurred())
-					err = setupPMTUDNFTChain()
+					err = setupPMTUDNFTChain(context.Background())
 					Expect(err).NotTo(HaveOccurred())
 					nc.Gateway = &gateway{
 						openflowManager: &openflowManager{
@@ -1267,9 +1267,9 @@ add element inet ovn-kubernetes remote-node-ips-v6 { 2001:db8:1::4 }
 					cnnci := NewCommonNodeNetworkControllerInfo(kubeFakeClient, fakeClient.AdminPolicyRouteClient, wf, nil, nodeName, routeManager)
 					nc = newDefaultNodeNetworkController(cnnci, stop, wg, routeManager, nil, nil)
 					nc.initRetryFrameworkForNode()
-					err = setupRemoteNodeNFTSets()
+					err = setupRemoteNodeNFTSets(context.Background())
 					Expect(err).NotTo(HaveOccurred())
-					err = setupPMTUDNFTChain()
+					err = setupPMTUDNFTChain(context.Background())
 					Expect(err).NotTo(HaveOccurred())
 					nc.Gateway = &gateway{
 						openflowManager: &openflowManager{
@@ -1428,9 +1428,9 @@ add element inet ovn-kubernetes remote-node-ips-v6 { 2002:db8:1::4 }
 					cnnci := NewCommonNodeNetworkControllerInfo(kubeFakeClient, fakeClient.AdminPolicyRouteClient, wf, nil, nodeName, routeManager)
 					nc = newDefaultNodeNetworkController(cnnci, stop, wg, routeManager, nil, nil)
 					nc.initRetryFrameworkForNode()
-					err = setupRemoteNodeNFTSets()
+					err = setupRemoteNodeNFTSets(context.Background())
 					Expect(err).NotTo(HaveOccurred())
-					err = setupPMTUDNFTChain()
+					err = setupPMTUDNFTChain(context.Background())
 					Expect(err).NotTo(HaveOccurred())
 					nc.Gateway = &gateway{
 						openflowManager: &openflowManager{
@@ -1439,7 +1439,7 @@ add element inet ovn-kubernetes remote-node-ips-v6 { 2002:db8:1::4 }
 						},
 					}
 
-					err = managementport.SetupManagementPortNFTSets()
+					err = managementport.SetupManagementPortNFTSets(context.Background())
 					Expect(err).NotTo(HaveOccurred())
 
 					// must run route manager manually which is usually started with nc.Start()
@@ -1549,9 +1549,9 @@ add element inet ovn-kubernetes remote-node-ips-v6 { 2002:db8:1::4 }
 					cnnci := NewCommonNodeNetworkControllerInfo(kubeFakeClient, fakeClient.AdminPolicyRouteClient, wf, nil, nodeName, routeManager)
 					nc = newDefaultNodeNetworkController(cnnci, stop, wg, routeManager, nil, nil)
 					nc.initRetryFrameworkForNode()
-					err = setupRemoteNodeNFTSets()
+					err = setupRemoteNodeNFTSets(context.Background())
 					Expect(err).NotTo(HaveOccurred())
-					err = setupPMTUDNFTChain()
+					err = setupPMTUDNFTChain(context.Background())
 					Expect(err).NotTo(HaveOccurred())
 					nc.Gateway = &gateway{
 						openflowManager: &openflowManager{
@@ -1560,7 +1560,7 @@ add element inet ovn-kubernetes remote-node-ips-v6 { 2002:db8:1::4 }
 						},
 					}
 
-					err = managementport.SetupManagementPortNFTSets()
+					err = managementport.SetupManagementPortNFTSets(context.Background())
 					Expect(err).NotTo(HaveOccurred())
 
 					// must run route manager manually which is usually started with nc.Start()
@@ -2371,8 +2371,8 @@ var _ = Describe("Node object deletion", func() {
 		cnnci := NewCommonNodeNetworkControllerInfo(kubeFakeClient, fakeClient.AdminPolicyRouteClient, wf, nil, nodeName, routeManager)
 		nc := newDefaultNodeNetworkController(cnnci, stop, wg, routeManager, nil, nil)
 		nc.initRetryFrameworkForNode()
-		Expect(setupRemoteNodeNFTSets()).To(Succeed())
-		Expect(setupPMTUDNFTChain()).To(Succeed())
+		Expect(setupRemoteNodeNFTSets(context.Background())).To(Succeed())
+		Expect(setupPMTUDNFTChain(context.Background())).To(Succeed())
 		nc.Gateway = &gateway{
 			openflowManager: &openflowManager{
 				defaultBridge: newOpenflowBridge(bridgeconfig.TestDefaultBridgeConfig()),

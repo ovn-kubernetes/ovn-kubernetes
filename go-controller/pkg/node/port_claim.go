@@ -4,6 +4,7 @@
 package node
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"reflect"
@@ -149,7 +150,7 @@ func newPortClaimWatcher(recorder record.EventRecorder) (*portClaimWatcher, erro
 	}, nil
 }
 
-func (p *portClaimWatcher) AddService(svc *corev1.Service) error {
+func (p *portClaimWatcher) AddService(_ context.Context, svc *corev1.Service) error {
 	var errors []error
 	if raw_errors := handleService(svc, p.port.open); len(errors) > 0 {
 		for _, err := range raw_errors {
@@ -159,7 +160,7 @@ func (p *portClaimWatcher) AddService(svc *corev1.Service) error {
 	return utilerrors.Join(errors...)
 }
 
-func (p *portClaimWatcher) UpdateService(old, new *corev1.Service) error {
+func (p *portClaimWatcher) UpdateService(_ context.Context, old, new *corev1.Service) error {
 	if reflect.DeepEqual(old.Spec.ExternalIPs, new.Spec.ExternalIPs) && reflect.DeepEqual(old.Spec.Ports, new.Spec.Ports) {
 		return nil
 	}
@@ -174,7 +175,7 @@ func (p *portClaimWatcher) UpdateService(old, new *corev1.Service) error {
 	return utilerrors.Join(errors...)
 }
 
-func (p *portClaimWatcher) DeleteService(svc *corev1.Service) error {
+func (p *portClaimWatcher) DeleteService(_ context.Context, svc *corev1.Service) error {
 	var errors []error
 	if raw_errors := handleService(svc, p.port.close); len(raw_errors) > 0 {
 		for _, err := range raw_errors {
@@ -185,7 +186,7 @@ func (p *portClaimWatcher) DeleteService(svc *corev1.Service) error {
 	return nil
 }
 
-func (p *portClaimWatcher) SyncServices(_ []interface{}) error {
+func (p *portClaimWatcher) SyncServices(_ context.Context, _ []interface{}) error {
 	return nil
 }
 

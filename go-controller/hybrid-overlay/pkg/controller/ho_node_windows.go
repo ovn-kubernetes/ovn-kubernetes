@@ -61,7 +61,8 @@ func newNodeController(kube kube.Interface,
 			"UDP port. Please make sure you install all the KB updates on your system.")
 	}
 
-	node, err := kube.GetNodeForWindows(nodeName)
+	ctx := context.Background()
+	node, err := kube.GetNodeForWindows(ctx, nodeName)
 	if err != nil {
 		return nil, err
 	}
@@ -168,7 +169,7 @@ func ensureBaseNetwork() error {
 
 // Add sets up VXLAN tunnels to other nodes
 // For a windows node, this means watching for all nodes and programming the routing
-func (n *NodeController) AddNode(node *corev1.Node) error {
+func (n *NodeController) AddNode(ctx context.Context, node *corev1.Node) error {
 	if node.Status.NodeInfo.MachineID == n.machineID {
 		// Initialize the local node (or reconfigure it if the addresses
 		// have changed) by creating the network object and setting up
@@ -177,7 +178,7 @@ func (n *NodeController) AddNode(node *corev1.Node) error {
 		if (cidr != nil && !houtil.SameIPNet(cidr, n.localNodeCIDR)) || (nodeIP != nil && nodeIP.Equal(n.localNodeIP)) {
 			n.localNodeCIDR = cidr
 			n.localNodeIP = nodeIP
-			if err := n.initSelf(node, cidr); err != nil {
+			if err := n.initSelf(ctx, node, cidr); err != nil {
 				return fmt.Errorf("failed to initialize node: %v", err)
 			}
 		}
@@ -192,7 +193,7 @@ func (n *NodeController) AddNode(node *corev1.Node) error {
 	cidr, nodeIP, drMAC, err := getNodeDetails(node)
 	if cidr == nil || nodeIP == nil || drMAC == nil {
 		klog.V(5).Infof("Cleaning up hybrid overlay resources for node %q because: %v", node.Name, err)
-		n.DeleteNode(node)
+		n.DeleteNode(ctx, node)
 		return err
 	}
 
@@ -221,7 +222,7 @@ func (n *NodeController) AddNode(node *corev1.Node) error {
 }
 
 // Delete handles node deletions
-func (n *NodeController) DeleteNode(node *corev1.Node) error {
+func (n *NodeController) DeleteNode(ctx context.Context, node *corev1.Node) error {
 	// Treat the local node differently than other nodes
 	// If the local node is removed, we want to delete the network object
 	// and remove all the VXLAN plumbing towards other existing nodes. If
@@ -229,7 +230,7 @@ func (n *NodeController) DeleteNode(node *corev1.Node) error {
 	// (i.e. the remote subnet) to it.
 
 	if node.Status.NodeInfo.MachineID == n.machineID {
-		if err := n.uninitSelf(node); err != nil {
+		if err := n.uninitSelf(ctx, node); err != nil {
 			return fmt.Errorf("failed to uninitialize node: %v", err)
 		}
 		return nil
@@ -266,7 +267,7 @@ func (n *NodeController) DeleteNode(node *corev1.Node) error {
 //  1. Setting up this node and its VXLAN extension for talking to other nodes
 //  2. Setting back annotations about its VTEP and gateway MAC address to its own node object
 //  3. Initializing every VXLAN tunnels toward other nodes
-func (n *NodeController) initSelf(node *corev1.Node, nodeSubnet *net.IPNet) error {
+func (n *NodeController) initSelf(ctx context.Context, node *corev1.Node, nodeSubnet *net.IPNet) error {
 	// The distributed router IP (i.e. the gateway, from a container perspective)
 	// is hardcoded here to be the first IP on the subnet.
 	// TODO: could be made configurable as Windows doesn't have any restrictions
@@ -339,7 +340,7 @@ func (n *NodeController) initSelf(node *corev1.Node, nodeSubnet *net.IPNet) erro
 			if len(policySettings.Address) == 0 {
 				return fmt.Errorf("error creating the network: no DRMAC address")
 			}
-			if err := n.kube.SetAnnotationsOnNode(context.TODO(), node.Name, map[string]interface{}{
+			if err := n.kube.SetAnnotationsOnNode(ctx, node.Name, map[string]interface{}{
 				hotypes.HybridOverlayDRMAC: policySettings.Address,
 			}); err != nil {
 				klog.Errorf("Failed to set DRMAC annotation on node: %v", err)
@@ -349,7 +350,7 @@ func (n *NodeController) initSelf(node *corev1.Node, nodeSubnet *net.IPNet) erro
 	}
 
 	// Add existing nodes
-	nodes, err := n.kube.GetNodesForWindows()
+	nodes, err := n.kube.GetNodesForWindows(ctx)
 	if err != nil {
 		return fmt.Errorf("error in initializing/fetching nodes: %v", err)
 	}
@@ -358,7 +359,7 @@ func (n *NodeController) initSelf(node *corev1.Node, nodeSubnet *net.IPNet) erro
 		node := *node
 		// Add VXLAN tunnel to the remote nodes
 		if node.Status.NodeInfo.MachineID != n.machineID {
-			n.AddNode(&node)
+			n.AddNode(ctx, &node)
 		}
 	}
 
@@ -369,12 +370,12 @@ func (n *NodeController) initSelf(node *corev1.Node, nodeSubnet *net.IPNet) erro
 //  1. Cleaning up this node and its VXLAN extension for talking to other nodes
 //  2. Cleaning up annotations about its VTEP and gateway MAC address to its own node object
 //  3. Uninitializing every VXLAN tunnel toward other nodes
-func (n *NodeController) uninitSelf(node *corev1.Node) error {
+func (n *NodeController) uninitSelf(ctx context.Context, node *corev1.Node) error {
 	klog.Infof("Removing overlay network '%s' (ID: %v) from local node '%s'",
 		networkName, n.networkID, node.Name)
 
 	// Remove existing nodes
-	nodes, err := n.kube.GetNodesForWindows()
+	nodes, err := n.kube.GetNodesForWindows(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get nodes: %v", err)
 	}
@@ -383,7 +384,7 @@ func (n *NodeController) uninitSelf(node *corev1.Node) error {
 	for _, node := range nodes {
 		node := *node
 		if node.Status.NodeInfo.MachineID != n.machineID {
-			n.DeleteNode(&node)
+			n.DeleteNode(ctx, &node)
 		}
 	}
 
@@ -397,11 +398,11 @@ func (n *NodeController) uninitSelf(node *corev1.Node) error {
 	return nil
 }
 
-func (n *NodeController) AddPod(pod *corev1.Pod) error {
+func (n *NodeController) AddPod(ctx context.Context, pod *corev1.Pod) error {
 	return nil
 }
 
-func (n *NodeController) DeletePod(pod *corev1.Pod) error {
+func (n *NodeController) DeletePod(ctx context.Context, pod *corev1.Pod) error {
 	return nil
 }
 

@@ -40,7 +40,7 @@ func (c *Controller) processNextNQOSWorkItem(wg *sync.WaitGroup) bool {
 	}
 	defer c.nqosQueue.Done(nqosKey)
 
-	if err := c.syncNetworkQoS(nqosKey); err != nil {
+	if err := c.syncNetworkQoS(context.Background(), nqosKey); err != nil {
 		if c.nqosQueue.NumRequeues(nqosKey) < maxRetries {
 			c.nqosQueue.AddRateLimited(nqosKey)
 			return true
@@ -54,7 +54,7 @@ func (c *Controller) processNextNQOSWorkItem(wg *sync.WaitGroup) bool {
 
 // syncNetworkQoS decides the main logic everytime
 // we dequeue a key from the nqosQueue cache
-func (c *Controller) syncNetworkQoS(key string) error {
+func (c *Controller) syncNetworkQoS(ctx context.Context, key string) error {
 	nqosNamespace, nqosName, err := cache.SplitMetaNamespaceKey(key)
 	if err != nil {
 		return err
@@ -83,10 +83,10 @@ func (c *Controller) syncNetworkQoS(key string) error {
 	}
 
 	klog.V(5).Infof("%s - Processing NetworkQoS %s/%s", c.controllerName, nqos.Namespace, nqos.Name)
-	if err := c.ensureNetworkQos(nqos); err != nil {
+	if err := c.ensureNetworkQos(ctx, nqos); err != nil {
 		c.nqosCache.Delete(key)
 		// we can ignore the error if status update doesn't succeed; best effort
-		c.updateNQOSStatusToNotReady(nqos.Namespace, nqos.Name, "failed to reconcile", err)
+		c.updateNQOSStatusToNotReady(ctx, nqos.Namespace, nqos.Name, "failed to reconcile", err)
 		return err
 	}
 	recordNetworkQoSReconcileDuration(c.controllerName, time.Since(startTime).Milliseconds())
@@ -98,7 +98,7 @@ func (c *Controller) syncNetworkQoS(key string) error {
 // add/update that might be triggered either due to NQOS changes or the corresponding
 // matching pod or namespace changes.
 // This function need to be called with a lock held.
-func (c *Controller) ensureNetworkQos(nqos *networkqosapi.NetworkQoS) error {
+func (c *Controller) ensureNetworkQos(ctx context.Context, nqos *networkqosapi.NetworkQoS) error {
 	desiredNQOSState := &networkQoSState{
 		name:      nqos.Name,
 		namespace: nqos.Namespace,
@@ -106,7 +106,7 @@ func (c *Controller) ensureNetworkQos(nqos *networkqosapi.NetworkQoS) error {
 
 	if len(nqos.Spec.PodSelector.MatchLabels) > 0 || len(nqos.Spec.PodSelector.MatchExpressions) > 0 {
 		if podSelector, err := metav1.LabelSelectorAsSelector(&nqos.Spec.PodSelector); err != nil {
-			c.updateNQOSStatusToNotReady(nqos.Namespace, nqos.Name, "failed to parse source pod selector", err)
+			c.updateNQOSStatusToNotReady(ctx, nqos.Namespace, nqos.Name, "failed to parse source pod selector", err)
 			return nil
 		} else {
 			desiredNQOSState.PodSelector = podSelector
@@ -169,7 +169,7 @@ func (c *Controller) ensureNetworkQos(nqos *networkqosapi.NetworkQoS) error {
 		return fmt.Errorf("failed to delete stale QoSes: %w", err)
 	}
 	c.nqosCache.Store(joinMetaNamespaceAndName(nqos.Namespace, nqos.Name), desiredNQOSState)
-	if e := c.updateNQOSStatusToReady(nqos.Namespace, nqos.Name); e != nil {
+	if e := c.updateNQOSStatusToReady(ctx, nqos.Namespace, nqos.Name); e != nil {
 		return fmt.Errorf("successfully reconciled NetworkQoS %s/%s, but failed to patch status: %v", nqos.Namespace, nqos.Name, e)
 	}
 	return nil
@@ -199,7 +199,7 @@ const (
 	reasonQoSSetupFailed  = "Failed"
 )
 
-func (c *Controller) updateNQOSStatusToReady(namespace, name string) error {
+func (c *Controller) updateNQOSStatusToReady(ctx context.Context, namespace, name string) error {
 	cond := metav1.Condition{
 		Type:    conditionTypeReady + c.nodeName,
 		Status:  metav1.ConditionTrue,
@@ -207,7 +207,7 @@ func (c *Controller) updateNQOSStatusToReady(namespace, name string) error {
 		Message: "NetworkQoS was applied successfully",
 	}
 	startTime := time.Now()
-	err := c.updateNQOStatusCondition(cond, namespace, name)
+	err := c.updateNQOStatusCondition(ctx, cond, namespace, name)
 	if err != nil {
 		return fmt.Errorf("failed to update the status of NetworkQoS %s/%s, err: %v", namespace, name, err)
 	}
@@ -217,7 +217,7 @@ func (c *Controller) updateNQOSStatusToReady(namespace, name string) error {
 	return nil
 }
 
-func (c *Controller) updateNQOSStatusToNotReady(namespace, name, reason string, err error) {
+func (c *Controller) updateNQOSStatusToNotReady(ctx context.Context, namespace, name, reason string, err error) {
 	msg := reason
 	if err != nil {
 		msg = fmt.Sprintf("NetworkQoS %s/%s - %s, error details: %v", namespace, name, reason, err)
@@ -230,7 +230,7 @@ func (c *Controller) updateNQOSStatusToNotReady(namespace, name, reason string, 
 	}
 	klog.Error(msg)
 	startTime := time.Now()
-	err = c.updateNQOStatusCondition(cond, namespace, name)
+	err = c.updateNQOStatusCondition(ctx, cond, namespace, name)
 	if err != nil {
 		klog.Warningf("%s: failed to update the status of NetworkQoS %s/%s, err: %v", c.controllerName, namespace, name, err)
 	} else {
@@ -239,7 +239,7 @@ func (c *Controller) updateNQOSStatusToNotReady(namespace, name, reason string, 
 	}
 }
 
-func (c *Controller) updateNQOStatusCondition(newCondition metav1.Condition, namespace, name string) error {
+func (c *Controller) updateNQOStatusCondition(ctx context.Context, newCondition metav1.Condition, namespace, name string) error {
 	nqos, err := c.nqosLister.NetworkQoSes(namespace).Get(name)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
@@ -267,7 +267,7 @@ func (c *Controller) updateNQOStatusCondition(newCondition metav1.Condition, nam
 
 	applyObj := nqosapiapply.NetworkQoS(name, namespace).
 		WithStatus(nqosapiapply.Status().WithConditions(newConditionApply))
-	_, err = c.nqosClientSet.K8sV1alpha1().NetworkQoSes(namespace).ApplyStatus(context.TODO(), applyObj, metav1.ApplyOptions{FieldManager: c.nodeName, Force: true})
+	_, err = c.nqosClientSet.K8sV1alpha1().NetworkQoSes(namespace).ApplyStatus(ctx, applyObj, metav1.ApplyOptions{FieldManager: c.nodeName, Force: true})
 	return err
 }
 

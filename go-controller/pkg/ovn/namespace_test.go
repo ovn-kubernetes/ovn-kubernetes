@@ -201,7 +201,7 @@ func TestNamespacePortGroupLifecycle(t *testing.T) {
 				}
 				bnc.nbClient = nbClient
 				namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "namespace"}}
-				_, unlock, err := bnc.ensureNamespaceLockedCommon(namespace.Name, false, namespace,
+				_, unlock, err := bnc.ensureNamespaceLockedCommon(context.Background(), namespace.Name, false, namespace,
 					func(context.Context, *namespaceInfo, *corev1.Namespace) error { return nil })
 				g.Expect(err).NotTo(gomega.HaveOccurred())
 				unlock()

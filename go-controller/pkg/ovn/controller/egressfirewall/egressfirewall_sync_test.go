@@ -149,7 +149,7 @@ func TestEFControllerSync_UpdatesOnSubnetChangeAndSkipsWhenUnchanged(t *testing.
 	oc.ruleCounter.Store(namespace+"/"+egressFirewallName, uint32(len(ef.Spec.Egress)))
 
 	// First sync creates ACLs and stores cache entry.
-	err = oc.sync(namespace + "/" + egressFirewallName)
+	err = oc.sync(context.Background(), namespace+"/"+egressFirewallName)
 	require.NoError(t, err)
 
 	p := libovsdbops.GetPredicate[*nbdb.ACL](oc.GetEgressFirewallACLDbIDs(namespace, 0), nil)
@@ -163,7 +163,7 @@ func TestEFControllerSync_UpdatesOnSubnetChangeAndSkipsWhenUnchanged(t *testing.
 	networkManager.PrimaryNetworks[namespace] = netInfo2
 	networkManager.Unlock()
 
-	err = oc.sync(namespace + "/" + egressFirewallName)
+	err = oc.sync(context.Background(), namespace+"/"+egressFirewallName)
 	require.NoError(t, err)
 
 	acls, err = libovsdbops.FindACLsWithPredicate(oc.nbClient, p)
@@ -179,7 +179,7 @@ func TestEFControllerSync_UpdatesOnSubnetChangeAndSkipsWhenUnchanged(t *testing.
 	networkManager.Lock()
 	networkManager.PrimaryNetworks[namespace] = nil
 	networkManager.Unlock()
-	require.NoError(t, oc.sync(namespace+"/"+egressFirewallName))
+	require.NoError(t, oc.sync(context.Background(), namespace+"/"+egressFirewallName))
 
 	acls, err = libovsdbops.FindACLsWithPredicate(oc.nbClient, p)
 	require.NoError(t, err)
@@ -190,7 +190,7 @@ func TestEFControllerSync_UpdatesOnSubnetChangeAndSkipsWhenUnchanged(t *testing.
 	networkManager.Lock()
 	networkManager.PrimaryNetworks[namespace] = netInfo2
 	networkManager.Unlock()
-	require.NoError(t, oc.sync(namespace+"/"+egressFirewallName))
+	require.NoError(t, oc.sync(context.Background(), namespace+"/"+egressFirewallName))
 
 	acls, err = libovsdbops.FindACLsWithPredicate(oc.nbClient, p)
 	require.NoError(t, err)
@@ -200,7 +200,7 @@ func TestEFControllerSync_UpdatesOnSubnetChangeAndSkipsWhenUnchanged(t *testing.
 	// Now that netInfo, EF, and PG are stable, ensure we skip OVN updates.
 	oc.nbClient = &panicTransactClient{Client: nbClient}
 	require.NotPanics(t, func() {
-		err = oc.sync(namespace + "/" + egressFirewallName)
+		err = oc.sync(context.Background(), namespace+"/"+egressFirewallName)
 	})
 	require.NoError(t, err)
 
@@ -301,7 +301,7 @@ func TestEFControllerSync_AddsCIDRExclusionWhenPrimaryNetworkAddsOverlappingSubn
 	// Pre-seed rule counter so status updates don't affect global metrics.
 	oc.ruleCounter.Store(namespace+"/"+egressFirewallName, uint32(len(ef.Spec.Egress)))
 
-	err = oc.sync(namespace + "/" + egressFirewallName)
+	err = oc.sync(context.Background(), namespace+"/"+egressFirewallName)
 	require.NoError(t, err)
 
 	p := libovsdbops.GetPredicate[*nbdb.ACL](oc.GetEgressFirewallACLDbIDs(namespace, 0), nil)
@@ -315,7 +315,7 @@ func TestEFControllerSync_AddsCIDRExclusionWhenPrimaryNetworkAddsOverlappingSubn
 	networkManager.PrimaryNetworks[namespace] = netInfoAfter
 	networkManager.Unlock()
 
-	err = oc.sync(namespace + "/" + egressFirewallName)
+	err = oc.sync(context.Background(), namespace+"/"+egressFirewallName)
 	require.NoError(t, err)
 
 	acls, err = libovsdbops.FindACLsWithPredicate(oc.nbClient, p)

@@ -164,7 +164,8 @@ func newDefaultNodeNetworkController(cnnci *CommonNodeNetworkControllerInfo, sto
 		watchFactory: cnnci.watchFactory,
 	}
 	c.linkManager = linkmanager.NewController(cnnci.name, config.IPv4Mode, config.IPv6Mode, func(link netlink.Link) error {
-		if err := c.updateGatewayMAC(link); err != nil {
+		ctx := context.Background()
+		if err := c.updateGatewayMAC(ctx, link); err != nil {
 			return err
 		}
 		if c.Gateway != nil && config.Gateway.Interface != "" && link.Attrs().Name == config.Gateway.Interface {
@@ -204,19 +205,20 @@ func NewDefaultNodeNetworkController(cnnci *CommonNodeNetworkControllerInfo, net
 
 	nc.initRetryFrameworkForNode()
 
+	ctx := context.Background()
 	if config.IsModeDPUHost() || config.IsModeFull() {
-		err = setupRemoteNodeNFTSets()
+		err = setupRemoteNodeNFTSets(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("failed to setup PMTUD nftables sets: %w", err)
 		}
 
-		err = setupPMTUDNFTChain()
+		err = setupPMTUDNFTChain(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("failed to setup PMTUD nftables chain: %w", err)
 		}
 
 		if util.IsRouteAdvertisementsEnabled() {
-			err = configureAdvertisedUDNIsolationNFTables()
+			err = configureAdvertisedUDNIsolationNFTables(ctx)
 			if err != nil {
 				return nil, fmt.Errorf("failed to setup advertised UDN isolation nftables: %w", err)
 			}
@@ -225,7 +227,7 @@ func NewDefaultNodeNetworkController(cnnci *CommonNodeNetworkControllerInfo, net
 		// Setup nftables sets for no-overlay SNAT exemption in LGW mode.
 		// In SGW mode, OVN address sets are used instead.
 		if config.Default.Transport == types.NetworkTransportNoOverlay && config.NoOverlay.OutboundSNAT == types.NoOverlaySNATEnabled && config.Gateway.Mode == config.GatewayModeLocal {
-			err = setupNoOverlaySNATExemptNFTSets()
+			err = setupNoOverlaySNATExemptNFTSets(ctx)
 			if err != nil {
 				return nil, fmt.Errorf("failed to setup no-overlay SNAT exemption nftables sets: %w", err)
 			}
@@ -246,7 +248,7 @@ func (oc *DefaultNodeNetworkController) shouldReconcileNetworkChange(old, new ut
 	return wasPodNetworkAdvertisedAtNode != isPodNetworkAdvertisedAtNode
 }
 
-func (oc *DefaultNodeNetworkController) Reconcile(_ context.Context, netInfo util.NetInfo) error {
+func (oc *DefaultNodeNetworkController) Reconcile(ctx context.Context, netInfo util.NetInfo) error {
 	// inspect changes first
 	reconcilePodNetwork := oc.shouldReconcileNetworkChange(oc.ReconcilableNetInfo, netInfo)
 
@@ -255,7 +257,7 @@ func (oc *DefaultNodeNetworkController) Reconcile(_ context.Context, netInfo uti
 		isPodNetworkAdvertisedAtNode := util.IsPodNetworkAdvertisedAtNode(netInfo, oc.name)
 		if oc.Gateway != nil {
 			oc.Gateway.SetDefaultPodNetworkAdvertised(isPodNetworkAdvertisedAtNode)
-			err := oc.Gateway.Reconcile()
+			err := oc.Gateway.Reconcile(ctx)
 			if err != nil {
 				return fmt.Errorf("failed to reconcile gateway: %v", err)
 			}
@@ -732,14 +734,14 @@ func createNodeManagementPortController(
 
 // removeStaleDPUHostAddressAnnotation clears state owned by DPU-host mode before
 // full-mode initialization continues, so consumers do not classify this node as a DPU host.
-func (nc *DefaultNodeNetworkController) removeStaleDPUHostAddressAnnotation() error {
+func (nc *DefaultNodeNetworkController) removeStaleDPUHostAddressAnnotation(ctx context.Context) error {
 	if !config.IsModeFull() {
 		return nil
 	}
 
 	nodeAnnotator := kube.NewNodeAnnotator(nc.Kube, nc.name)
 	nodeAnnotator.Delete(util.OVNNodePrimaryDPUHostAddr)
-	if err := nodeAnnotator.Run(); err != nil {
+	if err := nodeAnnotator.Run(ctx); err != nil {
 		return fmt.Errorf("failed to remove stale %s annotation from node %s: %w",
 			util.OVNNodePrimaryDPUHostAddr, nc.name, err)
 	}
@@ -755,7 +757,7 @@ func (nc *DefaultNodeNetworkController) Init(ctx context.Context) error {
 	if nc.name == "" {
 		return fmt.Errorf("ovnkube-node name is required")
 	}
-	if err := nc.removeStaleDPUHostAddressAnnotation(); err != nil {
+	if err := nc.removeStaleDPUHostAddressAnnotation(ctx); err != nil {
 		return err
 	}
 
@@ -823,7 +825,7 @@ func (nc *DefaultNodeNetworkController) Init(ctx context.Context) error {
 				return err
 			}
 		} else {
-			if err = CleanupUDNHostIsolation(); err != nil {
+			if err = CleanupUDNHostIsolation(ctx); err != nil {
 				return fmt.Errorf("failed cleaning up UDN host isolation: %w", err)
 			}
 		}
@@ -896,7 +898,7 @@ func (nc *DefaultNodeNetworkController) Init(ctx context.Context) error {
 		}
 	}
 
-	if err := nodeAnnotator.Run(); err != nil {
+	if err := nodeAnnotator.Run(ctx); err != nil {
 		return fmt.Errorf("failed to set node %s annotations: %w", nc.name, err)
 	}
 
@@ -914,13 +916,13 @@ func (nc *DefaultNodeNetworkController) Init(ctx context.Context) error {
 			return fmt.Errorf("IPv6 mode is not supported on a DPU enabled node")
 		}
 		// Initialize gateway for OVS internal port or representor management port
-		gw, err := nc.initGatewayPreStart(subnets, nodeAnnotator, nc.mgmtPortController)
+		gw, err := nc.initGatewayPreStart(ctx, subnets, nodeAnnotator, nc.mgmtPortController)
 		if err != nil {
 			return err
 		}
 		nc.Gateway = gw
 	} else {
-		err = nc.initGatewayDPUHostPreStart(nc.nodeAddress, nodeAnnotator)
+		err = nc.initGatewayDPUHostPreStart(ctx, nc.nodeAddress, nodeAnnotator)
 		if err != nil {
 			return err
 		}
@@ -942,7 +944,7 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) (err error) {
 
 	// Complete gateway initialization
 	if config.IsModeDPUHost() {
-		err = nc.initGatewayDPUHost()
+		err = nc.initGatewayDPUHost(ctx)
 		if err != nil {
 			return err
 		}
@@ -1274,7 +1276,7 @@ func (nc *DefaultNodeNetworkController) WatchNodes() error {
 }
 
 // addOrUpdateNode handles creating flows or nftables rules for each node to handle PMTUD
-func (nc *DefaultNodeNetworkController) addOrUpdateNode(node *corev1.Node) error {
+func (nc *DefaultNodeNetworkController) addOrUpdateNode(ctx context.Context, node *corev1.Node) error {
 	var nftElems []knftables.Object
 	var addrs []string
 
@@ -1310,7 +1312,7 @@ func (nc *DefaultNodeNetworkController) addOrUpdateNode(node *corev1.Node) error
 		}
 	}
 	if (config.IsModeDPUHost() || config.IsModeFull()) && len(nftElems) > 0 {
-		if err := nodenft.AddObjects(nftElems); err != nil {
+		if err := nodenft.AddObjects(ctx, nftElems); err != nil {
 			return fmt.Errorf("unable to update NFT elements for node %q, error: %w", node.Name, err)
 		}
 	}
@@ -1321,7 +1323,7 @@ func (nc *DefaultNodeNetworkController) addOrUpdateNode(node *corev1.Node) error
 	return nil
 }
 
-func removePMTUDNodeNFTRules(nodeIPs []net.IP) error {
+func removePMTUDNodeNFTRules(ctx context.Context, nodeIPs []net.IP) error {
 	var nftElems []knftables.Object
 	for _, nodeIP := range nodeIPs {
 		// Remove IPs from NFT sets
@@ -1338,7 +1340,7 @@ func removePMTUDNodeNFTRules(nodeIPs []net.IP) error {
 		}
 	}
 	if len(nftElems) > 0 {
-		if err := nodenft.DeleteObjects(nftElems); err != nil {
+		if err := nodenft.DeleteObjects(ctx, nftElems); err != nil {
 			return fmt.Errorf("unable to remove PMTUD rules for nodes: %w", err)
 		}
 	}
@@ -1353,7 +1355,7 @@ var ownNodeDeletedExit = func(nodeName string) {
 	klog.FlushAndExit(klog.ExitFlushTimeout, 1)
 }
 
-func (nc *DefaultNodeNetworkController) deleteNode(node *corev1.Node) {
+func (nc *DefaultNodeNetworkController) deleteNode(ctx context.Context, node *corev1.Node) {
 	if config.IsModeDPU() && node.Name == nc.name {
 		// In DPU mode the process does not run on the deleted node, so nothing
 		// else stops it, and what it wrote to the Node object is only written at
@@ -1377,7 +1379,7 @@ func (nc *DefaultNodeNetworkController) deleteNode(node *corev1.Node) {
 	ipsToRemove = append(ipsToRemove, ipsv6...)
 
 	klog.Infof("Deleting NFT elements for node: %s", node.Name)
-	if err := removePMTUDNodeNFTRules(ipsToRemove); err != nil {
+	if err := removePMTUDNodeNFTRules(ctx, ipsToRemove); err != nil {
 		klog.Errorf("Failed to delete nftables rules for PMTUD blocking for node %q: %v", node.Name, err)
 	}
 }
@@ -1391,7 +1393,7 @@ var nodeIPSets = []knftables.Object{
 	},
 }
 
-func (nc *DefaultNodeNetworkController) syncNodes(objs []interface{}) error {
+func (nc *DefaultNodeNetworkController) syncNodes(ctx context.Context, objs []interface{}) error {
 	var keepNFTSetElems []knftables.Object
 
 	if config.IsModeDPU() {
@@ -1433,7 +1435,7 @@ func (nc *DefaultNodeNetworkController) syncNodes(objs []interface{}) error {
 			})
 		}
 	}
-	err := nodenft.SyncObjects(nodeIPSets, keepNFTSetElems)
+	err := nodenft.SyncObjects(ctx, nodeIPSets, keepNFTSetElems)
 	if err != nil {
 		err = fmt.Errorf("unable to sync nftables rules for nodes: %w", err)
 	}

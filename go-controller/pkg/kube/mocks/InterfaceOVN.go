@@ -91,9 +91,9 @@ func (_m *InterfaceOVN) Events() corev1.EventInterface {
 	return r0
 }
 
-// GetEgressFirewalls provides a mock function with no fields
-func (_m *InterfaceOVN) GetEgressFirewalls() ([]*egressfirewallv1.EgressFirewall, error) {
-	ret := _m.Called()
+// GetEgressFirewalls provides a mock function with given fields: ctx
+func (_m *InterfaceOVN) GetEgressFirewalls(ctx context.Context) ([]*egressfirewallv1.EgressFirewall, error) {
+	ret := _m.Called(ctx)
 
 	if len(ret) == 0 {
 		panic("no return value specified for GetEgressFirewalls")
@@ -101,19 +101,19 @@ func (_m *InterfaceOVN) GetEgressFirewalls() ([]*egressfirewallv1.EgressFirewall
 
 	var r0 []*egressfirewallv1.EgressFirewall
 	var r1 error
-	if rf, ok := ret.Get(0).(func() ([]*egressfirewallv1.EgressFirewall, error)); ok {
-		return rf()
+	if rf, ok := ret.Get(0).(func(context.Context) ([]*egressfirewallv1.EgressFirewall, error)); ok {
+		return rf(ctx)
 	}
-	if rf, ok := ret.Get(0).(func() []*egressfirewallv1.EgressFirewall); ok {
-		r0 = rf()
+	if rf, ok := ret.Get(0).(func(context.Context) []*egressfirewallv1.EgressFirewall); ok {
+		r0 = rf(ctx)
 	} else {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).([]*egressfirewallv1.EgressFirewall)
 		}
 	}
 
-	if rf, ok := ret.Get(1).(func() error); ok {
-		r1 = rf()
+	if rf, ok := ret.Get(1).(func(context.Context) error); ok {
+		r1 = rf(ctx)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -121,9 +121,9 @@ func (_m *InterfaceOVN) GetEgressFirewalls() ([]*egressfirewallv1.EgressFirewall
 	return r0, r1
 }
 
-// GetEgressIP provides a mock function with given fields: name
-func (_m *InterfaceOVN) GetEgressIP(name string) (*egressipv1.EgressIP, error) {
-	ret := _m.Called(name)
+// GetEgressIP provides a mock function with given fields: ctx, name
+func (_m *InterfaceOVN) GetEgressIP(ctx context.Context, name string) (*egressipv1.EgressIP, error) {
+	ret := _m.Called(ctx, name)
 
 	if len(ret) == 0 {
 		panic("no return value specified for GetEgressIP")
@@ -131,19 +131,19 @@ func (_m *InterfaceOVN) GetEgressIP(name string) (*egressipv1.EgressIP, error) {
 
 	var r0 *egressipv1.EgressIP
 	var r1 error
-	if rf, ok := ret.Get(0).(func(string) (*egressipv1.EgressIP, error)); ok {
-		return rf(name)
+	if rf, ok := ret.Get(0).(func(context.Context, string) (*egressipv1.EgressIP, error)); ok {
+		return rf(ctx, name)
 	}
-	if rf, ok := ret.Get(0).(func(string) *egressipv1.EgressIP); ok {
-		r0 = rf(name)
+	if rf, ok := ret.Get(0).(func(context.Context, string) *egressipv1.EgressIP); ok {
+		r0 = rf(ctx, name)
 	} else {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).(*egressipv1.EgressIP)
 		}
 	}
 
-	if rf, ok := ret.Get(1).(func(string) error); ok {
-		r1 = rf(name)
+	if rf, ok := ret.Get(1).(func(context.Context, string) error); ok {
+		r1 = rf(ctx, name)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -181,9 +181,9 @@ func (_m *InterfaceOVN) GetEgressIPs(ctx context.Context) ([]*egressipv1.EgressI
 	return r0, r1
 }
 
-// GetNodeForWindows provides a mock function with given fields: name
-func (_m *InterfaceOVN) GetNodeForWindows(name string) (*apicorev1.Node, error) {
-	ret := _m.Called(name)
+// GetNodeForWindows provides a mock function with given fields: ctx, name
+func (_m *InterfaceOVN) GetNodeForWindows(ctx context.Context, name string) (*apicorev1.Node, error) {
+	ret := _m.Called(ctx, name)
 
 	if len(ret) == 0 {
 		panic("no return value specified for GetNodeForWindows")
@@ -191,19 +191,19 @@ func (_m *InterfaceOVN) GetNodeForWindows(name string) (*apicorev1.Node, error) 
 
 	var r0 *apicorev1.Node
 	var r1 error
-	if rf, ok := ret.Get(0).(func(string) (*apicorev1.Node, error)); ok {
-		return rf(name)
+	if rf, ok := ret.Get(0).(func(context.Context, string) (*apicorev1.Node, error)); ok {
+		return rf(ctx, name)
 	}
-	if rf, ok := ret.Get(0).(func(string) *apicorev1.Node); ok {
-		r0 = rf(name)
+	if rf, ok := ret.Get(0).(func(context.Context, string) *apicorev1.Node); ok {
+		r0 = rf(ctx, name)
 	} else {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).(*apicorev1.Node)
 		}
 	}
 
-	if rf, ok := ret.Get(1).(func(string) error); ok {
-		r1 = rf(name)
+	if rf, ok := ret.Get(1).(func(context.Context, string) error); ok {
+		r1 = rf(ctx, name)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -211,9 +211,9 @@ func (_m *InterfaceOVN) GetNodeForWindows(name string) (*apicorev1.Node, error) 
 	return r0, r1
 }
 
-// GetNodesForWindows provides a mock function with no fields
-func (_m *InterfaceOVN) GetNodesForWindows() ([]*apicorev1.Node, error) {
-	ret := _m.Called()
+// GetNodesForWindows provides a mock function with given fields: ctx
+func (_m *InterfaceOVN) GetNodesForWindows(ctx context.Context) ([]*apicorev1.Node, error) {
+	ret := _m.Called(ctx)
 
 	if len(ret) == 0 {
 		panic("no return value specified for GetNodesForWindows")
@@ -221,19 +221,19 @@ func (_m *InterfaceOVN) GetNodesForWindows() ([]*apicorev1.Node, error) {
 
 	var r0 []*apicorev1.Node
 	var r1 error
-	if rf, ok := ret.Get(0).(func() ([]*apicorev1.Node, error)); ok {
-		return rf()
+	if rf, ok := ret.Get(0).(func(context.Context) ([]*apicorev1.Node, error)); ok {
+		return rf(ctx)
 	}
-	if rf, ok := ret.Get(0).(func() []*apicorev1.Node); ok {
-		r0 = rf()
+	if rf, ok := ret.Get(0).(func(context.Context) []*apicorev1.Node); ok {
+		r0 = rf(ctx)
 	} else {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).([]*apicorev1.Node)
 		}
 	}
 
-	if rf, ok := ret.Get(1).(func() error); ok {
-		r1 = rf()
+	if rf, ok := ret.Get(1).(func(context.Context) error); ok {
+		r1 = rf(ctx)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -259,17 +259,17 @@ func (_m *InterfaceOVN) PatchEgressIP(ctx context.Context, name string, patchDat
 	return r0
 }
 
-// PatchNode provides a mock function with given fields: old, new
-func (_m *InterfaceOVN) PatchNode(old *apicorev1.Node, new *apicorev1.Node) error {
-	ret := _m.Called(old, new)
+// PatchNode provides a mock function with given fields: ctx, old, new
+func (_m *InterfaceOVN) PatchNode(ctx context.Context, old *apicorev1.Node, new *apicorev1.Node) error {
+	ret := _m.Called(ctx, old, new)
 
 	if len(ret) == 0 {
 		panic("no return value specified for PatchNode")
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(*apicorev1.Node, *apicorev1.Node) error); ok {
-		r0 = rf(old, new)
+	if rf, ok := ret.Get(0).(func(context.Context, *apicorev1.Node, *apicorev1.Node) error); ok {
+		r0 = rf(ctx, old, new)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -277,17 +277,17 @@ func (_m *InterfaceOVN) PatchNode(old *apicorev1.Node, new *apicorev1.Node) erro
 	return r0
 }
 
-// PatchNodeStatus provides a mock function with given fields: old, new
-func (_m *InterfaceOVN) PatchNodeStatus(old *apicorev1.Node, new *apicorev1.Node) error {
-	ret := _m.Called(old, new)
+// PatchNodeStatus provides a mock function with given fields: ctx, old, new
+func (_m *InterfaceOVN) PatchNodeStatus(ctx context.Context, old *apicorev1.Node, new *apicorev1.Node) error {
+	ret := _m.Called(ctx, old, new)
 
 	if len(ret) == 0 {
 		panic("no return value specified for PatchNodeStatus")
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(*apicorev1.Node, *apicorev1.Node) error); ok {
-		r0 = rf(old, new)
+	if rf, ok := ret.Get(0).(func(context.Context, *apicorev1.Node, *apicorev1.Node) error); ok {
+		r0 = rf(ctx, old, new)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -331,17 +331,17 @@ func (_m *InterfaceOVN) PatchPodStatusAnnotations(ctx context.Context, oldPod *a
 	return r0
 }
 
-// SetAnnotationsOnNamespace provides a mock function with given fields: namespaceName, annotations
-func (_m *InterfaceOVN) SetAnnotationsOnNamespace(namespaceName string, annotations map[string]interface{}) error {
-	ret := _m.Called(namespaceName, annotations)
+// SetAnnotationsOnNamespace provides a mock function with given fields: ctx, namespaceName, annotations
+func (_m *InterfaceOVN) SetAnnotationsOnNamespace(ctx context.Context, namespaceName string, annotations map[string]interface{}) error {
+	ret := _m.Called(ctx, namespaceName, annotations)
 
 	if len(ret) == 0 {
 		panic("no return value specified for SetAnnotationsOnNamespace")
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(string, map[string]interface{}) error); ok {
-		r0 = rf(namespaceName, annotations)
+	if rf, ok := ret.Get(0).(func(context.Context, string, map[string]interface{}) error); ok {
+		r0 = rf(ctx, namespaceName, annotations)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -367,17 +367,17 @@ func (_m *InterfaceOVN) SetAnnotationsOnNode(ctx context.Context, nodeName strin
 	return r0
 }
 
-// SetAnnotationsOnNodeWithFieldManager provides a mock function with given fields: nodeName, annotations, fieldManager
-func (_m *InterfaceOVN) SetAnnotationsOnNodeWithFieldManager(nodeName string, annotations map[string]interface{}, fieldManager string) error {
-	ret := _m.Called(nodeName, annotations, fieldManager)
+// SetAnnotationsOnNodeWithFieldManager provides a mock function with given fields: ctx, nodeName, annotations, fieldManager
+func (_m *InterfaceOVN) SetAnnotationsOnNodeWithFieldManager(ctx context.Context, nodeName string, annotations map[string]interface{}, fieldManager string) error {
+	ret := _m.Called(ctx, nodeName, annotations, fieldManager)
 
 	if len(ret) == 0 {
 		panic("no return value specified for SetAnnotationsOnNodeWithFieldManager")
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(string, map[string]interface{}, string) error); ok {
-		r0 = rf(nodeName, annotations, fieldManager)
+	if rf, ok := ret.Get(0).(func(context.Context, string, map[string]interface{}, string) error); ok {
+		r0 = rf(ctx, nodeName, annotations, fieldManager)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -385,17 +385,17 @@ func (_m *InterfaceOVN) SetAnnotationsOnNodeWithFieldManager(nodeName string, an
 	return r0
 }
 
-// SetAnnotationsOnPod provides a mock function with given fields: namespace, podName, annotations
-func (_m *InterfaceOVN) SetAnnotationsOnPod(namespace string, podName string, annotations map[string]interface{}) error {
-	ret := _m.Called(namespace, podName, annotations)
+// SetAnnotationsOnPod provides a mock function with given fields: ctx, namespace, podName, annotations
+func (_m *InterfaceOVN) SetAnnotationsOnPod(ctx context.Context, namespace string, podName string, annotations map[string]interface{}) error {
+	ret := _m.Called(ctx, namespace, podName, annotations)
 
 	if len(ret) == 0 {
 		panic("no return value specified for SetAnnotationsOnPod")
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(string, string, map[string]interface{}) error); ok {
-		r0 = rf(namespace, podName, annotations)
+	if rf, ok := ret.Get(0).(func(context.Context, string, string, map[string]interface{}) error); ok {
+		r0 = rf(ctx, namespace, podName, annotations)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -403,17 +403,17 @@ func (_m *InterfaceOVN) SetAnnotationsOnPod(namespace string, podName string, an
 	return r0
 }
 
-// SetAnnotationsOnService provides a mock function with given fields: namespace, serviceName, annotations
-func (_m *InterfaceOVN) SetAnnotationsOnService(namespace string, serviceName string, annotations map[string]interface{}) error {
-	ret := _m.Called(namespace, serviceName, annotations)
+// SetAnnotationsOnService provides a mock function with given fields: ctx, namespace, serviceName, annotations
+func (_m *InterfaceOVN) SetAnnotationsOnService(ctx context.Context, namespace string, serviceName string, annotations map[string]interface{}) error {
+	ret := _m.Called(ctx, namespace, serviceName, annotations)
 
 	if len(ret) == 0 {
 		panic("no return value specified for SetAnnotationsOnService")
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(string, string, map[string]interface{}) error); ok {
-		r0 = rf(namespace, serviceName, annotations)
+	if rf, ok := ret.Get(0).(func(context.Context, string, string, map[string]interface{}) error); ok {
+		r0 = rf(ctx, namespace, serviceName, annotations)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -421,17 +421,17 @@ func (_m *InterfaceOVN) SetAnnotationsOnService(namespace string, serviceName st
 	return r0
 }
 
-// SetLabelsOnNode provides a mock function with given fields: nodeName, labels
-func (_m *InterfaceOVN) SetLabelsOnNode(nodeName string, labels map[string]interface{}) error {
-	ret := _m.Called(nodeName, labels)
+// SetLabelsOnNode provides a mock function with given fields: ctx, nodeName, labels
+func (_m *InterfaceOVN) SetLabelsOnNode(ctx context.Context, nodeName string, labels map[string]interface{}) error {
+	ret := _m.Called(ctx, nodeName, labels)
 
 	if len(ret) == 0 {
 		panic("no return value specified for SetLabelsOnNode")
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(string, map[string]interface{}) error); ok {
-		r0 = rf(nodeName, labels)
+	if rf, ok := ret.Get(0).(func(context.Context, string, map[string]interface{}) error); ok {
+		r0 = rf(ctx, nodeName, labels)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -469,17 +469,17 @@ func (_m *InterfaceOVN) UpdateCloudPrivateIPConfig(ctx context.Context, cloudPri
 	return r0, r1
 }
 
-// UpdateEgressFirewall provides a mock function with given fields: egressfirewall
-func (_m *InterfaceOVN) UpdateEgressFirewall(egressfirewall *egressfirewallv1.EgressFirewall) error {
-	ret := _m.Called(egressfirewall)
+// UpdateEgressFirewall provides a mock function with given fields: ctx, egressfirewall
+func (_m *InterfaceOVN) UpdateEgressFirewall(ctx context.Context, egressfirewall *egressfirewallv1.EgressFirewall) error {
+	ret := _m.Called(ctx, egressfirewall)
 
 	if len(ret) == 0 {
 		panic("no return value specified for UpdateEgressFirewall")
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(*egressfirewallv1.EgressFirewall) error); ok {
-		r0 = rf(egressfirewall)
+	if rf, ok := ret.Get(0).(func(context.Context, *egressfirewallv1.EgressFirewall) error); ok {
+		r0 = rf(ctx, egressfirewall)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -487,17 +487,17 @@ func (_m *InterfaceOVN) UpdateEgressFirewall(egressfirewall *egressfirewallv1.Eg
 	return r0
 }
 
-// UpdateEgressIP provides a mock function with given fields: eIP
-func (_m *InterfaceOVN) UpdateEgressIP(eIP *egressipv1.EgressIP) error {
-	ret := _m.Called(eIP)
+// UpdateEgressIP provides a mock function with given fields: ctx, eIP
+func (_m *InterfaceOVN) UpdateEgressIP(ctx context.Context, eIP *egressipv1.EgressIP) error {
+	ret := _m.Called(ctx, eIP)
 
 	if len(ret) == 0 {
 		panic("no return value specified for UpdateEgressIP")
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(*egressipv1.EgressIP) error); ok {
-		r0 = rf(eIP)
+	if rf, ok := ret.Get(0).(func(context.Context, *egressipv1.EgressIP) error); ok {
+		r0 = rf(ctx, eIP)
 	} else {
 		r0 = ret.Error(0)
 	}

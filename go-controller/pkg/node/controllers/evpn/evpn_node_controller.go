@@ -187,10 +187,11 @@ func (c *Controller) Start() (err error) {
 			c.nadReconcilerID = 0
 		}
 	}()
-	return controller.StartWithInitialSync(c.initialSync, c.vtepController, c.nadReconciler, c.podController)
+	ctx := context.Background()
+	return controller.StartWithInitialSync(func() error { return c.initialSync(ctx) }, c.vtepController, c.nadReconciler, c.podController)
 }
 
-func (c *Controller) initialSync() error {
+func (c *Controller) initialSync(ctx context.Context) error {
 	// VTEP informer cache sync is handled by StartWithInitialSync, but we also
 	// need the node informer cache synced to read VTEP IPs annotation.
 	if !util.WaitForInformerCacheSyncWithTimeout("evpn-node", c.stopChan, c.watchFactory.NodeCoreInformer().Informer().HasSynced) {
@@ -211,7 +212,7 @@ func (c *Controller) initialSync() error {
 		if vtep.Spec.Mode == vtepv1.VTEPModeManaged {
 			continue
 		}
-		vtepIPv4, vtepIPv6, err := c.discoverUnmanagedVTEPIPs(vtep)
+		vtepIPv4, vtepIPv6, err := c.discoverUnmanagedVTEPIPs(ctx, vtep)
 		if err != nil {
 			klog.Errorf("Failed to get VTEP IPs for %s: %v", vtep.Name, err)
 			continue
@@ -329,7 +330,7 @@ func (c *Controller) reconcileNodeAddressChange(annotationChanged bool) error {
 // The synthetic keys reconcileVTEPAnnotationChange and
 // reconcileNodeAddressChange trigger reconciliation of unmanaged VTEPs
 // whose annotated IPs are stale or missing.
-func (c *Controller) reconcile(_ context.Context, key string) (err error) {
+func (c *Controller) reconcile(ctx context.Context, key string) (err error) {
 	switch key {
 	case reconcileVTEPAnnotationChange:
 		// node annotation changed, reset the cached annotation to re-read
@@ -362,7 +363,7 @@ func (c *Controller) reconcile(_ context.Context, key string) (err error) {
 			if err := c.deleteVTEPDevices(key); err != nil {
 				return fmt.Errorf("failed to clean up deleted VTEP %s devices: %w", key, err)
 			}
-			if err := c.setVTEPAnnotation(key, nil, nil); err != nil {
+			if err := c.setVTEPAnnotation(ctx, key, nil, nil); err != nil {
 				return fmt.Errorf("failed to clear VTEP %s annotation: %w", key, err)
 			}
 			// only once the annotation is cleared too: a failed update is
@@ -377,7 +378,7 @@ func (c *Controller) reconcile(_ context.Context, key string) (err error) {
 		if err := c.deleteVTEPDevices(key); err != nil {
 			return fmt.Errorf("failed to clean up unsupported VTEP %s devices: %w", key, err)
 		}
-		if err := c.setVTEPAnnotation(key, nil, nil); err != nil {
+		if err := c.setVTEPAnnotation(ctx, key, nil, nil); err != nil {
 			return fmt.Errorf("failed to clear VTEP %s annotation: %w", key, err)
 		}
 		// nothing is programmed for an unsupported VTEP and nothing will be
@@ -391,7 +392,7 @@ func (c *Controller) reconcile(_ context.Context, key string) (err error) {
 			"configure a different hybrid-overlay-vxlan-port to avoid the conflict", config.DefaultVXLANPort)
 	}
 
-	vtepIPv4, vtepIPv6, err := c.discoverUnmanagedVTEPIPs(vtep)
+	vtepIPv4, vtepIPv6, err := c.discoverUnmanagedVTEPIPs(ctx, vtep)
 	if err != nil {
 		return fmt.Errorf("failed to discover VTEP %s IPs: %w", vtep.Name, err)
 	}
@@ -799,7 +800,7 @@ func (c *Controller) ensureVXLAN(vxlanName string, bridgeName string, srcIP net.
 // for a previously selected IP. If that IP is still present in the address manager and
 // within the VTEP's CIDRs, it is reused for stability. Otherwise, a new IP is discovered
 // from the address manager and the annotation is updated.
-func (c *Controller) discoverUnmanagedVTEPIPs(vtep *vtepv1.VTEP) (net.IP, net.IP, error) {
+func (c *Controller) discoverUnmanagedVTEPIPs(ctx context.Context, vtep *vtepv1.VTEP) (net.IP, net.IP, error) {
 	// fetch the annotated VTEP IPs
 	vtepsAnnotation, err := c.getVTEPsAnnotation()
 	if err != nil {
@@ -833,7 +834,7 @@ func (c *Controller) discoverUnmanagedVTEPIPs(vtep *vtepv1.VTEP) (net.IP, net.IP
 
 	// Compare the entire entry, including extra or unsupported-family addresses.
 	// setVTEPAnnotation suppresses the API request when the value is unchanged.
-	if err := c.setVTEPAnnotation(vtep.Name, v4SelectedIP, v6SelectedIP); err != nil {
+	if err := c.setVTEPAnnotation(ctx, vtep.Name, v4SelectedIP, v6SelectedIP); err != nil {
 		return nil, nil, fmt.Errorf("failed to annotate VTEP %s IPs: %w", vtep.Name, err)
 	}
 	return v4SelectedIP, v6SelectedIP, nil
@@ -889,7 +890,7 @@ func (c *Controller) getVTEPsAnnotation() (map[string]util.VTEPNodeAnnotation, e
 // setVTEPAnnotation updates or removes a VTEP entry in the node's VTEP
 // annotation. If both IPs are nil, the entry is removed; otherwise it is
 // set to the provided IPs.
-func (c *Controller) setVTEPAnnotation(vtepName string, ipv4, ipv6 net.IP) (err error) {
+func (c *Controller) setVTEPAnnotation(ctx context.Context, vtepName string, ipv4, ipv6 net.IP) (err error) {
 	vtepsAnnotation, err := c.getVTEPsAnnotation()
 	if err != nil {
 		return err
@@ -931,7 +932,7 @@ func (c *Controller) setVTEPAnnotation(vtepName string, ipv4, ipv6 net.IP) (err 
 		return err
 	}
 
-	return c.kube.SetAnnotationsOnNodeWithFieldManager(c.nodeName, annotations, vtepAnnotationFieldManager)
+	return c.kube.SetAnnotationsOnNodeWithFieldManager(ctx, c.nodeName, annotations, vtepAnnotationFieldManager)
 }
 
 // pickVTEPIP selects a single VTEP IP from the candidates for the given address family.

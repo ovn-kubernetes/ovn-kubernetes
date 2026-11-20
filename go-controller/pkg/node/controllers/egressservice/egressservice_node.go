@@ -358,7 +358,8 @@ func (c *Controller) repair() error {
 		errorList = append(errorList, err)
 	}
 
-	err = c.repairNFTables(v4EndpointsToSvcKey, v6EndpointsToSvcKey)
+	ctx := context.Background()
+	err = c.repairNFTables(ctx, v4EndpointsToSvcKey, v6EndpointsToSvcKey)
 	if err != nil {
 		errorList = append(errorList, err)
 	}
@@ -515,7 +516,7 @@ func (c *Controller) repairIPRules(v4EpsToServices, v6EpsToServices, cipsToServi
 // elements in this context are those that belong to an existing EgressService; their
 // source points to an existing endpoint of the service and the SNAT matches the service's
 // LB.
-func (c *Controller) repairNFTables(v4EpsToServices, v6EpsToServices map[string]string) error {
+func (c *Controller) repairNFTables(ctx context.Context, v4EpsToServices, v6EpsToServices map[string]string) error {
 	snatRepair := func(tx *knftables.Transaction, family utilnet.IPFamily, existingElements []*knftables.Element, epsToSvcs map[string]string) {
 		for _, elem := range existingElements {
 			if len(elem.Key) != 1 || len(elem.Value) != 1 || elem.Comment == nil {
@@ -596,7 +597,7 @@ func (c *Controller) repairNFTables(v4EpsToServices, v6EpsToServices map[string]
 			),
 		})
 
-		existing, err := nft.ListElements(context.TODO(), "map", NFTablesMapV4)
+		existing, err := nft.ListElements(ctx, "map", NFTablesMapV4)
 		if err != nil && !knftables.IsNotFound(err) {
 			return fmt.Errorf("could not list existing egress service map elements: %w", err)
 		}
@@ -615,14 +616,14 @@ func (c *Controller) repairNFTables(v4EpsToServices, v6EpsToServices map[string]
 			),
 		})
 
-		existing, err := nft.ListElements(context.TODO(), "map", NFTablesMapV6)
+		existing, err := nft.ListElements(ctx, "map", NFTablesMapV6)
 		if err != nil && !knftables.IsNotFound(err) {
 			return fmt.Errorf("could not list existing egress service map elements: %w", err)
 		}
 		snatRepair(tx, utilnet.IPv6, existing, v6EpsToServices)
 	}
 
-	err = nft.Run(context.TODO(), tx)
+	err = nft.Run(ctx, tx)
 	if err != nil {
 		return err
 	}
@@ -645,7 +646,9 @@ func (c *Controller) processNextEgressServiceWorkItem(wg *sync.WaitGroup) bool {
 
 	defer c.egressServiceQueue.Done(key)
 
-	err := c.syncEgressService(key)
+	// Each dequeued item is the root of its own work; the context is not tied to
+	// controller shutdown.
+	err := c.syncEgressService(context.Background(), key)
 	if err == nil {
 		c.egressServiceQueue.Forget(key)
 		return true
@@ -662,7 +665,7 @@ func (c *Controller) processNextEgressServiceWorkItem(wg *sync.WaitGroup) bool {
 	return true
 }
 
-func (c *Controller) syncEgressService(key string) error {
+func (c *Controller) syncEgressService(ctx context.Context, key string) error {
 	c.Lock()
 	defer c.Unlock()
 
@@ -693,7 +696,7 @@ func (c *Controller) syncEgressService(key string) error {
 	}
 
 	if svc == nil && cachedState != nil {
-		return c.clearServiceRulesAndRequeue(key, cachedState)
+		return c.clearServiceRulesAndRequeue(ctx, key, cachedState)
 	}
 
 	if es == nil && cachedState == nil {
@@ -701,13 +704,13 @@ func (c *Controller) syncEgressService(key string) error {
 	}
 
 	if es == nil && cachedState != nil {
-		return c.clearServiceRulesAndRequeue(key, cachedState)
+		return c.clearServiceRulesAndRequeue(ctx, key, cachedState)
 	}
 
 	if cachedState != nil && cachedState.stale {
 		// The service is marked stale because something failed when trying to delete it.
 		// We try to delete it again before doing anything else.
-		return c.clearServiceRulesAndRequeue(key, cachedState)
+		return c.clearServiceRulesAndRequeue(ctx, key, cachedState)
 	}
 
 	// At this point both the svc and es are not nil
@@ -717,7 +720,7 @@ func (c *Controller) syncEgressService(key string) error {
 	}
 
 	if cachedState != nil && !shouldConfigure {
-		return c.clearServiceRulesAndRequeue(key, cachedState)
+		return c.clearServiceRulesAndRequeue(ctx, key, cachedState)
 	}
 
 	lbsChanged := false
@@ -740,7 +743,7 @@ func (c *Controller) syncEgressService(key string) error {
 	}
 
 	if lbsChanged {
-		err := c.clearServiceSNATRules(cachedState)
+		err := c.clearServiceSNATRules(ctx, cachedState)
 		if err != nil {
 			return err
 		}
@@ -816,7 +819,7 @@ func (c *Controller) syncEgressService(key string) error {
 		}
 	}
 
-	err = nft.Run(context.TODO(), tx)
+	err = nft.Run(ctx, tx)
 	if err != nil {
 		return err
 	}
@@ -993,7 +996,7 @@ func (c *Controller) allEndpointsFor(svc *corev1.Service, localOnly bool) (sets.
 }
 
 // Clears all of the SNAT rules of the service.
-func (c *Controller) clearServiceSNATRules(state *svcState) error {
+func (c *Controller) clearServiceSNATRules(ctx context.Context, state *svcState) error {
 	nft, err := nodenft.GetNFTablesHelper()
 	if err != nil {
 		return err
@@ -1018,7 +1021,7 @@ func (c *Controller) clearServiceSNATRules(state *svcState) error {
 	}
 	state.v6LB = ""
 
-	err = nft.Run(context.TODO(), tx)
+	err = nft.Run(ctx, tx)
 	if err != nil {
 		return err
 	}
@@ -1064,10 +1067,10 @@ func (c *Controller) clearServiceIPRules(state *svcState) error {
 }
 
 // Clears all of the nftables rules that relate to the service and removes it from the cache.
-func (c *Controller) clearServiceRulesAndRequeue(key string, state *svcState) error {
+func (c *Controller) clearServiceRulesAndRequeue(ctx context.Context, key string, state *svcState) error {
 	state.stale = true
 
-	err := c.clearServiceSNATRules(state)
+	err := c.clearServiceSNATRules(ctx, state)
 	if err != nil {
 		return err
 	}

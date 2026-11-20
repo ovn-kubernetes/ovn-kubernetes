@@ -224,7 +224,7 @@ func (bnc *BaseNetworkController) multicastDeleteNamespace(ns *corev1.Namespace,
 // it locks namespacesMutex, gets/creates an entry for ns, and returns it with nsInfo's mutex locked.
 // ns is the name of the namespace, while namespace is the optional k8s namespace object
 // if no k8s namespace object is provided, this function will attempt to find it via informer cache
-func (bnc *BaseNetworkController) ensureNamespaceLockedCommon(ns string, readOnly bool, namespace *corev1.Namespace,
+func (bnc *BaseNetworkController) ensureNamespaceLockedCommon(ctx context.Context, ns string, readOnly bool, namespace *corev1.Namespace,
 	configureNamespace func(context.Context, *namespaceInfo, *corev1.Namespace) error) (*namespaceInfo, func(), error) {
 	bnc.namespacesMutex.Lock()
 	nsInfo := bnc.namespaces[ns]
@@ -277,7 +277,7 @@ func (bnc *BaseNetworkController) ensureNamespaceLockedCommon(ns string, readOnl
 		var err error
 		namespace, err = bnc.watchFactory.GetNamespace(ns)
 		if err != nil {
-			namespace, err = bnc.client.CoreV1().Namespaces().Get(context.TODO(), ns, metav1.GetOptions{})
+			namespace, err = bnc.client.CoreV1().Namespaces().Get(ctx, ns, metav1.GetOptions{})
 			if err != nil {
 				klog.Warningf("Unable to find namespace during ensure in informer cache or kube api server. " +
 					"Will defer configuring namespace.")
@@ -287,7 +287,7 @@ func (bnc *BaseNetworkController) ensureNamespaceLockedCommon(ns string, readOnl
 
 	if namespace != nil {
 		// if we have the namespace, attempt to configure nsInfo with it
-		if err := configureNamespace(context.TODO(), nsInfo, namespace); err != nil {
+		if err := configureNamespace(ctx, nsInfo, namespace); err != nil {
 			unlockFunc()
 			return nil, nil, fmt.Errorf("failed to configure namespace %s: %v", ns, err)
 		}

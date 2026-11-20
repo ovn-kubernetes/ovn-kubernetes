@@ -100,7 +100,7 @@ var _ = Describe("EVPN node controller", func() {
 
 			node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: nodeName}}
 			kubeMock := &kubemocks.Interface{}
-			kubeMock.On("SetAnnotationsOnNodeWithFieldManager", nodeName, mock.Anything, vtepAnnotationFieldManager).Return(nil)
+			kubeMock.On("SetAnnotationsOnNodeWithFieldManager", mock.Anything, nodeName, mock.Anything, vtepAnnotationFieldManager).Return(nil)
 			ndm := &ndmmocks.Interface{}
 			lister := &vteplistmocks.VTEPLister{}
 			informer := &vtepinfmocks.VTEPInformer{}
@@ -164,7 +164,7 @@ var _ = Describe("EVPN node controller", func() {
 
 			node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: nodeName}}
 			kubeMock := &kubemocks.Interface{}
-			kubeMock.On("SetAnnotationsOnNodeWithFieldManager", nodeName, mock.Anything, vtepAnnotationFieldManager).Return(nil)
+			kubeMock.On("SetAnnotationsOnNodeWithFieldManager", mock.Anything, nodeName, mock.Anything, vtepAnnotationFieldManager).Return(nil)
 			ndm := &ndmmocks.Interface{}
 			lister := &vteplistmocks.VTEPLister{}
 			informer := &vtepinfmocks.VTEPInformer{}
@@ -194,13 +194,13 @@ var _ = Describe("EVPN node controller", func() {
 			Expect(ctrl.reconcile(context.Background(), vtepName)).To(Succeed())
 			ndm.AssertExpectations(GinkgoT())
 			ndm.AssertNotCalled(GinkgoT(), "EnsureLink", mock.Anything)
-			kubeMock.AssertNotCalled(GinkgoT(), "SetAnnotationsOnNodeWithFieldManager", mock.Anything, mock.Anything, mock.Anything)
+			kubeMock.AssertNotCalled(GinkgoT(), "SetAnnotationsOnNodeWithFieldManager", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 		})
 
 		It("deletes all devices when VTEP is not found", func() {
 			node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: nodeName}}
 			kubeMock := &kubemocks.Interface{}
-			kubeMock.On("SetAnnotationsOnNodeWithFieldManager", nodeName, mock.Anything, vtepAnnotationFieldManager).Return(nil)
+			kubeMock.On("SetAnnotationsOnNodeWithFieldManager", mock.Anything, nodeName, mock.Anything, vtepAnnotationFieldManager).Return(nil)
 			ndm := &ndmmocks.Interface{}
 			lister := &vteplistmocks.VTEPLister{}
 			informer := &vtepinfmocks.VTEPInformer{}
@@ -228,7 +228,7 @@ var _ = Describe("EVPN node controller", func() {
 
 			Expect(ctrl.reconcile(context.Background(), vtepName)).To(Succeed())
 			ndm.AssertExpectations(GinkgoT())
-			kubeMock.AssertNotCalled(GinkgoT(), "SetAnnotationsOnNodeWithFieldManager", mock.Anything, mock.Anything, mock.Anything)
+			kubeMock.AssertNotCalled(GinkgoT(), "SetAnnotationsOnNodeWithFieldManager", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 		})
 
 		It("creates L3 and L2 SVIs with correct VLAN IDs and VRF master", func() {
@@ -283,7 +283,7 @@ var _ = Describe("EVPN node controller", func() {
 
 			node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: nodeName}}
 			kubeMock := &kubemocks.Interface{}
-			kubeMock.On("SetAnnotationsOnNodeWithFieldManager", nodeName, mock.Anything, vtepAnnotationFieldManager).Return(nil)
+			kubeMock.On("SetAnnotationsOnNodeWithFieldManager", mock.Anything, nodeName, mock.Anything, vtepAnnotationFieldManager).Return(nil)
 			ndm := &ndmmocks.Interface{}
 			lister := &vteplistmocks.VTEPLister{}
 			informer := &vtepinfmocks.VTEPInformer{}
@@ -321,7 +321,7 @@ var _ = Describe("EVPN node controller", func() {
 		It("deletes SVIs parented to the bridge when VTEP is not found", func() {
 			node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: nodeName}}
 			kubeMock := &kubemocks.Interface{}
-			kubeMock.On("SetAnnotationsOnNodeWithFieldManager", nodeName, mock.Anything, vtepAnnotationFieldManager).Return(nil)
+			kubeMock.On("SetAnnotationsOnNodeWithFieldManager", mock.Anything, nodeName, mock.Anything, vtepAnnotationFieldManager).Return(nil)
 			ndm := &ndmmocks.Interface{}
 			lister := &vteplistmocks.VTEPLister{}
 			informer := &vtepinfmocks.VTEPInformer{}
@@ -356,7 +356,7 @@ var _ = Describe("EVPN node controller", func() {
 			Expect(ctrl.reconcile(context.Background(), vtepName)).To(Succeed())
 			ndm.AssertCalled(GinkgoT(), "DeleteLink", sviName)
 			ndm.AssertExpectations(GinkgoT())
-			kubeMock.AssertNotCalled(GinkgoT(), "SetAnnotationsOnNodeWithFieldManager", mock.Anything, mock.Anything, mock.Anything)
+			kubeMock.AssertNotCalled(GinkgoT(), "SetAnnotationsOnNodeWithFieldManager", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 		})
 
 		It("fails reconciliation when hybrid overlay is enabled with conflicting VXLAN port", func() {
@@ -370,7 +370,7 @@ var _ = Describe("EVPN node controller", func() {
 
 			node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: nodeName}}
 			kubeMock := &kubemocks.Interface{}
-			kubeMock.On("SetAnnotationsOnNodeWithFieldManager", nodeName, mock.Anything, vtepAnnotationFieldManager).Return(nil)
+			kubeMock.On("SetAnnotationsOnNodeWithFieldManager", mock.Anything, nodeName, mock.Anything, vtepAnnotationFieldManager).Return(nil)
 			lister := &vteplistmocks.VTEPLister{}
 			informer := &vtepinfmocks.VTEPInformer{}
 			informer.On("Lister").Return(lister)
@@ -420,8 +420,8 @@ var _ = Describe("EVPN node controller", func() {
 
 			node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: nodeName}}
 			kubeMock := &kubemocks.Interface{}
-			kubeMock.On("SetAnnotationsOnNodeWithFieldManager", nodeName, mock.Anything, vtepAnnotationFieldManager).Return(nil).Run(func(args mock.Arguments) {
-				for k, v := range args.Get(1).(map[string]interface{}) {
+			kubeMock.On("SetAnnotationsOnNodeWithFieldManager", mock.Anything, nodeName, mock.Anything, vtepAnnotationFieldManager).Return(nil).Run(func(args mock.Arguments) {
+				for k, v := range args.Get(2).(map[string]interface{}) {
 					if node.Annotations == nil {
 						node.Annotations = make(map[string]string)
 					}
@@ -488,7 +488,7 @@ var _ = Describe("EVPN node controller", func() {
 
 			node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: nodeName}}
 			kubeMock := &kubemocks.Interface{}
-			kubeMock.On("SetAnnotationsOnNodeWithFieldManager", nodeName, mock.Anything, vtepAnnotationFieldManager).Return(nil)
+			kubeMock.On("SetAnnotationsOnNodeWithFieldManager", mock.Anything, nodeName, mock.Anything, vtepAnnotationFieldManager).Return(nil)
 			ndm := &ndmmocks.Interface{}
 			lister := &vteplistmocks.VTEPLister{}
 			informer := &vtepinfmocks.VTEPInformer{}
@@ -551,7 +551,7 @@ var _ = Describe("EVPN node controller", func() {
 
 			node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: nodeName}}
 			kubeMock := &kubemocks.Interface{}
-			kubeMock.On("SetAnnotationsOnNodeWithFieldManager", nodeName, mock.Anything, vtepAnnotationFieldManager).Return(nil)
+			kubeMock.On("SetAnnotationsOnNodeWithFieldManager", mock.Anything, nodeName, mock.Anything, vtepAnnotationFieldManager).Return(nil)
 			ndm := &ndmmocks.Interface{}
 			lister := &vteplistmocks.VTEPLister{}
 			informer := &vtepinfmocks.VTEPInformer{}
@@ -630,7 +630,7 @@ var _ = Describe("EVPN node controller", func() {
 
 			node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: nodeName}}
 			kubeMock := &kubemocks.Interface{}
-			kubeMock.On("SetAnnotationsOnNodeWithFieldManager", nodeName, mock.Anything, vtepAnnotationFieldManager).Return(nil)
+			kubeMock.On("SetAnnotationsOnNodeWithFieldManager", mock.Anything, nodeName, mock.Anything, vtepAnnotationFieldManager).Return(nil)
 			ndm := &ndmmocks.Interface{}
 			lister := &vteplistmocks.VTEPLister{}
 			informer := &vtepinfmocks.VTEPInformer{}
@@ -721,7 +721,7 @@ var _ = Describe("EVPN node controller", func() {
 
 			node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: nodeName}}
 			kubeMock := &kubemocks.Interface{}
-			kubeMock.On("SetAnnotationsOnNodeWithFieldManager", nodeName, mock.Anything, vtepAnnotationFieldManager).Return(nil)
+			kubeMock.On("SetAnnotationsOnNodeWithFieldManager", mock.Anything, nodeName, mock.Anything, vtepAnnotationFieldManager).Return(nil)
 			ndm := &ndmmocks.Interface{}
 			lister := &vteplistmocks.VTEPLister{}
 			informer := &vtepinfmocks.VTEPInformer{}
@@ -1422,8 +1422,8 @@ var _ = Describe("discoverUnmanagedVTEPIPs", func() {
 	newTestController := func(ips []net.IP, annotations map[string]string) *testController {
 		node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: nodeName, Annotations: annotations}}
 		kubeMock := &kubemocks.Interface{}
-		kubeMock.On("SetAnnotationsOnNodeWithFieldManager", nodeName, mock.Anything, vtepAnnotationFieldManager).Return(nil).Run(func(args mock.Arguments) {
-			for k, v := range args.Get(1).(map[string]interface{}) {
+		kubeMock.On("SetAnnotationsOnNodeWithFieldManager", mock.Anything, nodeName, mock.Anything, vtepAnnotationFieldManager).Return(nil).Run(func(args mock.Arguments) {
+			for k, v := range args.Get(2).(map[string]interface{}) {
 				if node.Annotations == nil {
 					node.Annotations = make(map[string]string)
 				}
@@ -1451,12 +1451,12 @@ var _ = Describe("discoverUnmanagedVTEPIPs", func() {
 			Spec:       vtepv1.VTEPSpec{CIDRs: []vtepv1.CIDR{"100.64.0.0/24"}},
 		}
 
-		v4, v6, err := tc.discoverUnmanagedVTEPIPs(vtep)
+		v4, v6, err := tc.discoverUnmanagedVTEPIPs(context.Background(), vtep)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(v4.Equal(net.ParseIP("100.64.0.1"))).To(BeTrue())
 		Expect(v6).To(BeNil())
 
-		tc.kubeMock.AssertCalled(GinkgoT(), "SetAnnotationsOnNodeWithFieldManager", nodeName, mock.Anything, vtepAnnotationFieldManager)
+		tc.kubeMock.AssertCalled(GinkgoT(), "SetAnnotationsOnNodeWithFieldManager", mock.Anything, nodeName, mock.Anything, vtepAnnotationFieldManager)
 		vteps, err := util.ParseNodeVTEPs(tc.node)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(vteps).To(HaveLen(1))
@@ -1470,12 +1470,12 @@ var _ = Describe("discoverUnmanagedVTEPIPs", func() {
 			Spec:       vtepv1.VTEPSpec{CIDRs: []vtepv1.CIDR{"fd00::/64"}},
 		}
 
-		v4, v6, err := tc.discoverUnmanagedVTEPIPs(vtep)
+		v4, v6, err := tc.discoverUnmanagedVTEPIPs(context.Background(), vtep)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(v4).To(BeNil())
 		Expect(v6.Equal(net.ParseIP("fd00::1"))).To(BeTrue())
 
-		tc.kubeMock.AssertCalled(GinkgoT(), "SetAnnotationsOnNodeWithFieldManager", nodeName, mock.Anything, vtepAnnotationFieldManager)
+		tc.kubeMock.AssertCalled(GinkgoT(), "SetAnnotationsOnNodeWithFieldManager", mock.Anything, nodeName, mock.Anything, vtepAnnotationFieldManager)
 		vteps, err := util.ParseNodeVTEPs(tc.node)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(vteps).To(HaveLen(1))
@@ -1489,12 +1489,12 @@ var _ = Describe("discoverUnmanagedVTEPIPs", func() {
 			Spec:       vtepv1.VTEPSpec{CIDRs: []vtepv1.CIDR{"100.64.0.0/24", "fd00::/64"}},
 		}
 
-		v4, v6, err := tc.discoverUnmanagedVTEPIPs(vtep)
+		v4, v6, err := tc.discoverUnmanagedVTEPIPs(context.Background(), vtep)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(v4.Equal(net.ParseIP("100.64.0.1"))).To(BeTrue())
 		Expect(v6.Equal(net.ParseIP("fd00::1"))).To(BeTrue())
 
-		tc.kubeMock.AssertCalled(GinkgoT(), "SetAnnotationsOnNodeWithFieldManager", nodeName, mock.Anything, vtepAnnotationFieldManager)
+		tc.kubeMock.AssertCalled(GinkgoT(), "SetAnnotationsOnNodeWithFieldManager", mock.Anything, nodeName, mock.Anything, vtepAnnotationFieldManager)
 		vteps, err := util.ParseNodeVTEPs(tc.node)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(vteps).To(HaveLen(1))
@@ -1517,12 +1517,12 @@ var _ = Describe("discoverUnmanagedVTEPIPs", func() {
 			{IPNet: &net.IPNet{IP: net.ParseIP("100.64.0.2"), Mask: net.CIDRMask(24, 32)}, Label: "eth0:vip"},
 		}, nil)
 
-		v4, v6, err := tc.discoverUnmanagedVTEPIPs(vtep)
+		v4, v6, err := tc.discoverUnmanagedVTEPIPs(context.Background(), vtep)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(v4.Equal(net.ParseIP("100.64.0.1"))).To(BeTrue())
 		Expect(v6).To(BeNil())
 
-		tc.kubeMock.AssertCalled(GinkgoT(), "SetAnnotationsOnNodeWithFieldManager", nodeName, mock.Anything, vtepAnnotationFieldManager)
+		tc.kubeMock.AssertCalled(GinkgoT(), "SetAnnotationsOnNodeWithFieldManager", mock.Anything, nodeName, mock.Anything, vtepAnnotationFieldManager)
 		vteps, err := util.ParseNodeVTEPs(tc.node)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(vteps).To(HaveLen(1))
@@ -1545,11 +1545,11 @@ var _ = Describe("discoverUnmanagedVTEPIPs", func() {
 			{IPNet: &net.IPNet{IP: net.ParseIP("100.64.0.2"), Mask: net.CIDRMask(24, 32)}},
 		}, nil)
 
-		v4, _, err := tc.discoverUnmanagedVTEPIPs(vtep)
+		v4, _, err := tc.discoverUnmanagedVTEPIPs(context.Background(), vtep)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(v4.Equal(net.ParseIP("100.64.0.2"))).To(BeTrue())
 
-		tc.kubeMock.AssertCalled(GinkgoT(), "SetAnnotationsOnNodeWithFieldManager", nodeName, mock.Anything, vtepAnnotationFieldManager)
+		tc.kubeMock.AssertCalled(GinkgoT(), "SetAnnotationsOnNodeWithFieldManager", mock.Anything, nodeName, mock.Anything, vtepAnnotationFieldManager)
 		vteps, err := util.ParseNodeVTEPs(tc.node)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(vteps).To(HaveLen(1))
@@ -1566,12 +1566,12 @@ var _ = Describe("discoverUnmanagedVTEPIPs", func() {
 			Spec:       vtepv1.VTEPSpec{CIDRs: []vtepv1.CIDR{"100.64.0.0/24"}},
 		}
 
-		v4, v6, err := tc.discoverUnmanagedVTEPIPs(vtep)
+		v4, v6, err := tc.discoverUnmanagedVTEPIPs(context.Background(), vtep)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(v4.Equal(net.ParseIP("100.64.0.5"))).To(BeTrue(), "should reuse the annotated IP, not pick a new one")
 		Expect(v6).To(BeNil())
 
-		tc.kubeMock.AssertNotCalled(GinkgoT(), "SetAnnotationsOnNodeWithFieldManager", mock.Anything, mock.Anything, mock.Anything)
+		tc.kubeMock.AssertNotCalled(GinkgoT(), "SetAnnotationsOnNodeWithFieldManager", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 	})
 
 	It("selects a new IP and updates annotation when annotated IP is no longer on the node", func() {
@@ -1584,11 +1584,11 @@ var _ = Describe("discoverUnmanagedVTEPIPs", func() {
 			Spec:       vtepv1.VTEPSpec{CIDRs: []vtepv1.CIDR{"100.64.0.0/24"}},
 		}
 
-		v4, _, err := tc.discoverUnmanagedVTEPIPs(vtep)
+		v4, _, err := tc.discoverUnmanagedVTEPIPs(context.Background(), vtep)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(v4.Equal(net.ParseIP("100.64.0.5"))).To(BeTrue())
 
-		tc.kubeMock.AssertCalled(GinkgoT(), "SetAnnotationsOnNodeWithFieldManager", nodeName, mock.Anything, vtepAnnotationFieldManager)
+		tc.kubeMock.AssertCalled(GinkgoT(), "SetAnnotationsOnNodeWithFieldManager", mock.Anything, nodeName, mock.Anything, vtepAnnotationFieldManager)
 		vteps, err := util.ParseNodeVTEPs(tc.node)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(vteps).To(HaveLen(1))
@@ -1605,17 +1605,17 @@ var _ = Describe("discoverUnmanagedVTEPIPs", func() {
 			Spec:       vtepv1.VTEPSpec{CIDRs: []vtepv1.CIDR{"100.64.0.0/24"}},
 		}
 
-		v4, _, err := tc.discoverUnmanagedVTEPIPs(vtep)
+		v4, _, err := tc.discoverUnmanagedVTEPIPs(context.Background(), vtep)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(v4.Equal(net.ParseIP("100.64.0.1"))).To(BeTrue())
 
-		tc.kubeMock.AssertCalled(GinkgoT(), "SetAnnotationsOnNodeWithFieldManager", nodeName, mock.Anything, vtepAnnotationFieldManager)
+		tc.kubeMock.AssertCalled(GinkgoT(), "SetAnnotationsOnNodeWithFieldManager", mock.Anything, nodeName, mock.Anything, vtepAnnotationFieldManager)
 	})
 
 	It("restores cached annotation when SetAnnotationsOnNodeWithFieldManager fails", func() {
 		node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: nodeName}}
 		kubeMock := &kubemocks.Interface{}
-		kubeMock.On("SetAnnotationsOnNodeWithFieldManager", nodeName, mock.Anything, vtepAnnotationFieldManager).Return(fmt.Errorf("API unavailable"))
+		kubeMock.On("SetAnnotationsOnNodeWithFieldManager", mock.Anything, nodeName, mock.Anything, vtepAnnotationFieldManager).Return(fmt.Errorf("API unavailable"))
 		wf := &factorymocks.NodeWatchFactory{}
 		wf.On("GetNode", nodeName).Return(node, nil)
 
@@ -1631,7 +1631,7 @@ var _ = Describe("discoverUnmanagedVTEPIPs", func() {
 			Spec:       vtepv1.VTEPSpec{CIDRs: []vtepv1.CIDR{"100.64.0.0/24"}},
 		}
 
-		_, _, err := tc.discoverUnmanagedVTEPIPs(vtep)
+		_, _, err := tc.discoverUnmanagedVTEPIPs(context.Background(), vtep)
 		Expect(err).To(HaveOccurred())
 
 		By("verifying the in-memory annotation cache was restored to its previous (empty) state")
@@ -1648,12 +1648,12 @@ var _ = Describe("discoverUnmanagedVTEPIPs", func() {
 			Spec:       vtepv1.VTEPSpec{CIDRs: []vtepv1.CIDR{"100.64.0.0/24", "fd00::/64"}},
 		}
 
-		v4, v6, err := tc.discoverUnmanagedVTEPIPs(vtep)
+		v4, v6, err := tc.discoverUnmanagedVTEPIPs(context.Background(), vtep)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(v4.Equal(net.ParseIP("100.64.0.1"))).To(BeTrue(), "IPv4 should be reused")
 		Expect(v6.Equal(net.ParseIP("fd00::5"))).To(BeTrue(), "IPv6 should be newly selected")
 
-		tc.kubeMock.AssertCalled(GinkgoT(), "SetAnnotationsOnNodeWithFieldManager", nodeName, mock.Anything, vtepAnnotationFieldManager)
+		tc.kubeMock.AssertCalled(GinkgoT(), "SetAnnotationsOnNodeWithFieldManager", mock.Anything, nodeName, mock.Anything, vtepAnnotationFieldManager)
 		vteps, err := util.ParseNodeVTEPs(tc.node)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(vteps).To(HaveLen(1))

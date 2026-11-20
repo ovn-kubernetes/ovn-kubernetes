@@ -22,7 +22,7 @@ var objectsMutex sync.Mutex
 
 // AddObjects adds each element of objects to nftables in a single transaction, using
 // tx.Add() for each object.
-func AddObjects(objects []knftables.Object) error {
+func AddObjects(ctx context.Context, objects []knftables.Object) error {
 	objectsMutex.Lock()
 	defer objectsMutex.Unlock()
 	nft, err := GetNFTablesHelper()
@@ -34,7 +34,7 @@ func AddObjects(objects []knftables.Object) error {
 	for _, obj := range objects {
 		tx.Add(obj)
 	}
-	return nft.Run(context.TODO(), tx)
+	return nft.Run(ctx, tx)
 }
 
 // DeleteObjects deletes each element of objects from nftables, if it exists; no errors
@@ -50,7 +50,7 @@ func AddObjects(objects []knftables.Object) error {
 // For knftables.Rule objects, if the Rule's Handle is not set, then it must have a
 // non-nil Comment. DeleteObjects will first "list" the Rule's Chain to find its current
 // contents, and then delete every rule in the chain with a matching comment.
-func DeleteObjects(objects []knftables.Object) error {
+func DeleteObjects(ctx context.Context, objects []knftables.Object) error {
 	objectsMutex.Lock()
 	defer objectsMutex.Unlock()
 	nft, err := GetNFTablesHelper()
@@ -65,7 +65,7 @@ func DeleteObjects(objects []knftables.Object) error {
 		switch typed := obj.(type) {
 		case *knftables.Element:
 			if typed.Map != "" && len(typed.Value) == 0 && existingMaps[typed.Map] == nil {
-				existingElements, err := nft.ListElements(context.TODO(), "map", typed.Map)
+				existingElements, err := nft.ListElements(ctx, "map", typed.Map)
 				if err != nil {
 					return err
 				}
@@ -78,7 +78,7 @@ func DeleteObjects(objects []knftables.Object) error {
 				return fmt.Errorf("rule passed to DeleteObject must have a Handle or Comment")
 			}
 			if existingChains[typed.Chain] == nil {
-				rules, err := nft.ListRules(context.TODO(), typed.Chain)
+				rules, err := nft.ListRules(ctx, typed.Chain)
 				if err != nil {
 					return err
 				}
@@ -132,13 +132,13 @@ func DeleteObjects(objects []knftables.Object) error {
 		default:
 		}
 	}
-	return nft.Run(context.TODO(), tx)
+	return nft.Run(ctx, tx)
 }
 
 // DeleteElementsIfMatching deletes map elements only when their current values
 // match the supplied values. Other helper mutations are excluded across the
 // lookup and deletion, preserving replacements owned by another network.
-func DeleteElementsIfMatching(objects []knftables.Object) error {
+func DeleteElementsIfMatching(ctx context.Context, objects []knftables.Object) error {
 	objectsMutex.Lock()
 	defer objectsMutex.Unlock()
 	nft, err := GetNFTablesHelper()
@@ -154,7 +154,7 @@ func DeleteElementsIfMatching(objects []knftables.Object) error {
 		}
 		existing, listed := existingMaps[element.Map]
 		if !listed {
-			existing, err = nft.ListElements(context.TODO(), "map", element.Map)
+			existing, err = nft.ListElements(ctx, "map", element.Map)
 			if err != nil {
 				return fmt.Errorf("failed to list map %s: %w", element.Map, err)
 			}
@@ -170,13 +170,13 @@ func DeleteElementsIfMatching(objects []knftables.Object) error {
 			})
 		}
 	}
-	return nft.Run(context.TODO(), tx)
+	return nft.Run(ctx, tx)
 }
 
 // SyncObjects synchronizes the given nftables containers to contain only the elements in
 // contents. containers can contain Sets, Maps, and Chains, and contents can contain
 // Elements and Rules.
-func SyncObjects(containers, contents []knftables.Object) error {
+func SyncObjects(ctx context.Context, containers, contents []knftables.Object) error {
 	objectsMutex.Lock()
 	defer objectsMutex.Unlock()
 	nft, err := GetNFTablesHelper()
@@ -220,7 +220,7 @@ func SyncObjects(containers, contents []knftables.Object) error {
 		tx.Add(obj)
 	}
 
-	err = nft.Run(context.TODO(), tx)
+	err = nft.Run(ctx, tx)
 	if err == nil || !knftables.IsNotFound(err) {
 		return err
 	}
@@ -242,7 +242,7 @@ func SyncObjects(containers, contents []knftables.Object) error {
 				}
 			}
 		}
-		err := nft.Run(context.TODO(), tx)
+		err := nft.Run(ctx, tx)
 		if err != nil && (!knftables.IsNotFound(err) || keepElems > 0) {
 			return err
 		}
@@ -261,7 +261,7 @@ func SyncObjects(containers, contents []knftables.Object) error {
 				}
 			}
 		}
-		err := nft.Run(context.TODO(), tx)
+		err := nft.Run(ctx, tx)
 		if err != nil && (!knftables.IsNotFound(err) || keepRules > 0) {
 			return err
 		}

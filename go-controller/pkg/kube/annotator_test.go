@@ -50,7 +50,7 @@ var _ = Describe("Annotator", func() {
 				fakeKubeInterface := kubeMocks.Interface{}
 				fakeKubeInterface.On("SetAnnotationsOnNode", mock.Anything, mock.Anything, mock.Anything).Return(fmt.Errorf("should not be called"))
 				nodeAnnot := NewNodeAnnotator(&fakeKubeInterface, "")
-				err := nodeAnnot.Run()
+				err := nodeAnnot.Run(context.Background())
 				Expect(err).ToNot(HaveOccurred())
 			})
 
@@ -79,10 +79,10 @@ var _ = Describe("Annotator", func() {
 			})
 
 			It("should update nodes annotations", func() {
-				err := nodeAnnot.Run()
+				err := nodeAnnot.Run(context.Background())
 				Expect(err).ToNot(HaveOccurred())
 
-				node, err := kube.GetNodeForWindows(nodeName)
+				node, err := kube.GetNodeForWindows(context.Background(), nodeName)
 				Expect(err).ToNot(HaveOccurred())
 
 				// should contain initial annotations

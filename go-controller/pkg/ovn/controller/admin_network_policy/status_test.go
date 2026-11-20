@@ -203,7 +203,7 @@ func TestStatusUpdateSkippedWhenUnchanged(t *testing.T) {
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 
 	// First call - should make an API call to set status to Ready
-	err = controller.updateANPStatusToReady(initialANP.Name)
+	err = controller.updateANPStatusToReady(context.Background(), initialANP.Name)
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 
 	// Wait for the status to be reflected in the lister
@@ -217,7 +217,7 @@ func TestStatusUpdateSkippedWhenUnchanged(t *testing.T) {
 	actionsAfterANPFirstUpdate := len(controller.anpClientSet.(*anpfake.Clientset).Actions())
 
 	// Second call with same status - should NOT make an API call
-	err = controller.updateANPStatusToReady(initialANP.Name)
+	err = controller.updateANPStatusToReady(context.Background(), initialANP.Name)
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 
 	// Verify no new actions were added (ApplyStatus was skipped)
@@ -227,7 +227,7 @@ func TestStatusUpdateSkippedWhenUnchanged(t *testing.T) {
 		actionsAfterANPSecondUpdate-actionsAfterANPFirstUpdate)
 
 	// Third call with different status (NotReady) - SHOULD make an API call
-	err = controller.updateANPStatusToNotReady(initialANP.Name, "something went wrong")
+	err = controller.updateANPStatusToNotReady(context.Background(), initialANP.Name, "something went wrong")
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 
 	// Verify a new action WAS added (ApplyStatus was called)
@@ -237,7 +237,7 @@ func TestStatusUpdateSkippedWhenUnchanged(t *testing.T) {
 		actionsAfterANPThirdUpdate-actionsAfterANPSecondUpdate)
 
 	// Now test BANP
-	err = controller.updateBANPStatusToReady(initialBANP.Name)
+	err = controller.updateBANPStatusToReady(context.Background(), initialBANP.Name)
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 
 	g.Eventually(func() int {
@@ -249,7 +249,7 @@ func TestStatusUpdateSkippedWhenUnchanged(t *testing.T) {
 	actionsAfterBANPFirstUpdate := len(controller.anpClientSet.(*anpfake.Clientset).Actions())
 
 	// Second call with same status - should NOT make an API call
-	err = controller.updateBANPStatusToReady(initialBANP.Name)
+	err = controller.updateBANPStatusToReady(context.Background(), initialBANP.Name)
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 
 	actionsAfterBANPSecondUpdate := len(controller.anpClientSet.(*anpfake.Clientset).Actions())
@@ -257,7 +257,7 @@ func TestStatusUpdateSkippedWhenUnchanged(t *testing.T) {
 		"Expected no new API calls when BANP status is unchanged")
 
 	// Third call with different status (NotReady) - SHOULD make an API call
-	err = controller.updateBANPStatusToNotReady(initialBANP.Name, "something went wrong")
+	err = controller.updateBANPStatusToNotReady(context.Background(), initialBANP.Name, "something went wrong")
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 
 	// Verify a new action WAS added (ApplyStatus was called)
@@ -281,7 +281,7 @@ func TestAddOrUpdateAdminNetworkPolicyStatus(t *testing.T) {
 		},
 	)
 	g.Expect(err).NotTo(gomega.HaveOccurred())
-	err = controller.updateANPStatusToNotReady(initialANP.Name, message)
+	err = controller.updateANPStatusToNotReady(context.Background(), initialANP.Name, message)
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Eventually(func() int {
 		latestANP, err := controller.anpLister.Get(anpName)
@@ -295,7 +295,7 @@ func TestAddOrUpdateAdminNetworkPolicyStatus(t *testing.T) {
 	g.Expect(anp.Status.Conditions[0].Reason).To(gomega.Equal(policyNotReadyReason))
 	g.Expect(anp.Status.Conditions[0].Status).To(gomega.Equal(metav1.ConditionFalse))
 
-	err = controller.updateANPStatusToReady(anp.Name)
+	err = controller.updateANPStatusToReady(context.Background(), anp.Name)
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Eventually(func() int {
 		latestANP, err := controller.anpLister.Get(anpName)
@@ -309,7 +309,7 @@ func TestAddOrUpdateAdminNetworkPolicyStatus(t *testing.T) {
 	g.Expect(anp.Status.Conditions[0].Reason).To(gomega.Equal(policyReadyReason))
 	g.Expect(anp.Status.Conditions[0].Status).To(gomega.Equal(metav1.ConditionTrue))
 
-	err = controller.updateBANPStatusToNotReady(initialBANP.Name, message)
+	err = controller.updateBANPStatusToNotReady(context.Background(), initialBANP.Name, message)
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Eventually(func() int {
 		latestBANP, err := controller.banpLister.Get(banpName)
@@ -323,7 +323,7 @@ func TestAddOrUpdateAdminNetworkPolicyStatus(t *testing.T) {
 	g.Expect(banp.Status.Conditions[0].Reason).To(gomega.Equal(policyNotReadyReason))
 	g.Expect(banp.Status.Conditions[0].Status).To(gomega.Equal(metav1.ConditionFalse))
 
-	err = controller.updateBANPStatusToReady(banp.Name)
+	err = controller.updateBANPStatusToReady(context.Background(), banp.Name)
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Eventually(func() int {
 		latestBANP, err := controller.banpLister.Get(banpName)

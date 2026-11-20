@@ -92,7 +92,7 @@ var _ = Describe("Cluster Manager Zone Tracker", func() {
 
 		fakeClient = util.GetOVNClientset().GetClusterManagerClientset()
 		coreFactory = informerfactory.NewSharedInformerFactory(fakeClient.KubeClient, time.Second)
-		zoneTracker = NewZoneTracker(coreFactory.Core().V1().Nodes(), func(sets.Set[string]) {
+		zoneTracker = NewZoneTracker(coreFactory.Core().V1().Nodes(), func(context.Context, sets.Set[string]) {
 			subscribeCounter.Add(1)
 		})
 
@@ -161,7 +161,7 @@ var _ = Describe("Cluster Manager Zone Tracker", func() {
 	})
 
 	It("does not notify when reconciling a missing node", func() {
-		err := zoneTracker.reconcileNode(node1)
+		err := zoneTracker.reconcileNode(context.Background(), node1)
 		Expect(err).ToNot(HaveOccurred())
 		checkZones()
 		checkSubscribeCounter(1)

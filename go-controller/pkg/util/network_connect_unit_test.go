@@ -111,7 +111,7 @@ func TestUpdateNetworkConnectSubnetAnnotation(t *testing.T) {
 			ovntest.AddNetworkConnectApplyReactor(fakeClient)
 
 			// Call the function under test
-			err := UpdateNetworkConnectSubnetAnnotation(cnc, fakeClient, tt.allocatedSubnets)
+			err := UpdateNetworkConnectSubnetAnnotation(context.Background(), cnc, fakeClient, tt.allocatedSubnets)
 
 			if tt.expectError {
 				require.Error(t, err)
@@ -206,7 +206,7 @@ func TestUpdateNetworkConnectRouterTunnelKeyAnnotation(t *testing.T) {
 			fakeClient := networkconnectfake.NewSimpleClientset(cnc)
 			ovntest.AddNetworkConnectApplyReactor(fakeClient)
 
-			err := UpdateNetworkConnectRouterTunnelKeyAnnotation(tt.cncName, fakeClient, tt.tunnelID)
+			err := UpdateNetworkConnectRouterTunnelKeyAnnotation(context.Background(), tt.cncName, fakeClient, tt.tunnelID)
 			require.NoError(t, err)
 
 			updatedCNC, err := fakeClient.K8sV1().ClusterNetworkConnects().Get(
@@ -252,11 +252,11 @@ func TestBothAnnotationsCanCoexist(t *testing.T) {
 	allocatedSubnets := map[string][]*net.IPNet{
 		"network1": {ovntest.MustParseIPNet("10.0.0.0/24")},
 	}
-	err := UpdateNetworkConnectSubnetAnnotation(cnc, fakeClient, allocatedSubnets)
+	err := UpdateNetworkConnectSubnetAnnotation(context.Background(), cnc, fakeClient, allocatedSubnets)
 	require.NoError(t, err)
 
 	// Then, set the tunnel key annotation
-	err = UpdateNetworkConnectRouterTunnelKeyAnnotation(cncName, fakeClient, 12345)
+	err = UpdateNetworkConnectRouterTunnelKeyAnnotation(context.Background(), cncName, fakeClient, 12345)
 	require.NoError(t, err)
 
 	// Get the final CNC
@@ -308,7 +308,7 @@ func TestUpdateNetworkConnectSubnetAnnotation_PreservesExistingAnnotations(t *te
 	allocatedSubnets := map[string][]*net.IPNet{
 		"network1": {ovntest.MustParseIPNet("10.0.0.0/24")},
 	}
-	err := UpdateNetworkConnectSubnetAnnotation(cnc, fakeClient, allocatedSubnets)
+	err := UpdateNetworkConnectSubnetAnnotation(context.Background(), cnc, fakeClient, allocatedSubnets)
 	require.NoError(t, err)
 
 	// Get the updated CNC

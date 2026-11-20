@@ -131,7 +131,7 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 			)
 			Expect(err).NotTo(HaveOccurred())
 
-			err = n.controller.AddNode(testNode)
+			err = n.controller.AddNode(context.Background(), testNode)
 			Expect(err).NotTo(HaveOccurred())
 			f.WaitForCacheSync(stopChan)
 
@@ -183,11 +183,11 @@ var _ = Describe("Hybrid Overlay Node Linux Operations", func() {
 			)
 			Expect(err).NotTo(HaveOccurred())
 
-			err = n.controller.AddNode(testNode)
+			err = n.controller.AddNode(context.Background(), testNode)
 			Expect(err).NotTo(HaveOccurred())
-			err = n.controller.AddPod(testPod1)
+			err = n.controller.AddPod(context.Background(), testPod1)
 			Expect(err).NotTo(HaveOccurred())
-			err = n.controller.AddPod(testPod2)
+			err = n.controller.AddPod(context.Background(), testPod2)
 			Expect(err).NotTo(HaveOccurred())
 			f.WaitForCacheSync(stopChan)
 
