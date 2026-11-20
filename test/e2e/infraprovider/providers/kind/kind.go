@@ -30,6 +30,7 @@ import (
 
 type kind struct {
 	engine *container.Engine
+	runner api.Runner
 }
 
 func New() api.Provider {
@@ -38,11 +39,21 @@ func New() api.Provider {
 	}
 	ce := getContainerRuntime()
 	cmdRunner := runner.NewDirectRunner()
-	return &kind{engine: container.NewEngine(ce.String(), cmdRunner)}
+	return &kind{
+		engine: container.NewEngine(ce.String(), cmdRunner),
+		runner: cmdRunner,
+	}
 }
 
 func (k *kind) Name() string {
 	return "kind"
+}
+
+// Close releases whatever the runner holds. A local runner holds nothing, so
+// today this is a no-op, but the provider owns the runner and so owns closing
+// it, whichever runner it was built with.
+func (k *kind) Close() error {
+	return k.runner.Close()
 }
 
 func (k *kind) PrimaryNetwork() (api.Network, error) {

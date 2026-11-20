@@ -17,6 +17,12 @@ func NewDirectRunner() api.Runner {
 	return &directRunner{}
 }
 
+// Close satisfies api.Runner. Running commands locally opens nothing that
+// outlives a single command, so there is nothing to release.
+func (r *directRunner) Close() error {
+	return nil
+}
+
 func (r *directRunner) Run(command string, args ...string) (string, error) {
 	out, err := exec.Command(command, args...).CombinedOutput()
 	result := string(out)

@@ -21,6 +21,10 @@ type Provider interface {
 	// NewTestContext providers a per test sandbox. Dependent infra test constructs are created within each test and automatically cleaned
 	// after each test.
 	NewTestContext() Context
+	// Close releases anything the provider holds open for the lifetime of the
+	// suite, such as a Runner's connection to a remote host. The suite calls it
+	// once, after the last test. Providers with nothing to release return nil.
+	Close() error
 }
 
 type ClusterProvider interface {
@@ -334,4 +338,9 @@ type Runner interface {
 	// Run executes a command with the given arguments
 	// and returns its output, or an error on failure.
 	Run(command string, args ...string) (string, error)
+	// Close releases whatever the runner holds between commands, such as a
+	// reused SSH connection. Runners that open nothing return nil. It is part
+	// of the interface rather than an optional capability so that a runner
+	// wrapping another cannot silently drop the inner runner's cleanup.
+	Close() error
 }

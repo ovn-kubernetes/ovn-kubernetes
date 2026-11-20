@@ -97,7 +97,14 @@ func TestMain(m *testing.M) {
 		deploymentconfig.Get().AddRequiredImage(api.Netshoot)
 	}
 
-	os.Exit(m.Run())
+	code := m.Run()
+	// Release anything the provider held for the whole suite, such as a runner's
+	// connection to a remote host. A failure here must not change the result the
+	// tests produced, so it is reported and the test exit code is preserved.
+	if err := infraprovider.Get().Close(); err != nil {
+		fmt.Fprintf(os.Stderr, "infra provider close: %v\n", err)
+	}
+	os.Exit(code)
 }
 
 func TestE2E(t *testing.T) {
