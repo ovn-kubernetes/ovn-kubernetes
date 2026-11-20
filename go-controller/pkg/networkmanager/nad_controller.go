@@ -505,11 +505,16 @@ func (c *nadController) Interface() Interface {
 	return c
 }
 
-func (c *nadController) Start() error {
-	// initial sync here will ensure networks in network manager
-	// network manager will use this initial set of ensured networks to consider
-	// any other network stale on its own sync
-	err := controller.StartWithInitialSync(
+func (c *nadController) Start() (err error) {
+	defer func() {
+		if err != nil {
+			c.Stop()
+		}
+	}()
+
+	// Initial sync builds the NAD-to-network and primary NAD mappings needed by the trackers.
+	// Without dynamic filtering, this also establishes the full network inventory.
+	err = controller.StartWithInitialSync(
 		c.syncAll,
 		c.controller,
 	)
@@ -531,19 +536,26 @@ func (c *nadController) Start() error {
 	// The trackers warm up their cache and trigger OnNetworkRefChange to queue keys
 	// to NAD Controller.
 	if c.podTracker != nil {
-		if err := c.podTracker.Start(); err != nil {
+		if err = c.podTracker.Start(); err != nil {
 			return fmt.Errorf("failed to start pod tracker: %w", err)
 		}
 	}
 
 	if c.egressIPTracker != nil {
-		if err := c.egressIPTracker.Start(); err != nil {
+		if err = c.egressIPTracker.Start(); err != nil {
 			return fmt.Errorf("failed to start egress ip tracker: %w", err)
 		}
 	}
 
+	// Complete the dynamically filtered inventory before stale-network cleanup.
+	// The first pass ran before the trackers knew which networks were active.
+	if c.usesLocalDynamicFiltering() {
+		if err = c.syncAll(); err != nil {
+			return err
+		}
+	}
+
 	// NetworkController starts last and starts to process network keys to spin up network controllers.
-	// At this point the tracker cache's are warm to get accurate information for filtering.
 	err = c.networkController.Start()
 	if err != nil {
 		return err
