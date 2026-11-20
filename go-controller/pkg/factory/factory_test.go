@@ -13,6 +13,7 @@ import (
 
 	ipamclaimsapi "github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1"
 	ipamclaimsapifake "github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1/apis/clientset/versioned/fake"
+	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	nadsfake "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/fake"
 	ocpcloudnetworkapi "github.com/openshift/api/cloudnetwork/v1"
 	ocpconfigapi "github.com/openshift/api/config/v1"
@@ -46,6 +47,7 @@ import (
 	networkqos "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1"
 	networkqosfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1/apis/clientset/versioned/fake"
 	crdtypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"
+	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -350,6 +352,137 @@ func (c *handlerCalls) getUpdated() int {
 func (c *handlerCalls) getDeleted() int {
 	return int(atomic.LoadInt32(&c.deleted))
 }
+
+var _ = Describe("NAD informer", func() {
+	BeforeEach(func() {
+		Expect(config.PrepareTestConfig()).To(Succeed())
+		DeferCleanup(config.PrepareTestConfig)
+		config.OVNKubernetesFeature.EnableMultiNetwork = true
+	})
+
+	controllerFactory := func(client *util.OVNClientset) (*WatchFactory, error) {
+		return NewOVNKubeControllerWatchFactory(client.GetOVNKubeControllerClientset(), "test-node")
+	}
+	nodeFactory := func(client *util.OVNClientset) (*WatchFactory, error) {
+		return NewNodeWatchFactory(client.GetNodeClientset(), "test-node")
+	}
+	clusterManagerFactory := func(client *util.OVNClientset) (*WatchFactory, error) {
+		return NewClusterManagerWatchFactory(client.GetClusterManagerClientset())
+	}
+
+	tests := []struct {
+		name                  string
+		new                   func(*util.OVNClientset) (*WatchFactory, error)
+		enableSegmentation    bool
+		enableRouteAdv        bool
+		expectNADInformer     bool
+		expectRouteAdvIndexer bool
+	}{
+		{
+			name:               "controller without route advertisements",
+			new:                controllerFactory,
+			enableSegmentation: true,
+			expectNADInformer:  true,
+		},
+		{
+			name:                  "controller with route advertisements",
+			new:                   controllerFactory,
+			enableSegmentation:    true,
+			enableRouteAdv:        true,
+			expectNADInformer:     true,
+			expectRouteAdvIndexer: true,
+		},
+		{
+			name:               "node with segmentation",
+			new:                nodeFactory,
+			enableSegmentation: true,
+			expectNADInformer:  true,
+		},
+		{
+			name:                  "node with segmentation and route advertisements",
+			new:                   nodeFactory,
+			enableSegmentation:    true,
+			enableRouteAdv:        true,
+			expectNADInformer:     true,
+			expectRouteAdvIndexer: true,
+		},
+		{
+			name:                  "node with route advertisements and no segmentation",
+			new:                   nodeFactory,
+			enableRouteAdv:        true,
+			expectNADInformer:     true,
+			expectRouteAdvIndexer: true,
+		},
+		{
+			name:              "node without segmentation or route advertisements",
+			new:               nodeFactory,
+			expectNADInformer: false,
+		},
+		{
+			name:               "cluster manager without route advertisements",
+			new:                clusterManagerFactory,
+			enableSegmentation: true,
+			expectNADInformer:  true,
+		},
+		{
+			name:                  "cluster manager with route advertisements",
+			new:                   clusterManagerFactory,
+			enableSegmentation:    true,
+			enableRouteAdv:        true,
+			expectNADInformer:     true,
+			expectRouteAdvIndexer: true,
+		},
+	}
+
+	for _, test := range tests {
+		It("configures the NAD informer for "+test.name, func() {
+			config.OVNKubernetesFeature.EnableNetworkSegmentation = test.enableSegmentation
+			config.OVNKubernetesFeature.EnableRouteAdvertisements = test.enableRouteAdv
+			wf, err := test.new(util.GetOVNClientset())
+			Expect(err).NotTo(HaveOccurred(), "failed to create watch factory")
+			DeferCleanup(wf.Shutdown)
+			if !test.expectNADInformer {
+				Expect(wf.nadFactory).To(BeNil(), "NAD informer must not be created")
+				return
+			}
+
+			indexer := wf.NADInformer().Informer().GetIndexer()
+			_, hasRouteAdvIndex := indexer.GetIndexers()[routeAdvertisementsNADIndex]
+			Expect(hasRouteAdvIndex).To(Equal(test.expectRouteAdvIndexer), "unexpected route advertisements index registration")
+			objects, err := GetNADsForRouteAdvertisement(indexer, "ra1")
+			if !test.expectRouteAdvIndexer {
+				Expect(err).To(MatchError(`cannot look up NADs for route advertisement "ra1": route advertisements are disabled`))
+				Expect(objects).To(BeNil(), "disabled route advertisements must not return NADs")
+				return
+			}
+			Expect(err).NotTo(HaveOccurred(), "failed to look up NADs before any are added")
+			Expect(objects).To(BeEmpty(), "no NADs have been added")
+
+			nad := &nadapi.NetworkAttachmentDefinition{ObjectMeta: metav1.ObjectMeta{
+				Name: "nad", Namespace: "namespace",
+				Annotations: map[string]string{ovntypes.OvnRouteAdvertisementsKey: `["ra1", "ra2"]`},
+			}}
+			Expect(indexer.Add(nad)).To(Succeed(), "failed to add NAD to indexer")
+			for _, name := range []string{"ra1", "ra2"} {
+				// A NAD must be indexed under every advertisement it references.
+				objects, err := GetNADsForRouteAdvertisement(indexer, name)
+				Expect(err).NotTo(HaveOccurred(), "failed to look up NAD by advertisement %q", name)
+				Expect(objects).To(ConsistOf(nad), "NAD must be indexed by advertisement %q", name)
+			}
+
+			// The informer store maintains the index as annotations change.
+			updated := nad.DeepCopy()
+			updated.Annotations[ovntypes.OvnRouteAdvertisementsKey] = `["ra2"]`
+			Expect(indexer.Update(updated)).To(Succeed(), "failed to update NAD in indexer")
+			objects, err = GetNADsForRouteAdvertisement(indexer, "ra1")
+			Expect(err).NotTo(HaveOccurred(), "failed to look up NAD by advertisement %q", "ra1")
+			Expect(objects).To(BeEmpty(), "NAD must no longer be indexed by the removed advertisement")
+			objects, err = GetNADsForRouteAdvertisement(indexer, "ra2")
+			Expect(err).NotTo(HaveOccurred(), "failed to look up NAD by advertisement %q", "ra2")
+			Expect(objects).To(ConsistOf(updated), "NAD must still be indexed by advertisement %q", "ra2")
+		})
+	}
+})
 
 var _ = Describe("Watch Factory Operations", func() {
 	var (
