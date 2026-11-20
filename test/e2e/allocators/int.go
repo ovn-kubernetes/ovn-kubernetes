@@ -107,14 +107,24 @@ func DeallocateInt(f *framework.Framework, key string, index int) error {
 	ctx := context.Background()
 	client := f.ClientSet.CoreV1().ConfigMaps(configMapNamespace)
 
-	return retry.RetryOnConflict(allocatorBackoff, func() error {
+	retriable := func(err error) bool { return !apierrors.IsNotFound(err) }
+	err := retry.OnError(allocatorBackoff, retriable, func() error {
 		cm, err := client.Get(ctx, key, metav1.GetOptions{})
 		if err != nil {
 			return err
+		}
+
+		if _, allocated := cm.Data[strconv.Itoa(index)]; !allocated {
+			return nil
 		}
 
 		delete(cm.Data, strconv.Itoa(index))
 		_, err = client.Update(ctx, cm, metav1.UpdateOptions{})
 		return err
 	})
+	if apierrors.IsNotFound(err) {
+		// nothing was ever allocated under this key
+		return nil
+	}
+	return err
 }
