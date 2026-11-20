@@ -17,6 +17,7 @@ import (
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/allocator/pod"
 	nodecontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controllers/node"
+	podcontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controllers/pod"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/metrics/recorders"
@@ -97,9 +98,14 @@ func (h *LocalnetUserDefinedNetworkControllerEventHandler) RecordSuccessEvent(ob
 func (h *LocalnetUserDefinedNetworkControllerEventHandler) RecordErrorEvent(_ interface{}, _ string, _ error) {
 }
 
-// IsResourceScheduled returns true if the given object has been scheduled.
-// Only applied to pods for now. Returns true for all other types.
+// IsResourceScheduled lets the retry framework process unscheduled UDN pods.
+// Their reconcile path performs identity-based policy cleanup without trying
+// to create an LSP. A pending replacement may never be scheduled, so a cleanup
+// failure must remain retryable without waiting for a scheduling event.
 func (h *LocalnetUserDefinedNetworkControllerEventHandler) IsResourceScheduled(obj interface{}) bool {
+	if h.objType == factory.PodType {
+		return true
+	}
 	return h.baseHandler.isResourceScheduled(h.objType, obj)
 }
 
@@ -133,9 +139,6 @@ func (h *LocalnetUserDefinedNetworkControllerEventHandler) SyncFunc(ctx context.
 		syncFunc = h.syncFunc
 	} else {
 		switch h.objType {
-		case factory.PodType:
-			syncFunc = h.oc.syncPodsForUserDefinedNetwork
-
 		case factory.NamespaceType:
 			syncFunc = h.oc.syncNamespaces
 
@@ -171,6 +174,7 @@ func NewLocalnetUserDefinedNetworkController(
 	networkManager networkmanager.Interface,
 	addressSetManager *addresssetmanager.AddressSetManager,
 	nodeReconciler *nodecontroller.NodeController,
+	podReconciler *podcontroller.Controller,
 ) *LocalnetUserDefinedNetworkController {
 
 	stopChan := make(chan struct{})
@@ -203,10 +207,12 @@ func NewLocalnetUserDefinedNetworkController(
 					addressSetManager:            addressSetManager,
 					nodeReconciler:               nodeReconciler,
 					nodeAnnotationCache:          nodeAnnotationCache,
+					podReconciler:                podReconciler,
 				},
 			},
 		},
 	}
+	oc.podHandler = &oc.BaseUserDefinedNetworkController
 
 	if oc.allocatesPodAnnotation() {
 		oc.podAnnotationAllocator = pod.NewPodAnnotationAllocator(
@@ -237,6 +243,8 @@ func (oc *LocalnetUserDefinedNetworkController) Start(ctx context.Context) error
 		return err
 	}
 	if err := oc.run(ctx); err != nil {
+		oc.DeregisterPodHandler()
+		oc.DeregisterNodeHandler()
 		return err
 	}
 	return nil
@@ -296,8 +304,6 @@ func (oc *LocalnetUserDefinedNetworkController) Reconcile(ctx context.Context, n
 }
 
 func (oc *LocalnetUserDefinedNetworkController) initRetryFramework() {
-	oc.retryPods = oc.newRetryFramework(factory.PodType)
-
 	// For secondary networks, we don't have to watch namespace events if
 	// multi-network policy support is not enabled. We don't support
 	// multi-network policy for IPAM-less secondary networks either.

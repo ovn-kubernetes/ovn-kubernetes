@@ -21,9 +21,11 @@ import (
 	knet "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/apimachinery/pkg/util/sets"
 	utilnet "k8s.io/utils/net"
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
+	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 
 	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
@@ -1262,38 +1264,295 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 			gomega.Expect(app.Run([]string{app.Name})).To(gomega.Succeed())
 		})
 
+		setupPolicyPod := func() (*corev1.Pod, testPod, *knet.NetworkPolicy, *networkPolicy, *libovsdbops.DbObjectIDs) {
+			ginkgo.GinkgoHelper()
+			namespace1 := *ovntest.NewNamespace(namespaceName1)
+			nPodTest := getTestPod(namespace1.Name, nodeName)
+			networkPolicy := getPortNetworkPolicy(netPolicyName1, namespace1.Name, labelName, labelVal, portNum)
+			pod := ovntest.NewPod(nPodTest.namespace, nPodTest.podName, nPodTest.nodeName, nPodTest.podIP)
+			pod.Labels = map[string]string{labelName: labelVal}
+			setPodAnnotations(pod, nPodTest)
+
+			testNode := newNode(nodeName, "192.168.126.202/24")
+			testNode.Annotations["k8s.ovn.org/node-subnets"] = fmt.Sprintf("{\"default\":\"%s\"}", node1Subnet)
+			fakeOvn.startWithDBSetup(initialDB,
+				&corev1.NamespaceList{Items: []corev1.Namespace{namespace1}},
+				&corev1.NodeList{Items: []corev1.Node{*testNode}},
+				&corev1.PodList{Items: []corev1.Pod{*pod}},
+			)
+			nPodTest.populateLogicalSwitchCache(fakeOvn)
+			err := fakeOvn.controller.WatchNamespaces()
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "start the namespace watcher for the policy fixture")
+
+			np := NewNetworkPolicy(networkPolicy)
+			np.localPodSelector, err = metav1.LabelSelectorAsSelector(&networkPolicy.Spec.PodSelector)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "parse the policy fixture pod selector")
+			pgDbIDs := fakeOvn.controller.getNetworkPolicyPortGroupDbIDs(networkPolicy.Namespace, networkPolicy.Name)
+			np.portGroupName = libovsdbutil.GetPortGroupName(pgDbIDs)
+			gomega.Expect(fakeOvn.controller.addPolicyToDefaultPortGroups(np, &libovsdbutil.ACLLoggingLevels{})).To(gomega.Succeed(), "create the policy fixture default-deny groups")
+			gomega.Expect(libovsdbops.CreateOrUpdatePortGroups(fakeOvn.controller.nbClient,
+				libovsdbutil.BuildPortGroup(pgDbIDs, nil, nil))).To(gomega.Succeed(), "create the policy fixture port group")
+			fakeOvn.controller.networkPolicies.Store(np.getKey(), np)
+			fakeOvn.controller.addNetworkPolicyToNamespaceIndex(np)
+			return pod, nPodTest, networkPolicy, np, pgDbIDs
+		}
+
+		ginkgo.DescribeTable("does not publish a pod port without its policy protection", func(missingGroup string) {
+			app.Action = func(*cli.Context) error {
+				pod, nPodTest, _, np, _ := setupPolicyPod()
+				groupName := np.portGroupName
+				if missingGroup == "ingress" {
+					groupName = fakeOvn.controller.defaultDenyPortGroupName(pod.Namespace, libovsdbutil.ACLIngress)
+				} else if missingGroup == "egress" {
+					groupName = fakeOvn.controller.defaultDenyPortGroupName(pod.Namespace, libovsdbutil.ACLEgress)
+				}
+				group, err := libovsdbops.GetPortGroup(fakeOvn.nbClient, &nbdb.PortGroup{Name: groupName})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "read protection group %s before removing it from the fixture", groupName)
+				gomega.Expect(libovsdbops.DeletePortGroups(fakeOvn.nbClient, groupName)).To(gomega.Succeed(), "remove the selected protection group before port creation")
+				gomega.Eventually(func() error {
+					_, err := libovsdbops.GetPortGroup(fakeOvn.nbClient, &nbdb.PortGroup{Name: groupName})
+					return err
+				}, 2*time.Second).Should(gomega.MatchError(libovsdbclient.ErrNotFound), "wait for protection group %s to leave NBDB before attempting pod creation", groupName)
+
+				_, err = fakeOvn.controller.ReconcilePod(context.Background(), nil, pod, nil)
+				gomega.Expect(err).To(gomega.HaveOccurred(), "reject port creation while a protection group is missing")
+				_, err = libovsdbops.GetLogicalSwitchPort(fakeOvn.nbClient, &nbdb.LogicalSwitchPort{Name: nPodTest.portName})
+				gomega.Expect(err).To(gomega.MatchError(libovsdbclient.ErrNotFound), "failed policy setup must not leave an active port")
+				_, err = fakeOvn.controller.logicalPortCache.get(pod, types.DefaultNetworkName)
+				gomega.Expect(err).To(gomega.HaveOccurred(), "failed port setup must not publish cache state")
+				gomega.Expect(np.getLocalPortsForPod(pod)).To(gomega.BeEmpty(), "missing protection groups must prevent recording pod policy membership")
+				sharedPGs, ok := fakeOvn.controller.sharedNetpolPortGroups.Load(pod.Namespace)
+				gomega.Expect(ok).To(gomega.BeTrue(), "default-deny bookkeeping must remain available after failed port setup")
+				gomega.Expect(sharedPGs.ingressPortToPolicies).To(gomega.BeEmpty(), "failed port setup must not publish ingress policy references")
+				gomega.Expect(sharedPGs.egressPortToPolicies).To(gomega.BeEmpty(), "failed port setup must not publish egress policy references")
+
+				if missingGroup == "policy" {
+					group.UUID = ""
+					gomega.Expect(libovsdbops.CreateOrUpdatePortGroups(fakeOvn.nbClient, group)).To(gomega.Succeed(), "restore the missing protection group")
+				} else {
+					gomega.Expect(fakeOvn.controller.createDefaultDenyPGAndACLs(pod.Namespace, np.name,
+						&libovsdbutil.ACLLoggingLevels{})).To(gomega.Succeed(), "restore the default-deny ACLs")
+				}
+				// Check policy protection immediately after port creation,
+				// before later reconciliation could repair missing membership.
+				published := false
+				fakeOvn.controller.onLogicalPortCacheAdd = func(pod *corev1.Pod, nadKey string) {
+					published = true
+					info, err := fakeOvn.controller.logicalPortCache.get(pod, nadKey)
+					gomega.Expect(err).NotTo(gomega.HaveOccurred(), "read the port cache at publication time")
+					for _, name := range []string{np.portGroupName,
+						fakeOvn.controller.defaultDenyPortGroupName(pod.Namespace, libovsdbutil.ACLIngress),
+						fakeOvn.controller.defaultDenyPortGroupName(pod.Namespace, libovsdbutil.ACLEgress)} {
+						gomega.Expect(PortGroupHasPorts(fakeOvn.nbClient, name, []string{info.uuid})).To(gomega.BeTrue(),
+							"port must already belong to %s when published", name)
+					}
+					gomega.Expect(np.getLocalPortsForPod(pod)).To(gomega.Equal(map[string]string{info.name: info.uuid}), "policy bookkeeping must be committed before port-cache publication")
+					// The outer membership pass must not repeat the additions that
+					// were just committed atomically with the port.
+					fakeOvn.controller.nbClient = &failPodPolicyCleanupClient{Client: fakeOvn.nbClient}
+				}
+				_, reconcileErr := fakeOvn.controller.ReconcilePod(context.Background(), nil, pod, nil)
+				gomega.Expect(reconcileErr).NotTo(gomega.HaveOccurred(), "retry pod creation after policy protection is restored")
+				gomega.Expect(published).To(gomega.BeTrue(), "successful retry must publish the protected port in the cache")
+				return nil
+			}
+			gomega.Expect(app.Run([]string{app.Name})).To(gomega.Succeed(), "run the atomic port-and-policy protection scenario")
+		},
+			ginkgo.Entry("when its policy group is unavailable", "policy"),
+			ginkgo.Entry("when its ingress default-deny group is unavailable", "ingress"),
+			ginkgo.Entry("when its egress default-deny group is unavailable", "egress"),
+		)
+
+		ginkgo.It("retains policy protection when logical-port teardown fails", func() {
+			app.Action = func(*cli.Context) error {
+				pod, _, _, np, _ := setupPolicyPod()
+				oc := fakeOvn.controller
+				_, reconcileErr := oc.ReconcilePod(context.Background(), nil, pod, nil)
+				gomega.Expect(reconcileErr).To(gomega.Succeed())
+				state := oc.GetPodState(pod)
+				portInfo := state.(*lpInfo)
+				oc.nbClient = &podCleanupFailureClient{Client: fakeOvn.nbClient, failDeleteTable: nbdb.LogicalSwitchPortTable}
+				_, reconcileErr = oc.ReconcilePod(context.Background(), pod, nil, state)
+				gomega.Expect(reconcileErr).To(gomega.MatchError(gomega.ContainSubstring("cleanup failure")))
+				_, err := libovsdbops.GetLogicalSwitchPort(fakeOvn.nbClient, &nbdb.LogicalSwitchPort{UUID: portInfo.uuid})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "the failed deletion must leave a live port")
+				groups := []string{np.portGroupName,
+					oc.defaultDenyPortGroupName(pod.Namespace, libovsdbutil.ACLIngress),
+					oc.defaultDenyPortGroupName(pod.Namespace, libovsdbutil.ACLEgress)}
+				for _, group := range groups {
+					gomega.Expect(PortGroupHasPorts(fakeOvn.nbClient, group, []string{portInfo.uuid})).To(gomega.BeTrue(), "failed teardown must preserve membership in %s", group)
+				}
+				gomega.Expect(np.getLocalPortsForPod(pod)).To(gomega.Equal(map[string]string{portInfo.name: portInfo.uuid}))
+				oc.nbClient = fakeOvn.nbClient
+				_, reconcileErr = oc.ReconcilePod(context.Background(), pod, nil, state)
+				gomega.Expect(reconcileErr).To(gomega.Succeed())
+				gomega.Expect(np.getLocalPortsForPod(pod)).To(gomega.BeEmpty())
+				for _, group := range groups {
+					pg, err := libovsdbops.GetPortGroup(fakeOvn.nbClient, &nbdb.PortGroup{Name: group})
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+					gomega.Expect(pg.Ports).To(gomega.BeEmpty())
+				}
+				return nil
+			}
+			gomega.Expect(app.Run([]string{app.Name})).To(gomega.Succeed())
+		})
+
+		ginkgo.It("does not retain port or policy state after the combined transaction fails", func() {
+			app.Action = func(*cli.Context) error {
+				pod, nPodTest, _, np, _ := setupPolicyPod()
+				ops, lsp, annotation, _, err := fakeOvn.controller.addLogicalPortToNetwork(
+					context.Background(), pod, types.DefaultNetworkName, nil, nil)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "build pod port operations before aborting the combined transaction")
+				failedOps := append(append([]ovsdb.Operation{}, ops...), ovsdb.Operation{Op: ovsdb.OperationAbort})
+				_, err = fakeOvn.controller.transactPodLogicalPort(pod, types.DefaultNetworkName, pod.Spec.NodeName, lsp, annotation, failedOps)
+				gomega.Expect(err).To(gomega.HaveOccurred(), "the server must abort the combined transaction")
+				_, err = libovsdbops.GetLogicalSwitchPort(fakeOvn.nbClient, &nbdb.LogicalSwitchPort{Name: nPodTest.portName})
+				gomega.Expect(err).To(gomega.MatchError(libovsdbclient.ErrNotFound), "an aborted combined transaction must not leave pod port %s in NBDB", nPodTest.portName)
+				_, err = fakeOvn.controller.logicalPortCache.get(pod, types.DefaultNetworkName)
+				gomega.Expect(err).To(gomega.HaveOccurred(), "an aborted transaction must not publish port-cache state")
+				gomega.Expect(np.getLocalPortsForPod(pod)).To(gomega.BeEmpty(), "an aborted transaction must not record pod policy membership")
+				sharedPGs, ok := fakeOvn.controller.sharedNetpolPortGroups.Load(pod.Namespace)
+				gomega.Expect(ok).To(gomega.BeTrue(), "default-deny bookkeeping must remain available after transaction abort")
+				gomega.Expect(sharedPGs.ingressPortToPolicies).To(gomega.BeEmpty(), "an aborted transaction must not publish ingress policy references")
+				gomega.Expect(sharedPGs.egressPortToPolicies).To(gomega.BeEmpty(), "an aborted transaction must not publish egress policy references")
+				gomega.Expect(sharedPGs.ingressPortToAssertedUUID).To(gomega.BeEmpty(), "an aborted transaction must not record an asserted ingress UUID")
+				gomega.Expect(sharedPGs.egressPortToAssertedUUID).To(gomega.BeEmpty(), "an aborted transaction must not record an asserted egress UUID")
+
+				complete, err := fakeOvn.controller.transactPodLogicalPort(pod, types.DefaultNetworkName,
+					pod.Spec.NodeName, lsp, annotation, ops)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "retry the combined port-and-policy transaction after abort")
+				gomega.Expect(complete).To(gomega.BeTrue())
+				gomega.Expect(ovsdb.IsValidUUID(lsp.UUID)).To(gomega.BeTrue(), "successful retry must replace the temporary UUID with the committed port UUID")
+				gomega.Expect(np.getLocalPortsForPod(pod)).To(gomega.Equal(map[string]string{lsp.Name: lsp.UUID}), "successful retry must record membership using the committed port UUID")
+				gomega.Expect(sharedPGs.ingressPortToAssertedUUID[lsp.Name]).To(gomega.Equal(lsp.UUID), "successful retry must record the committed ingress port UUID")
+				gomega.Expect(sharedPGs.egressPortToAssertedUUID[lsp.Name]).To(gomega.Equal(lsp.UUID), "successful retry must record the committed egress port UUID")
+				return nil
+			}
+			gomega.Expect(app.Run([]string{app.Name})).To(gomega.Succeed(), "run the aborted port-and-policy transaction scenario")
+		})
+
+		ginkgo.It("reconciles changed selectors atomically during a pod setup retry", func() {
+			app.Action = func(*cli.Context) error {
+				pod, _, _, previousPolicy, _ := setupPolicyPod()
+				oc := fakeOvn.controller
+				_, reconcileErr := oc.ReconcilePod(context.Background(), nil, pod, nil)
+				gomega.Expect(reconcileErr).To(gomega.Succeed())
+				port, err := oc.logicalPortCache.get(pod, types.DefaultNetworkName)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				nextPolicyObject := getPortNetworkPolicy("next-policy", pod.Namespace, labelName, "next", portNum)
+				nextPolicy, err := oc.createNetworkPolicy(nextPolicyObject, &libovsdbutil.ACLLoggingLevels{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				shared, ok := oc.sharedNetpolPortGroups.Load(pod.Namespace)
+				gomega.Expect(ok).To(gomega.BeTrue())
+
+				pod = pod.DeepCopy()
+				pod.Labels[labelName] = "next"
+				oc.nbClient = &failPodPolicyCleanupClient{Client: fakeOvn.nbClient}
+				_, reconcileErr = oc.ReconcilePod(context.Background(), nil, pod, nil)
+				gomega.Expect(reconcileErr).To(
+					gomega.MatchError(gomega.ContainSubstring("injected policy cleanup failure")))
+				gomega.Expect(previousPolicy.getLocalPortsForPod(pod)).To(gomega.Equal(map[string]string{port.name: port.uuid}))
+				gomega.Expect(nextPolicy.getLocalPortsForPod(pod)).To(gomega.BeEmpty())
+				gomega.Expect(shared.ingressPortToPolicies[port.name]).To(gomega.Equal(sets.New(previousPolicy.getKey())))
+				gomega.Expect(shared.egressPortToPolicies[port.name]).To(gomega.Equal(sets.New(previousPolicy.getKey())))
+				gomega.Expect(shared.ingressPortToAssertedUUID[port.name]).To(gomega.Equal(port.uuid))
+				gomega.Expect(shared.egressPortToAssertedUUID[port.name]).To(gomega.Equal(port.uuid))
+
+				oc.nbClient = fakeOvn.nbClient
+				published := false
+				oc.onLogicalPortCacheAdd = func(pod *corev1.Pod, _ string) {
+					published = true
+					oldGroup, err := libovsdbops.GetPortGroup(oc.nbClient, &nbdb.PortGroup{Name: previousPolicy.portGroupName})
+					gomega.Expect(err).NotTo(gomega.HaveOccurred())
+					gomega.Expect(oldGroup.Ports).To(gomega.BeEmpty(), "old membership must be removed before publishing the port")
+					gomega.Expect(PortGroupHasPorts(oc.nbClient, nextPolicy.portGroupName, []string{port.uuid})).To(gomega.BeTrue())
+					gomega.Expect(previousPolicy.getLocalPortsForPod(pod)).To(gomega.BeEmpty())
+					gomega.Expect(nextPolicy.getLocalPortsForPod(pod)).To(gomega.Equal(map[string]string{port.name: port.uuid}))
+					for _, direction := range []libovsdbutil.ACLDirection{libovsdbutil.ACLIngress, libovsdbutil.ACLEgress} {
+						gomega.Expect(PortGroupHasPorts(oc.nbClient, oc.defaultDenyPortGroupName(pod.Namespace, direction), []string{port.uuid})).To(gomega.BeTrue())
+					}
+				}
+				_, reconcileErr = oc.ReconcilePod(context.Background(), nil, pod, nil)
+				gomega.Expect(reconcileErr).To(gomega.Succeed())
+				gomega.Expect(published).To(gomega.BeTrue())
+				gomega.Expect(shared.ingressPortToPolicies[port.name]).To(gomega.Equal(sets.New(nextPolicy.getKey())))
+				gomega.Expect(shared.egressPortToPolicies[port.name]).To(gomega.Equal(sets.New(nextPolicy.getKey())))
+				return nil
+			}
+			gomega.Expect(app.Run([]string{app.Name})).To(gomega.Succeed())
+		})
+
+		ginkgo.It("repairs missing policy membership during forced pod setup", func() {
+			app.Action = func(*cli.Context) error {
+				pod, _, _, np, _ := setupPolicyPod()
+				oc := fakeOvn.controller
+				_, reconcileErr := oc.ReconcilePod(context.Background(), nil, pod, nil)
+				gomega.Expect(reconcileErr).To(gomega.Succeed())
+				port, err := oc.logicalPortCache.get(pod, types.DefaultNetworkName)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				groups := []string{np.portGroupName,
+					oc.defaultDenyPortGroupName(pod.Namespace, libovsdbutil.ACLIngress),
+					oc.defaultDenyPortGroupName(pod.Namespace, libovsdbutil.ACLEgress)}
+				for _, group := range groups {
+					gomega.Expect(libovsdbops.DeletePortsFromPortGroup(oc.nbClient, group, port.uuid)).To(gomega.Succeed())
+					gomega.Eventually(func() bool { return PortGroupHasPorts(oc.nbClient, group, []string{port.uuid}) }).Should(gomega.BeFalse())
+				}
+				gomega.Expect(np.getLocalPortsForPod(pod)).To(gomega.Equal(map[string]string{port.name: port.uuid}))
+
+				// The recorded UUID still matches, but setup must check the actual groups.
+				complete, err := oc.addLogicalPort(context.Background(), pod)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(complete).To(gomega.BeTrue())
+				for _, group := range groups {
+					gomega.Expect(PortGroupHasPorts(oc.nbClient, group, []string{port.uuid})).To(gomega.BeTrue())
+				}
+				return nil
+			}
+			gomega.Expect(app.Run([]string{app.Name})).To(gomega.Succeed())
+		})
+
+		ginkgo.DescribeTable("reconciles replacement membership when forced setup creates no port", func(hostNetwork bool) {
+			app.Action = func(*cli.Context) error {
+				pod, _, _, np, _ := setupPolicyPod()
+				oc := fakeOvn.controller
+				_, reconcileErr := oc.ReconcilePod(context.Background(), nil, pod, nil)
+				gomega.Expect(reconcileErr).To(gomega.Succeed())
+				port, err := oc.logicalPortCache.get(pod, types.DefaultNetworkName)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(libovsdbops.DeleteLogicalSwitchPorts(oc.nbClient,
+					&nbdb.LogicalSwitch{Name: port.logicalSwitch}, &nbdb.LogicalSwitchPort{UUID: port.uuid})).To(gomega.Succeed())
+
+				replacement := pod.DeepCopy()
+				replacement.UID = "replacement-uid"
+				replacement.Spec.HostNetwork = hostNetwork
+				if !hostNetwork {
+					replacement.Spec.NodeName = ""
+				}
+				complete, err := oc.ensurePod(context.Background(), replacement, true)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(complete).To(gomega.BeFalse(), "skipped setup must leave membership work to the caller")
+				gomega.Expect(np.getLocalPortsForPod(pod)).NotTo(gomega.BeEmpty())
+				_, reconcileErr = oc.ReconcilePod(context.Background(), nil, replacement, nil)
+				gomega.Expect(reconcileErr).To(gomega.Succeed())
+				gomega.Expect(np.getLocalPortsForPod(pod)).To(gomega.BeEmpty())
+				shared, ok := oc.sharedNetpolPortGroups.Load(pod.Namespace)
+				gomega.Expect(ok).To(gomega.BeTrue())
+				gomega.Expect(shared.ingressPortToPolicies).To(gomega.BeEmpty())
+				gomega.Expect(shared.egressPortToPolicies).To(gomega.BeEmpty())
+				return nil
+			}
+			gomega.Expect(app.Run([]string{app.Name})).To(gomega.Succeed())
+		},
+			ginkgo.Entry("for a host-network replacement", true),
+			ginkgo.Entry("for an unscheduled replacement", false),
+		)
+
 		ginkgo.It("pod reconcile updates existing network policy local pod membership", func() {
 			app.Action = func(*cli.Context) error {
-				namespace1 := *ovntest.NewNamespace(namespaceName1)
-				nPodTest := getTestPod(namespace1.Name, nodeName)
-				networkPolicy := getPortNetworkPolicy(netPolicyName1, namespace1.Name, labelName, labelVal, portNum)
-				pod := ovntest.NewPod(nPodTest.namespace, nPodTest.podName, nPodTest.nodeName, nPodTest.podIP)
-				pod.Labels = map[string]string{labelName: labelVal}
-				setPodAnnotations(pod, nPodTest)
+				pod, nPodTest, networkPolicy, _, pgDbIDs := setupPolicyPod()
 
-				testNode := newNode(nodeName, "192.168.126.202/24")
-				testNode.Annotations["k8s.ovn.org/node-subnets"] = fmt.Sprintf("{\"default\":\"%s\"}", node1Subnet)
-				fakeOvn.startWithDBSetup(initialDB,
-					&corev1.NamespaceList{Items: []corev1.Namespace{namespace1}},
-					&corev1.NodeList{Items: []corev1.Node{*testNode}},
-					&corev1.PodList{Items: []corev1.Pod{*pod}},
-				)
-				nPodTest.populateLogicalSwitchCache(fakeOvn)
-				err := fakeOvn.controller.WatchNamespaces()
-				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-				np := NewNetworkPolicy(networkPolicy)
-				np.localPodSelector, err = metav1.LabelSelectorAsSelector(&networkPolicy.Spec.PodSelector)
-				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				pgDbIDs := fakeOvn.controller.getNetworkPolicyPortGroupDbIDs(networkPolicy.Namespace, networkPolicy.Name)
-				np.portGroupName = libovsdbutil.GetPortGroupName(pgDbIDs)
-				gomega.Expect(fakeOvn.controller.addPolicyToDefaultPortGroups(np, &libovsdbutil.ACLLoggingLevels{})).To(gomega.Succeed())
-				gomega.Expect(libovsdbops.CreateOrUpdatePortGroups(fakeOvn.controller.nbClient,
-					libovsdbutil.BuildPortGroup(pgDbIDs, nil, nil))).To(gomega.Succeed())
-				fakeOvn.controller.networkPolicies.Store(np.getKey(), np)
-				fakeOvn.controller.addNetworkPolicyToNamespaceIndex(np)
-
-				gomega.Expect(fakeOvn.controller.reconcilePod(context.Background(), nil, pod, false)).To(gomega.Succeed())
+				_, reconcileErr := fakeOvn.controller.ReconcilePod(context.Background(), nil, pod, nil)
+				gomega.Expect(reconcileErr).NotTo(gomega.HaveOccurred(), "reconcile initial pod networking and policy membership")
 
 				dataParams := newNetpolDataParams(networkPolicy).
 					withLocalPortUUIDs(nPodTest.portUUID)
@@ -1306,18 +1565,18 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 				)
 				policyPG.UUID = policyPG.Name + "-UUID"
 				expectedData = append(expectedData, policyPG)
-				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedData...))
+				gomega.Eventually(fakeOvn.nbClient, 2*time.Second).Should(libovsdbtest.HaveData(expectedData...), "initial reconciliation must add the selected pod to policy and default-deny groups")
 
-				oldPod := pod.DeepCopy()
 				pod.Labels = map[string]string{labelName: "does-not-match"}
-				gomega.Expect(fakeOvn.controller.reconcilePod(context.Background(), oldPod, pod, false)).To(gomega.Succeed())
+				_, reconcileErr = fakeOvn.controller.ReconcilePod(context.Background(), nil, pod, nil)
+				gomega.Expect(reconcileErr).NotTo(gomega.HaveOccurred(), "reconcile the pod after its labels stop matching the policy")
 
 				expectedData = getUpdatedInitialDB([]testPod{nPodTest})
 				expectedData = append(expectedData, getDefaultDenyData(newNetpolDataParams(networkPolicy))...)
 				policyPG = libovsdbutil.BuildPortGroup(pgDbIDs, nil, nil)
 				policyPG.UUID = policyPG.Name + "-UUID"
 				expectedData = append(expectedData, policyPG)
-				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedData...))
+				gomega.Eventually(fakeOvn.nbClient, 2*time.Second).Should(libovsdbtest.HaveData(expectedData...), "changing pod labels must remove membership from policy and default-deny groups")
 
 				return nil
 			}
@@ -1325,38 +1584,78 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 			gomega.Expect(app.Run([]string{app.Name})).To(gomega.Succeed())
 		})
 
+		ginkgo.It("restores exact default-deny references and asserted UUIDs when add or delete OVN operations fail", func() {
+			app.Action = func(*cli.Context) error {
+				fakeOvn.startWithDBSetup(initialDB)
+
+				namespace := namespaceName1
+				portName := util.GetLogicalPortName(namespace, "pod")
+				absentPortName := util.GetLogicalPortName(namespace, "absent-pod")
+				freshPortUUID := "fresh-port-uuid"
+				stalePortUUID := "stale-port-uuid"
+				absentPortUUID := "absent-port-uuid"
+				policy1 := NewNetworkPolicy(getPortNetworkPolicy(netPolicyName1, namespace, labelName, labelVal, portNum))
+				policy2 := NewNetworkPolicy(getPortNetworkPolicy(netPolicyName2, namespace, labelName, labelVal, portNum+1))
+				expectedPolicyKeys := sets.New(policy1.getKey(), policy2.getKey())
+				sharedPGs := &defaultDenyPortGroups{
+					ingressPortToPolicies:     map[string]sets.Set[string]{portName: expectedPolicyKeys.Clone()},
+					egressPortToPolicies:      map[string]sets.Set[string]{portName: expectedPolicyKeys.Clone()},
+					ingressPortToAssertedUUID: map[string]string{portName: freshPortUUID},
+					egressPortToAssertedUUID:  map[string]string{portName: freshPortUUID},
+					policies: map[string]bool{
+						policy1.getKey(): true,
+						policy2.getKey(): true,
+					},
+				}
+				fakeOvn.controller.sharedNetpolPortGroups.Store(namespace, sharedPGs)
+
+				expectExactState := func() {
+					gomega.Expect(sharedPGs.ingressPortToPolicies).To(gomega.Equal(
+						map[string]sets.Set[string]{portName: expectedPolicyKeys.Clone()}), "failed OVN operations must restore the exact ingress policy references")
+					gomega.Expect(sharedPGs.egressPortToPolicies).To(gomega.Equal(
+						map[string]sets.Set[string]{portName: expectedPolicyKeys.Clone()}), "failed OVN operations must restore the exact egress policy references")
+					gomega.Expect(sharedPGs.ingressPortToAssertedUUID).To(gomega.Equal(
+						map[string]string{portName: freshPortUUID}), "failed OVN operations must restore the asserted ingress UUID")
+					gomega.Expect(sharedPGs.egressPortToAssertedUUID).To(gomega.Equal(
+						map[string]string{portName: freshPortUUID}), "failed OVN operations must restore the asserted egress UUID")
+				}
+
+				invalidOps := []ovsdb.Operation{{
+					Op:    ovsdb.OperationDelete,
+					Table: "not-a-real-table",
+				}}
+
+				// An idempotent add already owns the reference. Inverse rollback
+				// would incorrectly remove that pre-existing policy reference.
+				err := fakeOvn.controller.denyPGAddPorts(policy1, map[string]string{
+					portName:       freshPortUUID,
+					absentPortName: absentPortUUID,
+				}, invalidOps)
+				gomega.Expect(err).To(gomega.HaveOccurred(), "reject invalid default-deny add operations")
+				expectExactState()
+
+				// This policy's recorded UUID is stale while another policy keeps
+				// the current UUID asserted. Inverse rollback would overwrite the
+				// current asserted UUID with the stale value.
+				err = fakeOvn.controller.denyPGDeletePorts(policy1, map[string]string{
+					portName:       stalePortUUID,
+					absentPortName: absentPortUUID,
+				}, false, invalidOps)
+				gomega.Expect(err).To(gomega.HaveOccurred(), "reject invalid default-deny delete operations")
+				expectExactState()
+
+				return nil
+			}
+
+			gomega.Expect(app.Run([]string{app.Name})).To(gomega.Succeed(), "run the policy membership reconciliation scenario")
+		})
+
 		ginkgo.It("pod policy membership cleanup succeeds after logical port delete", func() {
 			app.Action = func(*cli.Context) error {
-				namespace1 := *ovntest.NewNamespace(namespaceName1)
-				nPodTest := getTestPod(namespace1.Name, nodeName)
-				networkPolicy := getPortNetworkPolicy(netPolicyName1, namespace1.Name, labelName, labelVal, portNum)
-				pod := ovntest.NewPod(nPodTest.namespace, nPodTest.podName, nPodTest.nodeName, nPodTest.podIP)
-				pod.Labels = map[string]string{labelName: labelVal}
-				setPodAnnotations(pod, nPodTest)
+				pod, nPodTest, networkPolicy, np, pgDbIDs := setupPolicyPod()
 
-				testNode := newNode(nodeName, "192.168.126.202/24")
-				testNode.Annotations["k8s.ovn.org/node-subnets"] = fmt.Sprintf("{\"default\":\"%s\"}", node1Subnet)
-				fakeOvn.startWithDBSetup(initialDB,
-					&corev1.NamespaceList{Items: []corev1.Namespace{namespace1}},
-					&corev1.NodeList{Items: []corev1.Node{*testNode}},
-					&corev1.PodList{Items: []corev1.Pod{*pod}},
-				)
-				nPodTest.populateLogicalSwitchCache(fakeOvn)
-				err := fakeOvn.controller.WatchNamespaces()
-				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-
-				np := NewNetworkPolicy(networkPolicy)
-				np.localPodSelector, err = metav1.LabelSelectorAsSelector(&networkPolicy.Spec.PodSelector)
-				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				pgDbIDs := fakeOvn.controller.getNetworkPolicyPortGroupDbIDs(networkPolicy.Namespace, networkPolicy.Name)
-				np.portGroupName = libovsdbutil.GetPortGroupName(pgDbIDs)
-				gomega.Expect(fakeOvn.controller.addPolicyToDefaultPortGroups(np, &libovsdbutil.ACLLoggingLevels{})).To(gomega.Succeed())
-				gomega.Expect(libovsdbops.CreateOrUpdatePortGroups(fakeOvn.controller.nbClient,
-					libovsdbutil.BuildPortGroup(pgDbIDs, nil, nil))).To(gomega.Succeed())
-				fakeOvn.controller.networkPolicies.Store(np.getKey(), np)
-				fakeOvn.controller.addNetworkPolicyToNamespaceIndex(np)
-
-				gomega.Expect(fakeOvn.controller.reconcilePod(context.Background(), nil, pod, false)).To(gomega.Succeed())
+				_, reconcileErr := fakeOvn.controller.ReconcilePod(context.Background(), nil, pod, nil)
+				gomega.Expect(reconcileErr).NotTo(gomega.HaveOccurred(), "reconcile initial pod networking and policy membership")
 				_, loaded := np.localPods.Load(nPodTest.portName)
 				gomega.Expect(loaded).To(gomega.BeTrue())
 
@@ -1373,12 +1672,149 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 				policyPG := libovsdbutil.BuildPortGroup(pgDbIDs, nil, nil)
 				policyPG.UUID = policyPG.Name + "-UUID"
 				expectedData = append(expectedData, policyPG)
-				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedData...))
+				gomega.Eventually(fakeOvn.nbClient, 2*time.Second).Should(libovsdbtest.HaveData(expectedData...), "membership cleanup after port deletion must empty policy and default-deny groups")
 
 				return nil
 			}
 
-			gomega.Expect(app.Run([]string{app.Name})).To(gomega.Succeed())
+			gomega.Expect(app.Run([]string{app.Name})).To(gomega.Succeed(), "run the policy membership reconciliation scenario")
+		})
+
+		ginkgo.It("pod policy reconcile preserves recorded membership while its logical port cache entry is transiently unavailable", func() {
+			app.Action = func(*cli.Context) error {
+				pod, _, networkPolicy, np, _ := setupPolicyPod()
+
+				_, reconcileErr := fakeOvn.controller.ReconcilePod(context.Background(), nil, pod, nil)
+				gomega.Expect(reconcileErr).NotTo(gomega.HaveOccurred(), "reconcile initial pod networking and policy membership")
+				appliedPortInfo, err := fakeOvn.controller.logicalPortCache.get(pod, types.DefaultNetworkName)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "read the applied port before dropping its cache entry")
+				expectedMembership := map[string]string{appliedPortInfo.name: appliedPortInfo.uuid}
+				gomega.Expect(np.getLocalPortsForPod(pod)).To(gomega.Equal(expectedMembership), "record initial policy membership before removing the port cache entry")
+
+				// Cache expiration is a retryable observation, not evidence that this
+				// selected pod should be removed from policy port groups.
+				fakeOvn.controller.logicalPortCache.remove(pod, types.DefaultNetworkName)
+				err = fakeOvn.controller.reconcileNetworkPolicyPortGroups(pod)
+				gomega.Expect(err).To(gomega.HaveOccurred(), "retry policy reconciliation while the applied port cache entry is unavailable")
+				gomega.Expect(err.Error()).To(gomega.ContainSubstring("scheduled for removal"), "policy reconciliation must report that the cache entry is pending removal")
+				gomega.Expect(np.getLocalPortsForPod(pod)).To(gomega.Equal(expectedMembership), "a transient cache gap must preserve recorded policy membership")
+
+				for _, pgName := range []string{
+					np.portGroupName,
+					fakeOvn.controller.defaultDenyPortGroupName(networkPolicy.Namespace, libovsdbutil.ACLIngress),
+					fakeOvn.controller.defaultDenyPortGroupName(networkPolicy.Namespace, libovsdbutil.ACLEgress),
+				} {
+					gomega.Expect(PortGroupHasPorts(fakeOvn.controller.nbClient, pgName, []string{appliedPortInfo.uuid})).To(gomega.BeTrue(), "port group %s must retain the applied port during a transient cache gap", pgName)
+				}
+
+				return nil
+			}
+
+			gomega.Expect(app.Run([]string{app.Name})).To(gomega.Succeed(), "run the policy membership reconciliation scenario")
+		})
+
+		ginkgo.It("pod reconcile replaces recorded policy membership of a previous port incarnation", func() {
+			app.Action = func(*cli.Context) error {
+				pod, nPodTest, networkPolicy, np, pgDbIDs := setupPolicyPod()
+
+				_, reconcileErr := fakeOvn.controller.ReconcilePod(context.Background(), nil, pod, nil)
+				gomega.Expect(reconcileErr).NotTo(gomega.HaveOccurred(), "reconcile initial pod networking and policy membership")
+				loadedPortUUID, loaded := np.localPods.Load(nPodTest.portName)
+				gomega.Expect(loaded).To(gomega.BeTrue(), "initial reconciliation must record the current port in the policy index")
+				freshPortUUID := loadedPortUUID.(string)
+
+				// Simulate recorded membership lagging a re-created LSP.
+				np.setLocalPortsForPod(pod, map[string]string{nPodTest.portName: "stale-port-uuid"})
+				for _, pgName := range []string{
+					np.portGroupName,
+					fakeOvn.controller.defaultDenyPortGroupName(networkPolicy.Namespace, libovsdbutil.ACLIngress),
+					fakeOvn.controller.defaultDenyPortGroupName(networkPolicy.Namespace, libovsdbutil.ACLEgress),
+				} {
+					gomega.Expect(libovsdbops.DeletePortsFromPortGroup(fakeOvn.controller.nbClient, pgName, freshPortUUID)).To(gomega.Succeed(), "remove the policy membership to simulate missing applied state")
+				}
+
+				// Reconcile must replace the stale record and reassert PG membership.
+				_, reconcileErr = fakeOvn.controller.ReconcilePod(context.Background(), pod, pod, nil)
+				gomega.Expect(reconcileErr).NotTo(gomega.HaveOccurred(), "restore missing membership for the existing pod port")
+				loadedPortUUID, loaded = np.localPods.Load(nPodTest.portName)
+				gomega.Expect(loaded).To(gomega.BeTrue(), "reconciliation must restore the policy index entry for the current port")
+				gomega.Expect(loadedPortUUID.(string)).To(gomega.Equal(freshPortUUID), "reconciliation must replace the stale policy UUID with the current port UUID")
+
+				dataParams := newNetpolDataParams(networkPolicy).
+					withLocalPortUUIDs(nPodTest.portUUID)
+				expectedData := getUpdatedInitialDB([]testPod{nPodTest})
+				expectedData = append(expectedData, getDefaultDenyData(dataParams)...)
+				policyPG := libovsdbutil.BuildPortGroup(
+					pgDbIDs,
+					[]*nbdb.LogicalSwitchPort{{UUID: nPodTest.portUUID}},
+					nil,
+				)
+				policyPG.UUID = policyPG.Name + "-UUID"
+				expectedData = append(expectedData, policyPG)
+				gomega.Eventually(fakeOvn.nbClient, 2*time.Second).Should(libovsdbtest.HaveData(expectedData...), "reconciliation must restore policy and default-deny membership for the current port")
+
+				return nil
+			}
+
+			gomega.Expect(app.Run([]string{app.Name})).To(gomega.Succeed(), "run the policy membership reconciliation scenario")
+		})
+
+		ginkgo.It("pod reconcile removes policy membership after its node becomes remote", func() {
+			app.Action = func(*cli.Context) error {
+				pod, nPodTest, networkPolicy, np, pgDbIDs := setupPolicyPod()
+
+				_, reconcileErr := fakeOvn.controller.ReconcilePod(context.Background(), nil, pod, nil)
+				gomega.Expect(reconcileErr).NotTo(gomega.HaveOccurred(), "reconcile initial pod networking and policy membership")
+				_, loaded := np.localPods.Load(nPodTest.portName)
+				gomega.Expect(loaded).To(gomega.BeTrue(), "initial reconciliation must record membership before the pod moves zones")
+
+				// Reconcile through the shared-controller integration path. Network
+				// relevance must not be gated by local LSP eligibility: the remote pod
+				// still has policy state to remove.
+				remotePod := pod.DeepCopy()
+				remotePod.Spec.NodeName = "remote-node"
+				gomega.Expect(fakeOvn.controller.isPodScheduledOnLocalNode(remotePod)).To(gomega.BeFalse())
+				expected, err := fakeOvn.controller.PodExpectedOnNetwork(remotePod)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(expected).To(gomega.BeTrue())
+				state, err := fakeOvn.controller.ReconcilePod(context.Background(), pod, remotePod, fakeOvn.controller.GetPodState(pod))
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(state).To(gomega.BeNil())
+				stalePortInfo, err := fakeOvn.controller.logicalPortCache.get(remotePod, types.DefaultNetworkName)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(stalePortInfo.expires.IsZero()).To(gomega.BeFalse())
+				_, loaded = np.localPods.Load(nPodTest.portName)
+				gomega.Expect(loaded).To(gomega.BeFalse(), "moving the pod to a remote zone must clear its local policy index entry")
+
+				expectedData := getUpdatedInitialDB([]testPod{nPodTest})
+				expectedData = append(expectedData, getDefaultDenyData(newNetpolDataParams(networkPolicy))...)
+				policyPG := libovsdbutil.BuildPortGroup(pgDbIDs, nil, nil)
+				policyPG.UUID = policyPG.Name + "-UUID"
+				expectedData = append(expectedData, policyPG)
+				gomega.Eventually(fakeOvn.nbClient, 2*time.Second).Should(libovsdbtest.HaveData(expectedData...), "moving the pod to a remote zone must clear local policy and default-deny membership")
+
+				// Model node-zone cleanup removing the old local LSP. Returning to the
+				// local zone must not trust the retired cache snapshot and must recreate
+				// both the LSP and its policy membership.
+				gomega.Expect(libovsdbops.DeleteLogicalSwitchPorts(fakeOvn.nbClient,
+					&nbdb.LogicalSwitch{Name: nPodTest.nodeName},
+					&nbdb.LogicalSwitchPort{Name: nPodTest.portName})).To(gomega.Succeed())
+				state, err = fakeOvn.controller.ReconcilePod(context.Background(), remotePod, pod, state)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				localPortInfo, ok := state.(*lpInfo)
+				gomega.Expect(ok).To(gomega.BeTrue())
+				gomega.Expect(localPortInfo.expires.IsZero()).To(gomega.BeTrue())
+				recreatedLSP, err := libovsdbops.GetLogicalSwitchPort(fakeOvn.nbClient,
+					&nbdb.LogicalSwitchPort{Name: nPodTest.portName})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(localPortInfo.uuid).To(gomega.Equal(recreatedLSP.UUID))
+				_, loaded = np.localPods.Load(nPodTest.portName)
+				gomega.Expect(loaded).To(gomega.BeTrue())
+
+				return nil
+			}
+
+			gomega.Expect(app.Run([]string{app.Name})).To(gomega.Succeed(), "run policy cleanup after the pod moves to a remote zone")
 		})
 
 		ginkgo.It("policy bootstrap serializes a concurrent label update behind its bulk snapshot", func() {
@@ -1423,24 +1859,27 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 				}()
 				<-reconcileStarted
 				gomega.Consistently(reconcileDone, 50*time.Millisecond).ShouldNot(gomega.Receive())
-				gomega.Expect(fakeOvn.controller.addLocalPodsToNetworkPolicy(np, listedPod)).To(gomega.Succeed())
-				portUUID, found := np.localPods.Load(listedPortInfo.name)
-				gomega.Expect(found).To(gomega.BeTrue())
-				gomega.Expect(portUUID).To(gomega.Equal(listedPortInfo.uuid))
+
+				gomega.Expect(fakeOvn.controller.bootstrapLocalPodsForNetworkPolicy(np, []*corev1.Pod{listedPod})).To(gomega.Succeed(), "bootstrap policy membership from the freshest listed pod")
+				gomega.Expect(np.getLocalPortsForPod(listedPod)).To(gomega.Equal(map[string]string{
+					listedPortInfo.name: listedPortInfo.uuid,
+				}), "policy bootstrap must record the listed pod port before concurrent reconciliation")
 
 				fakeOvn.controller.networkPolicies.UnlockKey(np.getKey())
 				npLocked = false
 				gomega.Eventually(reconcileDone).Should(gomega.Receive(gomega.BeNil()))
-				_, found = np.localPods.Load(listedPortInfo.name)
-				gomega.Expect(found).To(gomega.BeFalse())
+				gomega.Expect(np.getLocalPortsForPod(latestPod)).To(gomega.BeEmpty(), "concurrent reconciliation must remove membership for the latest unselected pod")
+
 				expectedData := getUpdatedInitialDB([]testPod{nPodTest})
 				expectedData = append(expectedData, getDefaultDenyData(newNetpolDataParams(networkPolicy))...)
 				policyPG := libovsdbutil.BuildPortGroup(pgDbIDs, nil, nil)
 				policyPG.UUID = policyPG.Name + "-UUID"
 				expectedData = append(expectedData, policyPG)
-				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedData...))
+				gomega.Eventually(fakeOvn.nbClient, 2*time.Second).Should(libovsdbtest.HaveData(expectedData...), "policy groups must reflect the latest pod selection after concurrent bootstrap")
+
 				return nil
 			}
+
 			gomega.Expect(app.Run([]string{app.Name})).To(gomega.Succeed())
 		})
 
@@ -1460,7 +1899,8 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 				fakeOvn.startWithDBSetup(initialDB, &namespace, testNode, pod, readyPod)
 				tPod.populateLogicalSwitchCache(fakeOvn)
 				gomega.Expect(fakeOvn.controller.WatchNamespaces()).To(gomega.Succeed())
-				gomega.Expect(fakeOvn.controller.reconcilePod(context.Background(), nil, readyPod, false)).To(gomega.Succeed())
+				_, reconcileErr := fakeOvn.controller.ReconcilePod(context.Background(), nil, readyPod, nil)
+				gomega.Expect(reconcileErr).NotTo(gomega.HaveOccurred(), "reconcile the ready pod after the initial cache miss")
 				readyPortInfo, err := fakeOvn.controller.logicalPortCache.get(readyPod, types.DefaultNetworkName)
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				gomega.Expect(fakeOvn.controller.WatchNetworkPolicy()).To(gomega.Succeed())
@@ -1472,9 +1912,6 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 				key := getPolicyKey(policy)
 				retry.CheckRetryObjectEventually(key, true, fakeOvn.controller.retryNetworkPolicies)
 				gomega.Expect(fakeOvn.controller.getNetworkPolicyKeysForNamespace(namespace.Name)).To(gomega.BeEmpty())
-				podKey, err := retry.GetResourceKey(pod)
-				gomega.Expect(err).NotTo(gomega.HaveOccurred())
-				retry.CheckRetryObjectEventually(podKey, false, fakeOvn.controller.retryPods)
 
 				expectedPorts := []string{readyPortInfo.uuid}
 				if completed {
@@ -1485,9 +1922,10 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 					gomega.Eventually(func() bool {
 						latest, err := fakeOvn.controller.watchFactory.GetPod(pod.Namespace, pod.Name)
 						return err == nil && util.PodCompleted(latest)
-					}).Should(gomega.BeTrue())
+					}, 2*time.Second).Should(gomega.BeTrue(), "wait for the informer to observe pod completion before retrying policy bootstrap")
 				} else {
-					gomega.Expect(fakeOvn.controller.reconcilePod(context.Background(), nil, pod, false)).To(gomega.Succeed())
+					_, reconcileErr := fakeOvn.controller.ReconcilePod(context.Background(), nil, pod, nil)
+					gomega.Expect(reconcileErr).NotTo(gomega.HaveOccurred(), "reconcile initial pod networking and policy membership")
 					portInfo, err := fakeOvn.controller.logicalPortCache.get(pod, types.DefaultNetworkName)
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 					expectedPorts = append(expectedPorts, portInfo.uuid)
@@ -1531,14 +1969,14 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 						withTCPPeerPorts(portNum),
 					getUpdatedInitialDB([]testPod{nPodTest}))
 
-				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedData...))
+				gomega.Eventually(fakeOvn.nbClient, 2*time.Second).Should(libovsdbtest.HaveData(expectedData...), "the first policy must be fully applied before disconnecting NBDB")
 
 				ginkgo.By("Bringing down NBDB")
 				// inject transient problem, nbdb is down
 				fakeOvn.controller.nbClient.Close()
 				gomega.Eventually(func() bool {
 					return fakeOvn.controller.nbClient.Connected()
-				}).Should(gomega.BeFalse())
+				}, 2*time.Second).Should(gomega.BeFalse(), "wait for NBDB disconnection before exercising policy retry")
 
 				// Create a second NP
 				ginkgo.By("Creating and deleting another policy that references that pod")
@@ -1556,14 +1994,14 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 				connCtx, cancel := context.WithTimeout(context.Background(), config.Default.OVSDBTxnTimeout)
 				defer cancel()
 				resetNBClient(connCtx, fakeOvn.controller.nbClient)
-				retry.SetRetryObjWithNoBackoff(key, fakeOvn.controller.retryPods)
+				retry.SetRetryObjWithNoBackoff(key, fakeOvn.controller.retryNetworkPolicies)
 				fakeOvn.controller.retryNetworkPolicies.RequestRetryObjs()
 
 				gressPolicy2ExpectedData := getPolicyData(newNetpolDataParams(networkPolicy2).
 					withLocalPortUUIDs(nPodTest.portUUID).
 					withTCPPeerPorts(portNum + 1))
 				expectedDataWithPolicy2 := append(expectedData, gressPolicy2ExpectedData...)
-				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedDataWithPolicy2...))
+				gomega.Eventually(fakeOvn.nbClient, 2*time.Second).Should(libovsdbtest.HaveData(expectedDataWithPolicy2...), "policy retry must install the second policy after NBDB reconnects")
 				// check the cache no longer has the entry
 				retry.CheckRetryObjectEventually(key, false, fakeOvn.controller.retryNetworkPolicies)
 				return nil
@@ -1908,7 +2346,7 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 				connCtx, cancel := context.WithTimeout(context.Background(), config.Default.OVSDBTxnTimeout)
 				defer cancel()
 				resetNBClient(connCtx, fakeOvn.controller.nbClient)
-				retry.SetRetryObjWithNoBackoff(key, fakeOvn.controller.retryPods)
+				retry.SetRetryObjWithNoBackoff(key, fakeOvn.controller.retryNetworkPolicies)
 				fakeOvn.controller.retryNetworkPolicies.RequestRetryObjs()
 
 				expectedData = getUpdatedInitialDB([]testPod{nPodTest})
