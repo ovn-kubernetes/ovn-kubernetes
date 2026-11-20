@@ -869,6 +869,7 @@ jobs:
           make -C test control-plane WHAT="Multi Homing"
         elif [ "${{ matrix.target }}" == "no-uplink" ]; then
           make -C test shard-network
+          make -C test control-plane WHAT="local gateway without an uplink"
         elif [ "${{ matrix.target }}" == "node-ip-mac-migration" ]; then
           make -C test control-plane WHAT="Node IP and MAC address migration"
         elif [ "${{ matrix.target }}" == "external-gateway" ]; then
