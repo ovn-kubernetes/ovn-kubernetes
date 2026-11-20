@@ -293,6 +293,10 @@ ovnkube_node_mgmt_port_netdev=${OVNKUBE_NODE_MGMT_PORT_NETDEV:-}
 ovnkube_node_mgmt_port_dp_resource_name=${OVNKUBE_NODE_MGMT_PORT_DP_RESOURCE_NAME:-}
 ovnkube_config_duration_enable=${OVNKUBE_CONFIG_DURATION_ENABLE:-false}
 ovnkube_metrics_scale_enable=${OVNKUBE_METRICS_SCALE_ENABLE:-false}
+# Workers reconciling RouteAdvertisements. Unset means the binary's default of
+# 1. Raising it is only safe when RouteAdvertisements select non-overlapping
+# networks; it exists to measure serialisation cost on benchmarks.
+ovn_ra_threadiness=${OVN_RA_THREADINESS:-}
 # OVN_ENCAP_IP - encap IP to be used for OVN traffic on the node
 ovn_encap_ip=${OVN_ENCAP_IP:-}
 # OVN_KUBERNETES_CONNTRACK_ZONE - conntrack zone number used for openflow rules (default 64000)
@@ -1947,6 +1951,12 @@ ovn-cluster-manager() {
   fi
   echo "ovn_v6_masquerade_subnet_opt=${ovn_v6_masquerade_subnet_opt}"
 
+  ovn_ra_threadiness_opt=
+  if [[ -n ${ovn_ra_threadiness} ]]; then
+      ovn_ra_threadiness_opt="--cluster-manager-route-advertisements-threadiness=${ovn_ra_threadiness}"
+  fi
+  echo "ovn_ra_threadiness_opt=${ovn_ra_threadiness_opt}"
+
   ovn_v4_transit_subnet_opt=
   if [[ -n ${ovn_v4_transit_subnet} ]]; then
       ovn_v4_transit_subnet_opt="--cluster-manager-v4-transit-subnet=${ovn_v4_transit_subnet}"
@@ -2128,6 +2138,7 @@ ovn-cluster-manager() {
     ${ovn_v4_masquerade_subnet_opt} \
     ${ovn_v6_join_subnet_opt} \
     ${ovn_v6_masquerade_subnet_opt} \
+    ${ovn_ra_threadiness_opt} \
     ${ovn_v4_transit_subnet_opt} \
     ${ovn_v6_transit_subnet_opt} \
     ${network_qos_enabled_flag} \

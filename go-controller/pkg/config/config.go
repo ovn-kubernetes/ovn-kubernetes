@@ -258,8 +258,9 @@ var (
 	}
 
 	ClusterManager = ClusterManagerConfig{
-		V4TransitSubnet: "100.88.0.0/16",
-		V6TransitSubnet: "fd97::/64",
+		V4TransitSubnet:                "100.88.0.0/16",
+		V6TransitSubnet:                "fd97::/64",
+		RouteAdvertisementsThreadiness: 1,
 	}
 
 	// NoOverlay holds no-overlay mode configuration
@@ -763,6 +764,24 @@ type ClusterManagerConfig struct {
 	V4TransitSubnet string `gcfg:"v4-transit-subnet"`
 	// V6TransitSubnet to be used in the cluster for interconnecting multiple zones
 	V6TransitSubnet string `gcfg:"v6-transit-subnet"`
+	// RouteAdvertisementsThreadiness is how many workers reconcile
+	// RouteAdvertisements. Defaults to 1.
+	//
+	// Raising it is UNSAFE when RouteAdvertisements select overlapping sets of
+	// networks. Each reconcile updates a shared annotation on every NAD it
+	// selects by reading the current list of RouteAdvertisements from the
+	// lister, adding or removing itself, and writing the whole list back with
+	// a JSON merge patch that carries no resourceVersion precondition. Two
+	// reconciles touching one NAD at the same time therefore lose one of the
+	// two updates. At one worker the race is only as wide as lister staleness
+	// and the next resync repairs it; above one it is routine.
+	//
+	// It exists to measure how much of the RouteAdvertisements queue wait is
+	// serialisation rather than work, on benchmarks where each
+	// RouteAdvertisements selects a distinct network and no NAD is shared.
+	// Make the annotation update conflict-safe before considering a higher
+	// default.
+	RouteAdvertisementsThreadiness int `gcfg:"route-advertisements-threadiness"`
 }
 
 // NoOverlayConfig holds configuration for no-overlay mode
@@ -1975,6 +1994,15 @@ var OvnKubeNodeFlags = []cli.Flag{
 
 // ClusterManagerFlags captures ovnkube-cluster-manager specific configurations
 var ClusterManagerFlags = []cli.Flag{
+	&cli.IntFlag{
+		Name: "cluster-manager-route-advertisements-threadiness",
+		Usage: "Number of workers reconciling RouteAdvertisements (default 1). " +
+			"UNSAFE above 1 when RouteAdvertisements select overlapping networks: " +
+			"concurrent reconciles lose updates to the shared NAD annotation. " +
+			"Intended for benchmarking serialisation cost.",
+		Destination: &cliConfig.ClusterManager.RouteAdvertisementsThreadiness,
+		Value:       ClusterManager.RouteAdvertisementsThreadiness,
+	},
 	&cli.StringFlag{
 		Name:        "cluster-manager-v4-transit-subnet",
 		Usage:       "The v4 transit subnet used for assigning transit switch and transit router IPv4 addresses for interconnect",

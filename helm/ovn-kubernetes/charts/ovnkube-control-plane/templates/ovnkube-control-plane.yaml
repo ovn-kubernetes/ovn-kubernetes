@@ -90,6 +90,13 @@ spec:
           value: {{ default 5 .Values.logFileMaxAgent | quote }}
         - name: OVNKUBE_CONFIG_DURATION_ENABLE
           value: {{ default "" .Values.global.enableConfigDuration | quote }}
+        # The cluster manager runs here, not in the single-node-zone daemonset,
+        # so without this its workqueue and RouteAdvertisements metrics are
+        # never registered.
+        - name: OVN_RA_THREADINESS
+          value: {{ default "" .Values.global.raThreadiness | quote }}
+        - name: OVNKUBE_METRICS_SCALE_ENABLE
+          value: {{ default "" .Values.global.enableMetricsScale | quote }}
         - name: OVN_NET_CIDR
           valueFrom:
             configMapKeyRef:
