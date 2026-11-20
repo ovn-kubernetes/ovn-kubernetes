@@ -100,6 +100,10 @@ type egressNodeAvailabilityHandlerViaHealthCheck struct {
 	modeWasLegacy  bool
 	modeWasChecked bool
 	oldGRPCPort    string
+	// droppedPorts tracks, per node, the port a drop rule was installed on so
+	// that it can be removed again even if the health check mode changed in
+	// the meantime.
+	droppedPorts map[string]string
 }
 
 // checkMode checks what kind of update this handler needs to do to set the
@@ -118,8 +122,19 @@ func (h *egressNodeAvailabilityHandlerViaHealthCheck) checkMode(restore bool) (s
 	portNode := getTemplateContainerEnv(ovnKubeNamespace, "daemonset/ovnkube-node", getNodeContainerName(), OVN_EGRESSIP_HEALTHCHECK_PORT_ENV_NAME)
 	portControlPlane := getTemplateContainerEnv(ovnKubeNamespace, "deployment/ovnkube-control-plane", "ovnkube-cluster-manager", OVN_EGRESSIP_HEALTHCHECK_PORT_ENV_NAME)
 
+	// An empty value means the port was never set, not that legacy health check
+	// is in use: ovnkube defaults to the GRPC port in that case. Without this,
+	// the handler assumes legacy, decides it must switch to GRPC, and updates
+	// both workloads even though nothing needs to change.
+	if portNode == "" {
+		portNode = DEFAULT_OVN_EGRESSIP_GRPC_HEALTHCHECK_PORT
+	}
+	if portControlPlane == "" {
+		portControlPlane = DEFAULT_OVN_EGRESSIP_GRPC_HEALTHCHECK_PORT
+	}
+
 	wantLegacy := (h.Legacy && !restore) || (h.modeWasLegacy && restore)
-	isLegacy := portNode == "" || portNode == OVN_EGRESSIP_LEGACY_HEALTHCHECK_PORT_ENV
+	isLegacy := portNode == OVN_EGRESSIP_LEGACY_HEALTHCHECK_PORT_ENV
 	outOfSync := portNode != portControlPlane
 
 	if !h.modeWasChecked {
@@ -170,7 +185,23 @@ func (h *egressNodeAvailabilityHandlerViaHealthCheck) setMode(nodeName string, r
 		}
 		framework.Logf("%s health check traffic on port %s on node %s", op, port, nodeName)
 		allowOrDropNodeInputTrafficOnPort(op, nodeName, "tcp", port)
+		if reject {
+			if h.droppedPorts == nil {
+				h.droppedPorts = map[string]string{}
+			}
+			h.droppedPorts[nodeName] = port
+			return
+		}
 	}
+	// A drop rule is installed on the port of the health check mode in use at
+	// the time. That mode, and hence the port, may have changed since, so the
+	// allow above does not necessarily remove it. This also covers the nodes
+	// restored after the first one, for which checkMode returns no port.
+	if dropped, found := h.droppedPorts[nodeName]; found && dropped != port {
+		framework.Logf("Allow health check traffic on port %s on node %s", dropped, nodeName)
+		allowOrDropNodeInputTrafficOnPort("Allow", nodeName, "tcp", dropped)
+	}
+	delete(h.droppedPorts, nodeName)
 }
 
 func (h *egressNodeAvailabilityHandlerViaHealthCheck) Enable(nodeName string) {
