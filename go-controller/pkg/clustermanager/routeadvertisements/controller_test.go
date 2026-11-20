@@ -4233,6 +4233,7 @@ exit
 						g.Expect(key).To(gomega.HaveLen(3))
 						g.Expect(frrConfig.Labels).To(gomega.HaveKeyWithValue(types.OvnRouteAdvertisementsNodeKey, util.RouteAdvertisementsNodeLabel(key[2])), "node watch must see %s", frrConfig.Name)
 						delete(frrConfig.Labels, types.OvnRouteAdvertisementsNodeKey)
+						delete(frrConfig.Labels, types.OvnRouteAdvertisementsUIDKey)
 					}
 					actualFRRConfigLabels[frrConfig.Annotations[types.OvnRouteAdvertisementsKey]] = frrConfig.Labels
 					actualFRRConfigSpecs[frrConfig.Annotations[types.OvnRouteAdvertisementsKey]] = &frrConfig.Spec
@@ -5519,6 +5520,9 @@ func TestController_reconcileHostname(t *testing.T) {
 			g := gomega.NewWithT(t)
 			tt := newFRRReconcileTest(t, g, "eth0")
 			ctx := context.Background()
+			ra := (&testRA{Name: "ra", SelectsDefault: true, AdvertisePods: true}).RouteAdvertisements()
+			ra.UID = "original-ra"
+			tt.updateRA(ra)
 			name, hostname := tc.name, tc.hostname
 			node := (&testNode{Name: name, OmitPrimaryAddress: true,
 				SubnetsAnnotation: `{"default":"1.1.1.0/24"}`,
@@ -5549,17 +5553,20 @@ func TestController_reconcileHostname(t *testing.T) {
 			g.Expect(err).NotTo(gomega.HaveOccurred())
 			g.Expect(selector.Matches(labels.Set(node.Labels))).To(gomega.BeTrue())
 
-			// A pre-upgrade object can already have the correct spec and
-			// validated marker. Only its missing label hides it from the node.
+			// Even when the routes are unchanged, a missing label can hide
+			// the export from the node or prevent it from identifying the RA.
 			client := tt.c.frrClient.ApiV1beta1().FRRConfigurations(cfg.Namespace)
-			delete(cfg.Labels, types.OvnRouteAdvertisementsNodeKey)
-			_, err = client.Update(t.Context(), cfg, metav1.UpdateOptions{})
-			g.Expect(err).NotTo(gomega.HaveOccurred(), "seed an otherwise current configuration without its node-watch label")
-			tt.waitForFRRCache()
-			g.Expect(tt.c.reconcile(t.Context(), "ra")).To(gomega.Succeed(), "backfill the node-watch label")
-			stored, err := client.Get(t.Context(), cfg.Name, metav1.GetOptions{})
-			g.Expect(err).NotTo(gomega.HaveOccurred(), "backfill the original object in place")
-			g.Expect(stored.Labels).To(gomega.HaveKeyWithValue(types.OvnRouteAdvertisementsNodeKey, util.RouteAdvertisementsNodeLabel(name)))
+			for _, key := range []string{types.OvnRouteAdvertisementsNodeKey, types.OvnRouteAdvertisementsUIDKey} {
+				delete(cfg.Labels, key)
+				_, err = client.Update(ctx, cfg, metav1.UpdateOptions{})
+				g.Expect(err).NotTo(gomega.HaveOccurred(), "seed the existing export without %s", key)
+				tt.waitForFRRCache()
+				g.Expect(tt.c.reconcile(ctx, "ra")).To(gomega.Succeed(), "backfill %s", key)
+				cfg, err = client.Get(ctx, cfg.Name, metav1.GetOptions{})
+				g.Expect(err).NotTo(gomega.HaveOccurred(), "read the same export after backfill")
+				g.Expect(cfg.Labels).To(gomega.HaveKeyWithValue(types.OvnRouteAdvertisementsNodeKey, util.RouteAdvertisementsNodeLabel(name)))
+				g.Expect(cfg.Labels).To(gomega.HaveKeyWithValue(types.OvnRouteAdvertisementsUIDKey, string(ra.UID)))
+			}
 		})
 	}
 }

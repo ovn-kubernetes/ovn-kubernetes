@@ -957,16 +957,19 @@ of `Degraded`:
 
 | Transport | Behavior on a node whose FRR configuration could not be generated |
 | --- | --- |
-| Overlay | The node uses the RA's target VRF when its generated configurations together cover all current pod prefixes for that network. If no RA covers the network there, the node uses normal external SNAT. |
+| Overlay | Once the NAD records pod advertisement intent, the node uses the RA's target VRF when its generated configurations cover all current pod prefixes for that network. If no RA covers the network there, the node uses normal external SNAT. |
 | No-overlay | The valid RA's target-VRF mapping remains in effect. The node continues configuring default-VRF or non-default-VRF routing as requested, even while generation fails. |
 | EVPN | The node continues configuring advertised, non-default-VRF gateway behavior. Its main gateway routing decisions do not wait for successful FRR generation. |
 
-The overlay check needs no marker on the generated configurations. It takes
-the target VRF from the intent recorded on the network's NADs and the pod
-prefixes from the current network and node allocations. For each prefix, a
-generated configuration from that RA must select the node and have a router
-in the target VRF that originates the prefix and permits its export to a peer.
-For example, one template can supply the IPv4 peer and another the IPv6 peer.
+The overlay check takes the target VRF from the intent on the network's NADs
+and the pod prefixes from the current network and node allocations. For each
+prefix, a generated configuration must select the node and have a router in
+the target VRF that originates the prefix and permits its export to a peer.
+The configuration's RA UID label must match the UID in the NAD intent. This
+keeps an export from a deleted RA from counting toward its replacement,
+even when both use the same name, VRF, and prefixes.
+
+One template can supply the IPv4 peer and another the IPv6 peer.
 If a dual-stack overlay network has only an IPv4 peer, the RA can report
 `Degraded=False` after generating the IPv4 export. The node keeps normal
 external SNAT for both families until the IPv6 pod prefix also has an export.
@@ -985,11 +988,12 @@ external connectivity while FRR configuration is incomplete.
 
 Each node's FRR watch contains only its own generated configurations.
 Configuration changes trigger reconciliation regardless of `Degraded`, including
-recovery while other nodes still fail. Overlay nodes always check their generated
-configurations, even when the RA is healthy: a new node may start before
-cluster manager has reconciled it. Cluster manager reports `Degraded` from its own
-reconciliation results without node feedback; the condition does not control the
-node's readiness check. This is eventually consistent programming state, not
+recovery while other nodes still fail. Overlay nodes check their generated
+configurations even when the RA is healthy because a new node may start before
+cluster manager has reconciled it. During a rolling upgrade, a name-only NAD
+reference uses the legacy RA status until cluster manager publishes intent.
+Cluster manager reports `Degraded` from its own reconciliation results.
+Nodes evaluate readiness independently. This is eventually consistent programming state, not
 confirmation that FRR has applied the configuration or established BGP sessions.
 
 Invalid RA input is reported as `Accepted=False` when reconciliation

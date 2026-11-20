@@ -1885,12 +1885,12 @@ func (c *Controller) generateFRRConfiguration(
 	new := &frrtypes.FRRConfiguration{}
 	new.GenerateName = generateName
 	new.Namespace = source.Namespace
-	// label the FRRConfigurations with the RA name, we use this to find the
-	// existing set of FRRConfigurations that need to be reconciled for a given
-	// RA
+	// The name lets cluster manager find exports after an RA is deleted.
+	// The UID lets nodes distinguish a replacement RA with that same name.
 	new.Labels = map[string]string{
 		types.OvnRouteAdvertisementsKey:     ra.Name,
 		types.OvnRouteAdvertisementsNodeKey: util.RouteAdvertisementsNodeLabel(nodeName),
+		types.OvnRouteAdvertisementsUIDKey:  string(ra.UID),
 	}
 	new.Annotations = map[string]string{
 		types.OvnRouteAdvertisementsKey: fmt.Sprintf("%s/%s/%s", ra.Name, source.Name, nodeName),
@@ -2231,6 +2231,7 @@ func (c *Controller) updateFRRConfigurations(ctx context.Context, ra string, res
 		// no changes needed so skip
 		if reflect.DeepEqual(newFRRConfig.Spec, oldFRRConfig.Spec) &&
 			oldFRRConfig.Annotations[types.OvnRouteAdvertisementsValidatedKey] == newFRRConfig.Annotations[types.OvnRouteAdvertisementsValidatedKey] &&
+			oldFRRConfig.Labels[types.OvnRouteAdvertisementsUIDKey] == newFRRConfig.Labels[types.OvnRouteAdvertisementsUIDKey] &&
 			oldFRRConfig.Labels[types.OvnRouteAdvertisementsNodeKey] == newFRRConfig.Labels[types.OvnRouteAdvertisementsNodeKey] {
 			metrics.RecordRouteAdvertisementFRRConfigurationProcess(ra, frrConfigOpUnchanged)
 			continue

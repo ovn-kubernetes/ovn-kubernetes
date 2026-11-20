@@ -833,7 +833,8 @@ func (c *networkController) nodeAdvertisementsReady(raName string, intent util.R
 	vrf := intent.ResolvedVRF(network)
 	for _, obj := range configs {
 		cfg := obj.(*frrtypes.FRRConfiguration)
-		if !cfg.DeletionTimestamp.IsZero() {
+		// The cache can still hold exports from a deleted RA with the same name.
+		if cfg.Labels[types.OvnRouteAdvertisementsUIDKey] != string(intent.UID) || !cfg.DeletionTimestamp.IsZero() {
 			continue
 		}
 		selector, err := metav1.LabelSelectorAsSelector(&cfg.Spec.NodeSelector)
