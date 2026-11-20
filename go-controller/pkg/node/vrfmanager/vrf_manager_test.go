@@ -149,6 +149,7 @@ var _ = ginkgo.Describe("VRF manager", func() {
 				LinkIndex: slaveLinkIndex,
 				Gw:        net.ParseIP("192.168.2.1"),
 				Protocol:  unix.RTPROT_DHCP,
+				Type:      unix.RTN_UNICAST,
 				Flags:     unix.RTNH_F_ONLINK | unix.RTNH_F_LINKDOWN,
 				Table:     unix.RT_TABLE_MAIN,
 			}
@@ -157,12 +158,14 @@ var _ = ginkgo.Describe("VRF manager", func() {
 				Dst:       ovntest.MustParseIPNet("192.168.2.1/32"),
 				Scope:     netlink.SCOPE_LINK,
 				Protocol:  unix.RTPROT_DHCP,
+				Type:      unix.RTN_UNICAST,
 				Table:     unix.RT_TABLE_MAIN,
 			}
 			kernelConnectedRoute := netlink.Route{
 				LinkIndex: slaveLinkIndex,
 				Dst:       ovntest.MustParseIPNet("192.168.1.0/24"),
 				Protocol:  unix.RTPROT_KERNEL,
+				Type:      unix.RTN_UNICAST,
 				Table:     unix.RT_TABLE_MAIN,
 			}
 			bgpRoute := netlink.Route{
@@ -170,6 +173,7 @@ var _ = ginkgo.Describe("VRF manager", func() {
 				Dst:       ovntest.MustParseIPNet("10.10.0.0/16"),
 				Gw:        net.ParseIP("192.168.1.253"),
 				Protocol:  unix.RTPROT_BGP,
+				Type:      unix.RTN_UNICAST,
 				Table:     unix.RT_TABLE_MAIN,
 			}
 			// A static ECMP route through the slave interface: the kernel
@@ -178,6 +182,7 @@ var _ = ginkgo.Describe("VRF manager", func() {
 			ecmpRoute := netlink.Route{
 				Dst:      ovntest.MustParseIPNet("172.16.0.0/16"),
 				Protocol: unix.RTPROT_STATIC,
+				Type:     unix.RTN_UNICAST,
 				Table:    unix.RT_TABLE_MAIN,
 				MultiPath: []*netlink.NexthopInfo{
 					{LinkIndex: slaveLinkIndex, Gw: net.ParseIP("192.168.1.1"), Flags: unix.RTNH_F_LINKDOWN},
@@ -189,6 +194,7 @@ var _ = ginkgo.Describe("VRF manager", func() {
 			mixedInterfacesEcmpRoute := netlink.Route{
 				Dst:      ovntest.MustParseIPNet("172.17.0.0/16"),
 				Protocol: unix.RTPROT_STATIC,
+				Type:     unix.RTN_UNICAST,
 				Table:    unix.RT_TABLE_MAIN,
 				MultiPath: []*netlink.NexthopInfo{
 					{LinkIndex: slaveLinkIndex, Gw: net.ParseIP("192.168.1.1")},
@@ -207,10 +213,12 @@ var _ = ginkgo.Describe("VRF manager", func() {
 			err := c.AddVRF(vrfLinkName1, enslaveLinkName1, getVRFTable(vrfLinkName1), nil)
 			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 
-			// The DHCP routes and the ECMP route are restored into the VRF
-			// table with kernel state flags stripped; the kernel generated
-			// route is left for the kernel to regenerate, the BGP route for
-			// its daemon, and the mixed-interfaces ECMP route stays behind.
+			// The DHCP routes, the kernel connected route and the ECMP route
+			// are restored into the VRF table with kernel state flags
+			// stripped; the BGP route is left for its daemon and the
+			// mixed-interfaces ECMP route stays behind.
+			expectedConnectedRoute := kernelConnectedRoute
+			expectedConnectedRoute.Table = int(getVRFTable(vrfLinkName1))
 			expectedHostRoute := dhcpGatewayHostRoute
 			expectedHostRoute.Table = int(getVRFTable(vrfLinkName1))
 			expectedDefaultRoute := dhcpDefaultRoute
@@ -222,21 +230,38 @@ var _ = ginkgo.Describe("VRF manager", func() {
 				{LinkIndex: slaveLinkIndex, Gw: net.ParseIP("192.168.1.1")},
 				{LinkIndex: slaveLinkIndex, Gw: net.ParseIP("192.168.1.2")},
 			}
+			nlMock.AssertCalled(ginkgo.GinkgoT(), "RouteAdd", &expectedConnectedRoute)
 			nlMock.AssertCalled(ginkgo.GinkgoT(), "RouteAdd", &expectedHostRoute)
 			nlMock.AssertCalled(ginkgo.GinkgoT(), "RouteAdd", &expectedDefaultRoute)
 			nlMock.AssertCalled(ginkgo.GinkgoT(), "RouteAdd", &expectedEcmpRoute)
-			nlMock.AssertNumberOfCalls(ginkgo.GinkgoT(), "RouteAdd", 3)
+			nlMock.AssertNumberOfCalls(ginkgo.GinkgoT(), "RouteAdd", 4)
 
-			// The gateway host route must be restored before the gateway
-			// routes that depend on it.
+			// The gateway-less routes must be restored before the gateway
+			// routes that depend on them.
 			var restored []*netlink.Route
 			for _, call := range nlMock.Calls {
 				if call.Method == "RouteAdd" {
 					restored = append(restored, call.Arguments.Get(0).(*netlink.Route))
 				}
 			}
-			gomega.Expect(restored).To(gomega.Equal([]*netlink.Route{&expectedHostRoute, &expectedDefaultRoute, &expectedEcmpRoute}),
-				"expected the gateway host route to be restored before the gateway routes that depend on it")
+			gomega.Expect(restored).To(gomega.Equal([]*netlink.Route{&expectedConnectedRoute, &expectedHostRoute, &expectedDefaultRoute, &expectedEcmpRoute}),
+				"expected the gateway-less routes to be restored before the gateway routes that depend on them")
+		})
+
+		ginkgo.It("retries a route restore the kernel transiently rejects", func() {
+			// A restored route can fail validation right after a master
+			// change, e.g. EINVAL while its IPv6 source address re-runs
+			// duplicate address detection; the retry must absorb it.
+			route := netlink.Route{
+				LinkIndex: getLinkIndex(enslaveLinkName1),
+				Dst:       ovntest.MustParseIPNet("2001:db8:1::/64"),
+				Table:     unix.RT_TABLE_MAIN,
+			}
+			nlMock.On("RouteAdd", mock.Anything).Return(unix.EINVAL).Once()
+			nlMock.On("RouteAdd", mock.Anything).Return(nil).Once()
+
+			gomega.Expect(addRouteWithRetry(&route)).To(gomega.Succeed())
+			nlMock.AssertNumberOfCalls(ginkgo.GinkgoT(), "RouteAdd", 2)
 		})
 
 		ginkgo.It("undoes the enslavement when the route restore into the VRF fails", func() {
@@ -247,6 +272,7 @@ var _ = ginkgo.Describe("VRF manager", func() {
 				LinkIndex: slaveLinkIndex,
 				Gw:        net.ParseIP("192.168.1.1"),
 				Protocol:  unix.RTPROT_DHCP,
+				Type:      unix.RTN_UNICAST,
 				Table:     unix.RT_TABLE_MAIN,
 			}
 			nlMock.On("RouteListFiltered", netlink.FAMILY_ALL,
@@ -346,12 +372,14 @@ var _ = ginkgo.Describe("VRF manager", func() {
 				LinkIndex: slaveLinkIndex,
 				Gw:        net.ParseIP("192.168.1.1"),
 				Protocol:  unix.RTPROT_DHCP,
+				Type:      unix.RTN_UNICAST,
 				Table:     vrfTable,
 			}
 			migratedDefaultRouteV6 := netlink.Route{
 				LinkIndex: slaveLinkIndex,
 				Gw:        net.ParseIP("2001:db8:1::1"),
 				Protocol:  unix.RTPROT_DHCP,
+				Type:      unix.RTN_UNICAST,
 				Priority:  1024,
 				Table:     vrfTable,
 			}
@@ -360,6 +388,7 @@ var _ = ginkgo.Describe("VRF manager", func() {
 				Dst:       ovntest.MustParseIPNet("10.96.0.0/16"),
 				Gw:        net.ParseIP("169.254.169.4"),
 				Protocol:  netlink.RouteProtocol(types.OVNKProtocol),
+				Type:      unix.RTN_UNICAST,
 				Table:     vrfTable,
 			}
 			ovnManagedRouteV6 := netlink.Route{
@@ -367,6 +396,7 @@ var _ = ginkgo.Describe("VRF manager", func() {
 				Dst:       ovntest.MustParseIPNet("fd00:10:96::/112"),
 				Gw:        net.ParseIP("fd69::4"),
 				Protocol:  netlink.RouteProtocol(types.OVNKProtocol),
+				Type:      unix.RTN_UNICAST,
 				Priority:  1024,
 				Table:     vrfTable,
 			}
@@ -375,6 +405,18 @@ var _ = ginkgo.Describe("VRF manager", func() {
 				Dst:       ovntest.MustParseIPNet("10.10.0.0/16"),
 				Gw:        net.ParseIP("192.168.1.253"),
 				Protocol:  unix.RTPROT_BGP,
+				Type:      unix.RTN_UNICAST,
+				Table:     vrfTable,
+			}
+			// The kernel derives the local route of an enslaved interface's
+			// address in the VRF table itself; on release it maintains it in
+			// the local table, so it must not be migrated.
+			kernelLocalRoute := netlink.Route{
+				LinkIndex: slaveLinkIndex,
+				Dst:       ovntest.MustParseIPNet("192.168.1.10/32"),
+				Protocol:  unix.RTPROT_KERNEL,
+				Scope:     netlink.SCOPE_HOST,
+				Type:      unix.RTN_LOCAL,
 				Table:     vrfTable,
 			}
 			nlMock.On("RouteListFiltered", netlink.FAMILY_ALL,
@@ -382,7 +424,7 @@ var _ = ginkgo.Describe("VRF manager", func() {
 					return filter.Table == vrfTable
 				}),
 				uint64(netlink.RT_FILTER_TABLE),
-			).Return([]netlink.Route{migratedDefaultRoute, migratedDefaultRouteV6, ovnManagedRoute, ovnManagedRouteV6, bgpLearnedRoute}, nil)
+			).Return([]netlink.Route{migratedDefaultRoute, migratedDefaultRouteV6, ovnManagedRoute, ovnManagedRouteV6, bgpLearnedRoute, kernelLocalRoute}, nil)
 			nlMock.On("LinkSetNoMaster", enslaveLinkMock1).Return(nil)
 			nlMock.On("RouteAdd", mock.Anything).Return(nil)
 
@@ -394,8 +436,9 @@ var _ = ginkgo.Describe("VRF manager", func() {
 			nlMock.AssertCalled(ginkgo.GinkgoT(), "LinkSetNoMaster", enslaveLinkMock1)
 
 			// The migrated routes return to the main table; the OVN managed
-			// routes stay with the route manager and the BGP route with its
-			// daemon, recognized by their protocol.
+			// routes stay with the route manager, the BGP route with its
+			// daemon, recognized by their protocol, and the local route with
+			// the kernel, recognized by its type.
 			expectedRoute := migratedDefaultRoute
 			expectedRoute.Table = unix.RT_TABLE_MAIN
 			nlMock.AssertCalled(ginkgo.GinkgoT(), "RouteAdd", &expectedRoute)
@@ -403,6 +446,36 @@ var _ = ginkgo.Describe("VRF manager", func() {
 			expectedRouteV6.Table = unix.RT_TABLE_MAIN
 			nlMock.AssertCalled(ginkgo.GinkgoT(), "RouteAdd", &expectedRouteV6)
 			nlMock.AssertNumberOfCalls(ginkgo.GinkgoT(), "RouteAdd", 2)
+		})
+
+		ginkgo.It("treats a same-key route as equivalent only when interface, gateway and source match", func() {
+			// The main-table EEXIST log stays at V(5) only when the route
+			// already there is effectively the captured route; a same-key
+			// route differing in any forwarding attribute means the captured
+			// route is gone from every table.
+			existing := netlink.Route{
+				LinkIndex: getLinkIndex(enslaveLinkName1),
+				Dst:       ovntest.MustParseIPNet("192.168.1.0/24"),
+				Src:       net.ParseIP("192.168.1.10"),
+				Protocol:  unix.RTPROT_KERNEL,
+				Type:      unix.RTN_UNICAST,
+				Table:     unix.RT_TABLE_MAIN,
+			}
+			nlMock.On("RouteListFiltered", mock.Anything, mock.Anything, mock.Anything).Return([]netlink.Route{existing}, nil)
+
+			candidate := existing
+			gomega.Expect(equivalentRouteExists(candidate)).To(gomega.BeTrue())
+			candidate.Src = net.ParseIP("192.168.1.11")
+			gomega.Expect(equivalentRouteExists(candidate)).To(gomega.BeFalse(),
+				"a different preferred source is not the same route")
+			candidate = existing
+			candidate.LinkIndex = getLinkIndex(enslaveLinkName2)
+			gomega.Expect(equivalentRouteExists(candidate)).To(gomega.BeFalse(),
+				"a different output interface is not the same route")
+			candidate = existing
+			candidate.Gw = net.ParseIP("192.168.1.1")
+			gomega.Expect(equivalentRouteExists(candidate)).To(gomega.BeFalse(),
+				"a different gateway is not the same route")
 		})
 
 		ginkgo.It("releases enslaved interfaces before deleting a VRF, restoring their routes", func() {
@@ -414,6 +487,7 @@ var _ = ginkgo.Describe("VRF manager", func() {
 				LinkIndex: slaveLinkIndex,
 				Gw:        net.ParseIP("192.168.1.1"),
 				Protocol:  unix.RTPROT_DHCP,
+				Type:      unix.RTN_UNICAST,
 				Table:     vrfTable,
 			}
 			nlMock.On("RouteListFiltered", netlink.FAMILY_ALL,
@@ -489,6 +563,7 @@ var _ = ginkgo.Describe("VRF manager", func() {
 				LinkIndex: slaveLinkIndex,
 				Gw:        net.ParseIP("192.168.1.1"),
 				Protocol:  unix.RTPROT_DHCP,
+				Type:      unix.RTN_UNICAST,
 				Table:     vrfTable,
 			}
 			ovnManagedRoute := netlink.Route{
@@ -496,6 +571,7 @@ var _ = ginkgo.Describe("VRF manager", func() {
 				Dst:       ovntest.MustParseIPNet("10.96.0.0/16"),
 				Gw:        net.ParseIP("169.254.169.4"),
 				Protocol:  netlink.RouteProtocol(types.OVNKProtocol),
+				Type:      unix.RTN_UNICAST,
 				Table:     vrfTable,
 			}
 			nlMock.On("RouteListFiltered", netlink.FAMILY_ALL,
@@ -681,35 +757,36 @@ var _ = ginkgo.Describe("VRF manager tests with a network namespace", func() {
 		return err
 	}
 
+	listDefaultRoutes := func(family, table int) []netlink.Route {
+		routes, err := netlink.RouteListFiltered(family, &netlink.Route{Table: table}, netlink.RT_FILTER_TABLE)
+		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+		var defaultRoutes []netlink.Route
+		for _, route := range routes {
+			if route.Gw != nil && (route.Dst == nil || route.Dst.IP.IsUnspecified()) {
+				defaultRoutes = append(defaultRoutes, route)
+			}
+		}
+		return defaultRoutes
+	}
+	expectDefaultRoutesIn := func(table int, gateways ...net.IP) {
+		for _, gateway := range gateways {
+			family := netlink.FAMILY_V4
+			if gateway.To4() == nil {
+				family = netlink.FAMILY_V6
+			}
+			defaultRoutes := listDefaultRoutes(family, table)
+			gomega.Expect(defaultRoutes).To(gomega.HaveLen(1),
+				"expected exactly one default route via %s in table %d, got %v", gateway, table, defaultRoutes)
+			gomega.Expect(defaultRoutes[0].Gw.String()).To(gomega.Equal(gateway.String()),
+				"expected the default route in table %d to go via %s", table, gateway)
+		}
+	}
+
 	ovntest.OnSupportedPlatformsIt("preserves slave interface routes across VRF enslavement and release", func() {
 		slaveLinkName := "dev100"
 		gatewayIP := net.ParseIP("192.168.1.1")
 		gatewayIPv6 := net.ParseIP("2001:db8:1::1")
 		vrfTable := 1010
-		listDefaultRoutes := func(family, table int) []netlink.Route {
-			routes, err := netlink.RouteListFiltered(family, &netlink.Route{Table: table}, netlink.RT_FILTER_TABLE)
-			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
-			var defaultRoutes []netlink.Route
-			for _, route := range routes {
-				if route.Gw != nil && (route.Dst == nil || route.Dst.IP.IsUnspecified()) {
-					defaultRoutes = append(defaultRoutes, route)
-				}
-			}
-			return defaultRoutes
-		}
-		expectDefaultRoutesIn := func(table int, gateways ...net.IP) {
-			for _, gateway := range gateways {
-				family := netlink.FAMILY_V4
-				if gateway.To4() == nil {
-					family = netlink.FAMILY_V6
-				}
-				defaultRoutes := listDefaultRoutes(family, table)
-				gomega.Expect(defaultRoutes).To(gomega.HaveLen(1),
-					"expected exactly one default route via %s in table %d, got %v", gateway, table, defaultRoutes)
-				gomega.Expect(defaultRoutes[0].Gw.String()).To(gomega.Equal(gateway.String()),
-					"expected the default route in table %d to go via %s", table, gateway)
-			}
-		}
 		err := testNS.Do(func(ns.NetNS) error {
 			defer ginkgo.GinkgoRecover()
 			// Set up an interface configured with addresses and default
@@ -774,6 +851,104 @@ var _ = ginkgo.Describe("VRF manager tests with a network namespace", func() {
 			expectDefaultRoutesIn(unix.RT_TABLE_MAIN, gatewayIP, gatewayIPv6)
 			gomega.Expect(listEcmpRoutes(vrfTable)).To(gomega.BeEmpty())
 			expectEcmpRouteIn(unix.RT_TABLE_MAIN)
+			return nil
+		})
+		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+	})
+
+	ovntest.OnSupportedPlatformsIt("preserves the prefix routes of noprefixroute addresses across VRF enslavement and release", func() {
+		slaveLinkName := "dev200"
+		gatewayIP := net.ParseIP("192.168.5.1")
+		gatewayIPv6 := net.ParseIP("2001:db8:5::1")
+		prefixV4 := ovntest.MustParseIPNet("192.168.5.0/24")
+		prefixV6 := ovntest.MustParseIPNet("2001:db8:5::/64")
+		vrfTable := 1011
+		listPrefixRoutes := func(table int, prefix *net.IPNet) []netlink.Route {
+			family := netlink.FAMILY_V4
+			if prefix.IP.To4() == nil {
+				family = netlink.FAMILY_V6
+			}
+			routes, err := netlink.RouteListFiltered(family,
+				&netlink.Route{Table: table, Dst: prefix}, netlink.RT_FILTER_TABLE|netlink.RT_FILTER_DST)
+			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+			return routes
+		}
+		expectPrefixRouteIn := func(table int, prefix *net.IPNet) {
+			routes := listPrefixRoutes(table, prefix)
+			gomega.Expect(routes).To(gomega.HaveLen(1),
+				"expected the %s prefix route in table %d, got %v", prefix, table, routes)
+			gomega.Expect(int(routes[0].Protocol)).To(gomega.Equal(unix.RTPROT_KERNEL),
+				"expected the %s prefix route in table %d to keep proto kernel", prefix, table)
+		}
+		err := testNS.Do(func(ns.NetNS) error {
+			defer ginkgo.GinkgoRecover()
+			// Mimic an interface managed by NetworkManager: it sets
+			// noprefixroute on the addresses it manages and installs their
+			// prefix routes itself, tagged proto kernel, so the kernel does
+			// not regenerate them after a master change and only the
+			// migration can carry them into the VRF table.
+			gomega.Expect(netlink.LinkAdd(&netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: slaveLinkName}})).To(gomega.Succeed())
+			slaveLink, err := netlink.LinkByName(slaveLinkName)
+			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+			gomega.Expect(netlink.LinkSetUp(slaveLink)).To(gomega.Succeed())
+			gomega.Expect(os.WriteFile("/proc/sys/net/ipv6/conf/"+slaveLinkName+"/keep_addr_on_down", []byte("1"), 0644)).To(gomega.Succeed())
+			for _, address := range []string{"192.168.5.10/24", "2001:db8:5::10/64"} {
+				addr, err := netlink.ParseAddr(address)
+				gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+				addr.Flags = unix.IFA_F_NOPREFIXROUTE
+				gomega.Expect(netlink.AddrAdd(slaveLink, addr)).To(gomega.Succeed())
+			}
+			gomega.Expect(netlink.RouteAdd(&netlink.Route{
+				LinkIndex: slaveLink.Attrs().Index,
+				Dst:       prefixV4,
+				Src:       net.ParseIP("192.168.5.10"),
+				Scope:     netlink.SCOPE_LINK,
+				Protocol:  unix.RTPROT_KERNEL,
+				Type:      unix.RTN_UNICAST,
+			})).To(gomega.Succeed())
+			gomega.Expect(netlink.RouteAdd(&netlink.Route{
+				LinkIndex: slaveLink.Attrs().Index,
+				Dst:       prefixV6,
+				Protocol:  unix.RTPROT_KERNEL,
+				Type:      unix.RTN_UNICAST,
+			})).To(gomega.Succeed())
+			for _, gateway := range []net.IP{gatewayIP, gatewayIPv6} {
+				gomega.Expect(netlink.RouteAdd(&netlink.Route{
+					LinkIndex: slaveLink.Attrs().Index,
+					Gw:        gateway,
+				})).To(gomega.Succeed())
+			}
+
+			// On enslavement, the prefix routes migrate into the VRF table
+			// along with the default routes. Without them, the default routes
+			// would fail their restore against an unreachable gateway and the
+			// rollback would undo the enslavement.
+			gomega.Expect(c.AddVRF(vrfLinkName1, slaveLinkName, uint32(vrfTable), nil)).To(gomega.Succeed())
+			expectPrefixRouteIn(vrfTable, prefixV4)
+			expectPrefixRouteIn(vrfTable, prefixV6)
+			expectDefaultRoutesIn(vrfTable, gatewayIP, gatewayIPv6)
+			gomega.Expect(listPrefixRoutes(unix.RT_TABLE_MAIN, prefixV4)).To(gomega.BeEmpty())
+			gomega.Expect(listPrefixRoutes(unix.RT_TABLE_MAIN, prefixV6)).To(gomega.BeEmpty())
+
+			// On release, they all migrate back to the main table.
+			gomega.Expect(c.DeleteVRFSlave(vrfLinkName1, slaveLinkName)).To(gomega.Succeed())
+			expectPrefixRouteIn(unix.RT_TABLE_MAIN, prefixV4)
+			expectPrefixRouteIn(unix.RT_TABLE_MAIN, prefixV6)
+			expectDefaultRoutesIn(unix.RT_TABLE_MAIN, gatewayIP, gatewayIPv6)
+			gomega.Expect(listPrefixRoutes(vrfTable, prefixV4)).To(gomega.BeEmpty())
+			gomega.Expect(listPrefixRoutes(vrfTable, prefixV6)).To(gomega.BeEmpty())
+
+			// The kernel's address-derived entries (local, broadcast, anycast,
+			// multicast) lived in the VRF table while the interface was
+			// enslaved and belong to the local table afterwards: none of them
+			// may be migrated into the main table.
+			mainRoutes, err := netlink.RouteListFiltered(netlink.FAMILY_ALL,
+				&netlink.Route{Table: unix.RT_TABLE_MAIN}, netlink.RT_FILTER_TABLE)
+			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+			for _, route := range mainRoutes {
+				gomega.Expect(route.Type).To(gomega.Equal(unix.RTN_UNICAST),
+					"expected no non-unicast route in the main table after release, got %v", route)
+			}
 			return nil
 		})
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
