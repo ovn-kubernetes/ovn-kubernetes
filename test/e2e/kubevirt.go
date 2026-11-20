@@ -735,7 +735,7 @@ fi
 			return vmim
 		}
 
-		checkLiveMigrationSucceeded = func(vmName string, migrationMode kubevirtv1.MigrationMode) {
+		checkLiveMigrationSucceeded = func(vmName, sourceNode string, migrationMode kubevirtv1.MigrationMode) {
 			GinkgoHelper()
 			By("checking the VM live-migrated correctly")
 			vmi := &kubevirtv1.VirtualMachineInstance{
@@ -746,8 +746,6 @@ fi
 			}
 			err := crClient.Get(context.TODO(), crclient.ObjectKeyFromObject(vmi), vmi)
 			Expect(err).NotTo(HaveOccurred(), "should success retrieving vmi")
-			currentNode := vmi.Status.NodeName
-
 			Eventually(func() *kubevirtv1.VirtualMachineInstanceMigrationState {
 				err := crClient.Get(context.TODO(), crclient.ObjectKeyFromObject(vmi), vmi)
 				Expect(err).NotTo(HaveOccurred())
@@ -757,7 +755,7 @@ fi
 				err := crClient.Get(context.TODO(), crclient.ObjectKeyFromObject(vmi), vmi)
 				Expect(err).NotTo(HaveOccurred())
 				return vmi.Status.MigrationState.TargetNode
-			}).WithPolling(time.Second).WithTimeout(10*time.Minute).ShouldNot(Equal(currentNode), "should refresh MigrationState")
+			}).WithPolling(time.Second).WithTimeout(10*time.Minute).ShouldNot(Equal(sourceNode), "should refresh MigrationState")
 			Eventually(func() bool {
 				err := crClient.Get(context.TODO(), crclient.ObjectKeyFromObject(vmi), vmi)
 				Expect(err).NotTo(HaveOccurred())
@@ -789,8 +787,13 @@ fi
 		}
 
 		liveMigrateSucceed = func(vmi *kubevirtv1.VirtualMachineInstance) {
+			GinkgoHelper()
+			ctx, cancel := context.WithTimeout(context.Background(), e2eframework.SingleCallTimeout)
+			defer cancel()
+			Expect(crClient.Get(ctx, crclient.ObjectKeyFromObject(vmi), vmi)).To(Succeed())
+			sourceNode := vmi.Status.NodeName
 			liveMigrateVirtualMachine(vmi.Name)
-			checkLiveMigrationSucceeded(vmi.Name, kubevirtv1.MigrationPreCopy)
+			checkLiveMigrationSucceeded(vmi.Name, sourceNode, kubevirtv1.MigrationPreCopy)
 		}
 
 		checkLiveMigrationFailed = func(migration *kubevirtv1.VirtualMachineInstanceMigration) {
@@ -1052,8 +1055,19 @@ config:
 			return vms
 		}
 		liveMigrateAndCheck = func(vmName string, migrationMode kubevirtv1.MigrationMode, externalContainer infraapi.ExternalContainer, serverAddresses []string, serverPort int32, step string) {
+			GinkgoHelper()
+			vmi := &kubevirtv1.VirtualMachineInstance{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: namespace,
+					Name:      vmName,
+				},
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), e2eframework.SingleCallTimeout)
+			defer cancel()
+			Expect(crClient.Get(ctx, crclient.ObjectKeyFromObject(vmi), vmi)).To(Succeed())
+			sourceNode := vmi.Status.NodeName
 			liveMigrateVirtualMachine(vmName)
-			checkLiveMigrationSucceeded(vmName, migrationMode)
+			checkLiveMigrationSucceeded(vmName, sourceNode, migrationMode)
 			checkConnectivityAndNetworkPolicies(vmName, externalContainer, serverAddresses, serverPort, step)
 		}
 
@@ -2404,6 +2418,186 @@ chpasswd: { expire: False }
 			Entry("after succeeded live migration", liveMigrateSucceed),
 			Entry("after failed live migration", liveMigrateFailed),
 		)
+
+		// A live-migrated VM stops receiving broadcast traffic (e.g. ARP) when
+		// ovn-northd recomputes while the migration target LSP is disabled
+		// (https://github.com/ovn-org/ovn-kubernetes/issues/7312): hold the
+		// migration, force a recompute, let the migration finish and assert
+		// the VM stays reachable from a peer pod.
+		It("should keep a live-migrated VM reachable from its secondary network after ovn-northd recomputes during migration", func(ctx SpecContext) {
+			ovnNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
+			execInContainer := func(ctx context.Context, podNamespace, podName, containerName string, cmd ...string) (string, error) {
+				ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+				defer cancel()
+				stdout, stderr, err := e2epod.ExecWithOptionsContext(ctx, fr, e2epod.ExecOptions{
+					Command:       cmd,
+					Namespace:     podNamespace,
+					PodName:       podName,
+					ContainerName: containerName,
+					CaptureStdout: true,
+					CaptureStderr: true,
+				})
+				output := strings.TrimSpace(stdout)
+				if err != nil {
+					return output, fmt.Errorf("failed to run %q in %s/%s: %w, stderr: %q", strings.Join(cmd, " "), podNamespace, podName, err, stderr)
+				}
+				return output, nil
+			}
+
+			By("setting up the localnet underlay")
+			cudn, networkName := kubevirt.GenerateCUDN(namespace, "net1", udnv1.NetworkTopologyLocalnet, udnv1.NetworkRoleSecondary, udnv1.DualStackCIDRs{})
+			createCUDN(ctx, cudn)
+
+			Expect(providerCtx.SetupUnderlay(fr, infraapi.Underlay{LogicalNetworkName: networkName})).To(Succeed(), "failed to set up the localnet underlay")
+
+			var (
+				labels       map[string]string
+				nodeSelector map[string]string
+			)
+			annotations := map[string]string{
+				kubevirtv1.FuncTestBlockLauncherPrepareMigrationTargetAnnotation: "",
+			}
+			networkData, err := staticIPsNetworkData(filterCIDRs(fr.ClientSet, vmiIPv4, vmiIPv6))
+			Expect(err).NotTo(HaveOccurred(), "failed to generate the VM's network data")
+			vm := fedoraWithTestToolingVM(
+				labels,
+				annotations,
+				nodeSelector,
+				kubevirtv1.NetworkSource{
+					Multus: &kubevirtv1.MultusNetwork{
+						NetworkName: cudn.Name,
+					},
+				},
+				userData,
+				networkData,
+			)
+			vm.Spec.Template.Spec.Domain.Devices.Interfaces[0].MacAddress = vmiMAC
+			createVirtualMachine(vm)
+			vmi := &kubevirtv1.VirtualMachineInstance{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: namespace,
+					Name:      vm.Name,
+				},
+			}
+			waitVirtualMachineInstanceReadiness(vmi)
+			Expect(crClient.Get(ctx, crclient.ObjectKeyFromObject(vmi), vmi)).To(Succeed(), "failed to get the VMI after creation")
+
+			nadName := fmt.Sprintf("%s/%s", namespace, cudn.Name)
+			lspName := func(podName string) string {
+				return util.GetUserDefinedNetworkLogicalPortName(namespace, podName, nadName)
+			}
+
+			By("creating a peer pod on the secondary network")
+			virtLauncherPods, err := fr.ClientSet.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
+				LabelSelector: fmt.Sprintf("%s=%s", kubevirtv1.CreatedByLabel, vmi.UID),
+			})
+			Expect(err).NotTo(HaveOccurred(), "failed to list the virt-launcher pods for the VM")
+			Expect(virtLauncherPods.Items).To(HaveLen(1), "should find exactly one virt-launcher pod for the running VM")
+			sourcePod := virtLauncherPods.Items[0]
+			// Exclude the VM's source node: a stale OVN FDB entry blackholes
+			// unicast to the migrated VM from that node (FDP-4420).
+			// TODO: remove this filtering once the OVN bug is resolved.
+			nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.Background(), fr.ClientSet, 3)
+			Expect(err).NotTo(HaveOccurred(), "failed to list the schedulable nodes")
+			var peerNode string
+			for _, node := range nodes.Items {
+				if node.Name != sourcePod.Spec.NodeName {
+					peerNode = node.Name
+					break
+				}
+			}
+			Expect(peerNode).NotTo(BeEmpty(), "should find a node other than the VM's source node for the peer pod")
+			peerPod, err := createPod(fr, "peer", peerNode, namespace, []string{"bash", "-c"}, map[string]string{}, func(pod *corev1.Pod) {
+				pod.Annotations = networkSelectionElements(nadapi.NetworkSelectionElement{
+					Name:      cudn.Name,
+					IPRequest: filterCIDRs(fr.ClientSet, "172.31.0.200/24", "2010:100:200::200/60"),
+				})
+				pod.Spec.Containers[0].Image = images.Netshoot()
+				pod.Spec.Containers[0].Args = []string{"sleep infinity"}
+				// CAP NET_ADMIN is needed to flush the neighbor cache.
+				pod.Spec.Containers[0].SecurityContext = &corev1.SecurityContext{
+					Capabilities: &corev1.Capabilities{
+						Add: []corev1.Capability{"NET_ADMIN"},
+					},
+				}
+			})
+			Expect(err).NotTo(HaveOccurred(), "failed to create the peer pod")
+
+			var vmIPs []string
+			for _, cidr := range filterCIDRs(fr.ClientSet, vmiIPv4, vmiIPv6) {
+				vmIPs = append(vmIPs, strings.Split(cidr, "/")[0])
+			}
+			pingVM := func() error {
+				pings := make([]string, 0, len(vmIPs))
+				for _, ip := range vmIPs {
+					pings = append(pings, fmt.Sprintf("ping -c 1 -W 2 %s", ip))
+				}
+				// Flush the neighbor cache first: a stale entry would make
+				// the kernel unicast the ARP probe, masking the bug.
+				script := "ip neigh flush all && ip -6 neigh flush all && " + strings.Join(pings, " && ")
+				output, err := execInContainer(ctx, namespace, peerPod.Name, peerPod.Spec.Containers[0].Name, "bash", "-c", script)
+				if err != nil {
+					return fmt.Errorf("peer failed to reach the VM: %w, output: %q", err, output)
+				}
+				return nil
+			}
+
+			By("sanity checking the peer can reach the VM before the migration")
+			Eventually(pingVM).WithTimeout(2*time.Minute).WithPolling(5*time.Second).Should(Succeed(), "the peer should reach the VM on its secondary network before the migration")
+
+			By("running live migration for virtual machine instance")
+			vmim := liveMigrateVirtualMachine(vm.Name)
+
+			unblockPatch := crclient.RawPatch(
+				types.MergePatchType,
+				[]byte(fmt.Sprintf(`{"metadata":{"annotations":{%q:null}}}`, kubevirtv1.FuncTestBlockLauncherPrepareMigrationTargetAnnotation)),
+			)
+			DeferCleanup(func() {
+				_ = crClient.Patch(context.Background(), vmi, unblockPatch)
+			})
+
+			By("waiting for the migration target pod and node to be reported in VMI status")
+			Eventually(func(g Gomega) {
+				g.Expect(crClient.Get(ctx, crclient.ObjectKeyFromObject(vmi), vmi)).To(Succeed(), "failed to get the VMI while waiting for the migration state")
+				g.Expect(vmi.Status.MigrationState).NotTo(BeNil(), "migration state should be reported")
+				g.Expect(vmi.Status.MigrationState.TargetNode).NotTo(BeEmpty(), "migration target node should be reported")
+				g.Expect(vmi.Status.MigrationState.TargetPod).NotTo(BeEmpty(), "migration target pod should be reported")
+			}).WithTimeout(2 * time.Minute).WithPolling(500 * time.Millisecond).Should(Succeed())
+			targetNode := vmi.Status.MigrationState.TargetNode
+			targetPod := vmi.Status.MigrationState.TargetPod
+			e2eframework.Logf("migration target: node %s, pod %s", targetNode, targetPod)
+
+			By("waiting for the migration to be held in the PreparingTarget phase by the func-test annotation")
+			Eventually(func(g Gomega) kubevirtv1.VirtualMachineInstanceMigrationPhase {
+				g.Expect(crClient.Get(ctx, crclient.ObjectKeyFromObject(vmim), vmim)).To(Succeed(), "failed to get the VMIM while waiting for the migration to be held")
+				return vmim.Status.Phase
+			}).WithTimeout(2*time.Minute).WithPolling(time.Second).Should(Equal(kubevirtv1.MigrationPreparingTarget), "the func-test annotation should hold the migration in the PreparingTarget phase")
+
+			var destinationNodeOVNPod string
+			Eventually(func(g Gomega) {
+				destinationNodeOVNPod = ovnkubeNodePodOn(g, ctx, fr, targetNode)
+			}).WithTimeout(time.Minute).WithPolling(time.Second).Should(Succeed())
+			targetLSP := lspName(targetPod)
+
+			By("asserting the migration target LSP is disabled while the target preparation is blocked")
+			Eventually(func(g Gomega) string {
+				output, err := execInContainer(ctx, ovnNamespace, destinationNodeOVNPod, "ovn-northd", "ovn-nbctl", "--if-exists", "get", "logical-switch-port", targetLSP, "enabled")
+				g.Expect(err).NotTo(HaveOccurred(), "failed to read the enabled column of the migration target LSP")
+				return output
+			}).WithTimeout(time.Minute).WithPolling(time.Second).Should(Equal("false"), "the migration target LSP should stay disabled while the target preparation is blocked by the func-test annotation")
+
+			By("forcing one ovn-northd recompute while the migration target LSP is disabled")
+			output, err := execInContainer(ctx, ovnNamespace, destinationNodeOVNPod, "ovn-northd", "ovn-appctl", "-t", "ovn-northd", "inc-engine/recompute")
+			Expect(err).NotTo(HaveOccurred(), "the ovn-northd recompute request should succeed: %s", output)
+
+			By("unblocking the migration target preparation")
+			Expect(crClient.Patch(ctx, vmi, unblockPatch)).To(Succeed(), "should remove the func-test annotation blocking the migration target preparation")
+
+			checkLiveMigrationSucceeded(vm.Name, sourcePod.Spec.NodeName, kubevirtv1.MigrationPreCopy)
+
+			By("asserting the migrated VM is still reachable from the peer pod")
+			Eventually(pingVM).WithTimeout(time.Minute).WithPolling(5*time.Second).Should(Succeed(), "the peer should reach the live-migrated VM on its secondary network after ovn-northd recomputed during the migration")
+		})
 	})
 
 	DescribeTable("user-defined network port-security disabled, TCP connections with spoofed MAC should survive successful and failed live migration", feature.MACSecurity,
@@ -2854,3 +3048,15 @@ ethernets:
 		})
 	})
 })
+
+// ovnkubeNodePodOn returns the name of the ovnkube-node pod running on nodeName.
+func ovnkubeNodePodOn(g Gomega, ctx context.Context, fr *e2eframework.Framework, nodeName string) string {
+	GinkgoHelper()
+	pods, err := fr.ClientSet.CoreV1().Pods(deploymentconfig.Get().OVNKubernetesNamespace()).List(ctx, metav1.ListOptions{
+		LabelSelector: "app=ovnkube-node",
+		FieldSelector: fmt.Sprintf("spec.nodeName=%s", nodeName),
+	})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(pods.Items).NotTo(BeEmpty(), "should find ovnkube-node pod on node %s", nodeName)
+	return pods.Items[0].Name
+}
