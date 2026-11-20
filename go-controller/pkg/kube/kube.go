@@ -673,16 +673,27 @@ func (k *KubeOVN) UpdateIPAMClaimIPs(ctx context.Context, updatedIPAMClaim *ipam
 	return err
 }
 
-// SetAnnotationsOnNAD takes a NAD namespace and name and a map of key/value string pairs to set as annotations
-func (k *KubeOVN) SetAnnotationsOnNAD(ctx context.Context, namespace, name string, annotations map[string]string, fieldManager string) error {
+// SetAnnotationsOnNAD takes a NAD namespace and name and a map of key/value string pairs to set as annotations.
+//
+// A non-empty resourceVersion makes the patch conditional on the object not
+// having changed since it was read: the apiserver rejects it with a conflict
+// otherwise. Callers that compute an annotation from its own previous value
+// must pass one, because the merge patch itself carries no concurrency
+// control and would silently overwrite another writer's update. Callers that
+// set annotations they alone own can pass an empty string.
+func (k *KubeOVN) SetAnnotationsOnNAD(ctx context.Context, namespace, name, resourceVersion string, annotations map[string]string, fieldManager string) error {
 	var err error
 	var patchData []byte
+	metadata := map[string]interface{}{
+		"annotations": annotations,
+	}
+	if resourceVersion != "" {
+		metadata["resourceVersion"] = resourceVersion
+	}
 	patch := struct {
 		Metadata map[string]interface{} `json:"metadata"`
 	}{
-		Metadata: map[string]interface{}{
-			"annotations": annotations,
-		},
+		Metadata: metadata,
 	}
 
 	patchData, err = json.Marshal(&patch)
