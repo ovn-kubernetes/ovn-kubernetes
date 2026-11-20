@@ -816,6 +816,11 @@ var _ = ginkgo.Describe("BGP: Pod to external server when CUDN network is advert
 		gomega.Expect(len(nodes.Items)).To(gomega.BeNumerically(">", 2))
 	})
 
+	ginkgo.It("restores overlay pod SNAT on withdrawal and skips it again while another node is degraded",
+		feature.NetworkSegmentation, ginkgo.SpecTimeout(10*time.Minute), func(ctx ginkgo.SpecContext) {
+			testOverlaySNATRecovery(ctx, f, nodes.Items[:2], frrContainerIPv4, frrContainerIPv6)
+		})
+
 	ginkgo.DescribeTable("Route Advertisements",
 		func(ctx ginkgo.SpecContext, cudnTemplate *udnv1.ClusterUserDefinedNetwork, ra *rav1.RouteAdvertisements) {
 			// set the exact selector
@@ -1396,7 +1401,7 @@ var _ = ginkgo.Describe("BGP: When an advertised CUDN network is dynamically all
 		ginkgo.DeferCleanup(func() { raClient.K8sV1().RouteAdvertisements().Delete(context.TODO(), ra.Name, metav1.DeleteOptions{}) })
 
 		ginkgo.By("ensure the route advertisement is accepted although the network is not allocated on all nodes")
-		gomega.Eventually(routeAdvertisementsReadyFunc(*raClient, ra.Name), 30*time.Second, time.Second).Should(gomega.Succeed())
+		gomega.Eventually(routeAdvertisementsReadyFunc(ctx, *raClient, ra.Name), 30*time.Second, time.Second).Should(gomega.Succeed())
 
 		checkNodeAdvertisedInFRR := func(node corev1.Node) {
 			var podv4CIDR, podv6CIDR string
@@ -1425,7 +1430,7 @@ var _ = ginkgo.Describe("BGP: When an advertised CUDN network is dynamically all
 		framework.ExpectNoError(err)
 		checkNodeAdvertisedInFRR(otherNode)
 
-		gomega.Eventually(routeAdvertisementsReadyFunc(*raClient, ra.Name), 10*time.Second, time.Second).Should(gomega.Succeed(),
+		gomega.Eventually(routeAdvertisementsReadyFunc(ctx, *raClient, ra.Name), 10*time.Second, time.Second).Should(gomega.Succeed(),
 			"the route advertisement must remain accepted")
 	})
 })
@@ -3712,7 +3717,14 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 		}
 		raClient, err := raclientset.NewForConfig(f.ClientConfig())
 		framework.ExpectNoError(err, "creating the RouteAdvertisements client")
-		gomega.Eventually(routeAdvertisementsReadyFunc(*raClient, testNetworkName), timeout, polling).Should(gomega.Succeed(), "waiting for initial RouteAdvertisements acceptance")
+		expectRAAccepted := func(description string) {
+			ginkgo.GinkgoHelper()
+			pollCtx, cancel := context.WithTimeout(ctx, timeout)
+			defer cancel()
+			gomega.Eventually(pollCtx, routeAdvertisementsReadyFunc(pollCtx, *raClient, testNetworkName)).
+				WithPolling(polling).Should(gomega.Succeed(), description)
+		}
+		expectRAAccepted("waiting for initial RouteAdvertisements acceptance")
 		vtepName := testNetworkName + "-vtep"
 		var original string
 		prefixes := make([]string, 2)
@@ -3795,7 +3807,7 @@ var _ = ginkgo.Describe("BGP: For BGP configured networks", feature.RouteAdverti
 		gomega.Consistently(func() error { return checkRoutes(false) }, 5*time.Second, polling).Should(gomega.Succeed(), "the rejected VTEP route must stay withdrawn while the other node remains advertised")
 		ginkgo.By("restoring the annotation and observing the VTEP route return")
 		framework.ExpectNoError(patchAnnotation(original), "restoring the valid VTEP annotation")
-		gomega.Eventually(routeAdvertisementsReadyFunc(*raClient, testNetworkName), timeout, polling).Should(gomega.Succeed(), "waiting for RouteAdvertisements acceptance after restoration")
+		expectRAAccepted("waiting for RouteAdvertisements acceptance after restoration")
 		gomega.Eventually(func() error { return checkRoutes(true) }, timeout, polling).Should(gomega.Succeed(), "waiting for both VTEP routes to return")
 	})
 
@@ -4147,9 +4159,9 @@ func ndpBroadcastNSFilter(targetIP net.IP) string {
 
 // routeAdvertisementsReadyFunc returns a function that checks for the
 // Accepted condition in the provided RouteAdvertisements
-func routeAdvertisementsReadyFunc(c raclientset.Clientset, name string) func() error {
+func routeAdvertisementsReadyFunc(ctx context.Context, c raclientset.Clientset, name string) func() error {
 	return func() error {
-		ra, err := c.K8sV1().RouteAdvertisements().Get(context.Background(), name, metav1.GetOptions{})
+		ra, err := c.K8sV1().RouteAdvertisements().Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
 			return err
 		}
@@ -4499,7 +4511,7 @@ func createNamespaceWithPrimaryNetworkOfType(
 	}
 
 	err = createUserDefinedNetwork(
-		f,
+		context.Background(), f,
 		ictx,
 		namespace,
 		networkName,
@@ -4517,7 +4529,7 @@ func createNamespaceWithPrimaryNetworkOfType(
 	}
 
 	err = createRouteAdvertisements(
-		f,
+		context.Background(), f,
 		ictx,
 		networkName,
 		targetVRF,
@@ -4532,6 +4544,7 @@ func createNamespaceWithPrimaryNetworkOfType(
 }
 
 func createUserDefinedNetwork(
+	ctx context.Context,
 	f *framework.Framework,
 	ictx infraapi.Context,
 	namespace *corev1.Namespace,
@@ -4597,16 +4610,18 @@ func createUserDefinedNetwork(
 	ok := unstructuredObj.GetObjectKind()
 	ok.SetGroupVersionKind(gvk)
 
-	_, err = client.Create(context.Background(), unstructuredObj, metav1.CreateOptions{})
+	_, err = client.Create(ctx, unstructuredObj, metav1.CreateOptions{})
 	if err != nil {
-		return fmt.Errorf("failed to convert network to unstructured: %w", err)
+		return fmt.Errorf("failed to create network %s: %w", name, err)
 	}
 	ictx.AddCleanUpFn(func() error {
-		return client.Delete(context.Background(), name, metav1.DeleteOptions{})
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		return client.Delete(ctx, name, metav1.DeleteOptions{})
 	})
 	var lastReadyErr error
 	if err := wait.PollUntilContextTimeout(
-		context.Background(),
+		ctx,
 		time.Second,
 		30*time.Second,
 		true,
@@ -4625,6 +4640,7 @@ func createUserDefinedNetwork(
 }
 
 func createRouteAdvertisements(
+	ctx context.Context,
 	f *framework.Framework,
 	ictx infraapi.Context,
 	name string,
@@ -4662,12 +4678,14 @@ func createRouteAdvertisements(
 	if err != nil {
 		return fmt.Errorf("failed to create RouteAdvertisements client: %w", err)
 	}
-	_, err = raClient.K8sV1().RouteAdvertisements().Create(context.TODO(), ra, metav1.CreateOptions{})
+	_, err = raClient.K8sV1().RouteAdvertisements().Create(ctx, ra, metav1.CreateOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to create RouteAdvertisements: %w", err)
 	}
 	ictx.AddCleanUpFn(func() error {
-		err := raClient.K8sV1().RouteAdvertisements().Delete(context.Background(), name, metav1.DeleteOptions{})
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		err := raClient.K8sV1().RouteAdvertisements().Delete(ctx, name, metav1.DeleteOptions{})
 		if apierrors.IsNotFound(err) {
 			// tolerate tests that delete the RouteAdvertisements themselves
 			return nil
@@ -4676,12 +4694,12 @@ func createRouteAdvertisements(
 	})
 	var lastReadyErr error
 	if err := wait.PollUntilContextTimeout(
-		context.Background(),
+		ctx,
 		time.Second,
 		30*time.Second,
 		true,
 		func(ctx context.Context) (bool, error) {
-			lastReadyErr = routeAdvertisementsReadyFunc(*raClient, name)()
+			lastReadyErr = routeAdvertisementsReadyFunc(ctx, *raClient, name)()
 			return lastReadyErr == nil, nil
 		},
 	); err != nil {

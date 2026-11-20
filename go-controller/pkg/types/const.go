@@ -237,6 +237,14 @@ const (
 	// generated from input validated by the RouteAdvertisements controller
 	OvnRouteAdvertisementsValidatedKey = OvnK8sPrefix + "/route-advertisements-validated"
 
+	// OvnRouteAdvertisementsIntentKey annotates a NAD with what each applied
+	// RouteAdvertisements that advertises its pod network asks for: the target
+	// VRF and whether EgressIPs are advertised too. Nodes read this instead
+	// of the RouteAdvertisements itself.
+	OvnRouteAdvertisementsIntentKey = OvnK8sPrefix + "/route-advertisements-intent"
+	// OvnRouteAdvertisementsNodeKey labels generated configurations for node-scoped watches.
+	OvnRouteAdvertisementsNodeKey = OvnK8sPrefix + "/route-advertisements-node"
+
 	// name of the configmap used to synchronize status (e.g. watch for topology changes)
 	OvnK8sStatusCMName         = "control-plane-status"
 	OvnK8sStatusKeyTopoVersion = "topology-version"

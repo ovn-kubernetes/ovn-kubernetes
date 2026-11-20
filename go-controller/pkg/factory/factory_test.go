@@ -6,7 +6,9 @@ package factory
 import (
 	"context"
 	"fmt"
+	"os"
 	"reflect"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -15,6 +17,7 @@ import (
 	ipamclaimsapifake "github.com/k8snetworkplumbingwg/ipamclaims/pkg/crd/ipamclaims/v1alpha1/apis/clientset/versioned/fake"
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	nadsfake "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/fake"
+	frrapi "github.com/metallb/frr-k8s/api/v1beta1"
 	ocpcloudnetworkapi "github.com/openshift/api/cloudnetwork/v1"
 	ocpconfigapi "github.com/openshift/api/config/v1"
 	ocpcloudnetworkclientsetfake "github.com/openshift/client-go/cloudnetwork/clientset/versioned/fake"
@@ -53,6 +56,60 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
+
+func TestMain(m *testing.M) {
+	// Third-party NAD and FRR fake clients do not send WatchList's initial
+	// bookmark. Disable WatchList before any test uses client-go: it caches
+	// feature-gate environment values on first use, so per-test t.Setenv
+	// calls could be too late and cleanup would not reset the cached value.
+	if err := os.Setenv("KUBE_FEATURE_WatchListClient", "false"); err != nil {
+		fmt.Fprintf(os.Stderr, "disable client-go WatchList for factory tests: %v\n", err)
+		os.Exit(1)
+	}
+	os.Exit(m.Run())
+}
+
+func TestRouteAdvertisementsNodeWatch(t *testing.T) {
+	localNode := strings.Repeat("a", 63) + ".example.org"
+	for _, nodeAgent := range []bool{false, true} {
+		name := "OVN controller"
+		if nodeAgent {
+			name = "node agent"
+		}
+		t.Run(name, func(t *testing.T) {
+			g := NewWithT(t)
+			g.Expect(config.PrepareTestConfig()).To(Succeed(), "prepare watch factory test configuration")
+			t.Cleanup(func() { g.Expect(config.PrepareTestConfig()).To(Succeed(), "restore test configuration") })
+			config.OVNKubernetesFeature.EnableMultiNetwork = true
+			config.OVNKubernetesFeature.EnableRouteAdvertisements = true
+			clients := util.GetOVNClientset()
+			for _, node := range []string{localNode, "remote"} {
+				_, err := clients.FRRClient.ApiV1beta1().FRRConfigurations("frr").Create(context.Background(),
+					&frrapi.FRRConfiguration{ObjectMeta: metav1.ObjectMeta{Name: node, Namespace: "frr", Labels: map[string]string{
+						ovntypes.OvnRouteAdvertisementsKey: "ra", ovntypes.OvnRouteAdvertisementsNodeKey: util.RouteAdvertisementsNodeLabel(node),
+					}}}, metav1.CreateOptions{})
+				g.Expect(err).NotTo(HaveOccurred(), "create FRR configuration for node %s", node)
+			}
+			var wf *WatchFactory
+			var err error
+			if nodeAgent {
+				wf, err = NewNodeWatchFactory(clients.GetNodeClientset(), localNode)
+			} else {
+				wf, err = NewOVNKubeControllerWatchFactory(clients.GetOVNKubeControllerClientset(), localNode)
+			}
+			g.Expect(err).NotTo(HaveOccurred(), "create %s watch factory for node %s", name, localNode)
+			defer wf.Shutdown()
+			g.Expect(wf.Start()).To(Succeed(), "start watch factory and synchronize its caches")
+			configs, err := wf.FRRConfigurationsInformer().Lister().List(labels.Everything())
+			g.Expect(err).NotTo(HaveOccurred(), "list cached FRR configurations for node %s", localNode)
+			g.Expect(configs).To(HaveLen(1), "the node watch must exclude remote configurations")
+			g.Expect(configs[0].Name).To(Equal(localNode), "the cached configuration must belong to the local node")
+			indexed, err := wf.FRRConfigurationsInformer().Informer().GetIndexer().ByIndex(ovntypes.OvnRouteAdvertisementsKey, "ra")
+			g.Expect(err).NotTo(HaveOccurred(), "look up configurations by RA and node %s", localNode)
+			g.Expect(indexed).To(HaveLen(1), "the RA index must include the local configuration")
+		})
+	}
+}
 
 func TestFactory(t *testing.T) {
 	RegisterFailHandler(Fail)

@@ -138,6 +138,8 @@ Shared packages used across multiple components:
 - Unit tests live alongside the code as `*_test.go` files.
 - Some packages use Ginkgo suites (identified by a `_suite_test.go` file);
   standard Go `testing.T` tests are equally acceptable and common.
+- Follow the root [test organization and reuse guidance](../../AGENTS.md#test-organization-and-reuse)
+  when extending coverage or consolidating tests.
 
 ## Test Helpers
 
