@@ -1448,7 +1448,6 @@ config:
 			vmi                     *kubevirtv1.VirtualMachineInstance
 			cidrIPv4, cidrIPv6      string
 			staticIPv4, staticIPv6  string
-			staticMAC               = "02:00:00:00:00:01"
 			externalMACVRFContainer = infraapi.ExternalContainer{
 				CmdArgs: []string{"sleep", "infinity"},
 			}
@@ -1546,6 +1545,8 @@ write_files:
 
 					annotations, err := kubevirt.GenerateAddressesAnnotations("net1", filterIPs(fr.ClientSet, staticIPv4, staticIPv6))
 					Expect(err).NotTo(HaveOccurred())
+					staticMAC, err := util.GenerateRandMAC()
+					Expect(err).NotTo(HaveOccurred())
 
 					vm = fedoraWithTestToolingVM(nil /*labels*/, annotations, nil, /*nodeSelector*/
 						kubevirtv1.NetworkSource{
@@ -1553,7 +1554,7 @@ write_files:
 						}, userDataWithIperfServer, networkDataDualStack)
 					vm.Spec.Template.Spec.Domain.Devices.Interfaces[0].Bridge = nil
 					vm.Spec.Template.Spec.Domain.Devices.Interfaces[0].Binding = &kubevirtv1.PluginBinding{Name: "l2bridge"}
-					vm.Spec.Template.Spec.Domain.Devices.Interfaces[0].MacAddress = staticMAC
+					vm.Spec.Template.Spec.Domain.Devices.Interfaces[0].MacAddress = staticMAC.String()
 					createVirtualMachine(vm)
 					return vm.Name
 				},
@@ -1866,8 +1867,20 @@ ip route add %[3]s via %[4]s
 			if _, hasIPRequests := vmi.Annotations[kubevirt.AddressesAnnotation]; hasIPRequests {
 				Expect(expectedAddreses).To(ConsistOf(filterIPs(fr.ClientSet, staticIPv4, staticIPv6)), "expected addresses should be consistent with the static IPs")
 			}
-			if vmi.Spec.Domain.Devices.Interfaces[0].MacAddress != "" {
-				Expect(vmi.Spec.Domain.Devices.Interfaces[0].MacAddress).To(Equal(vmi.Status.Interfaces[0].MAC), "expected mac address should be consistent with the static MAC")
+			requestedInterface := vmi.Spec.Domain.Devices.Interfaces[0]
+			readMAC := func() (string, error) {
+				requestCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+				defer cancel()
+				return kubevirt.MACFromStatus(requestCtx, crClient, crclient.ObjectKeyFromObject(vmi), requestedInterface.Name)
+			}
+			var expectedMAC string
+			Eventually(ctx, func() error {
+				var err error
+				expectedMAC, err = readMAC()
+				return err
+			}, 10*time.Second, time.Second).Should(Succeed())
+			if requestedInterface.MacAddress != "" {
+				Expect(expectedMAC).To(Equal(requestedInterface.MacAddress), "expected MAC should be consistent with the requested MAC")
 			}
 
 			expectedAddresesAtGuest := expectedAddreses
@@ -1932,6 +1945,7 @@ ip route add %[3]s via %[4]s
 			obtainedAddresses := virtualMachineAddressesFromStatus(vmi, expectedNumberOfAddresses)
 
 			Expect(obtainedAddresses).To(Equal(expectedAddreses))
+			Eventually(ctx, readMAC, 10*time.Second, time.Second).Should(Equal(expectedMAC), "VMI %s/%s should preserve its MAC after %s", namespace, vmi.Name, td.test.description)
 			Eventually(kubevirt.RetrieveAllGlobalAddressesFromGuest).
 				WithArguments(virtClient, vmi).
 				WithTimeout(5*time.Second).
@@ -2630,7 +2644,9 @@ runcmd:
 		}
 
 		It("should fail when creating second VM with duplicate user requested MAC", func() {
-			const testMAC = "02:a1:b2:c3:d4:e5"
+			mac, err := util.GenerateRandMAC()
+			Expect(err).NotTo(HaveOccurred())
+			testMAC := mac.String()
 			vmi1 := newVMIWithPrimaryIfaceMAC(testMAC)
 			vm1 := generateVM(vmi1)
 			createVirtualMachine(vm1)
