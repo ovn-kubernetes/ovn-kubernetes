@@ -18,6 +18,9 @@ OVN should work with any supported OVS release, extra requirements for OVS versi
 Some of the requirements are feature-specific.
 
 ## UDN
+
+Masquerade subnet sized to the expected number of UDNs.
+
 For kubelet network probes to work with UDN pods, the following are required:
 - kernel fix 7f3287db654395f9c5ddd246325ff7889f550286: netfilter: nft_socket: make cgroupsv2 matching work with namespaces)
 
