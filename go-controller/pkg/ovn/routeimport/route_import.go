@@ -251,7 +251,9 @@ func (c *controller) subscribe(stop <-chan struct{}) {
 				linkEventCh = subscribeNetlinkLinkEvents(c.netlink, stop, onError)
 			case l, open := <-linkEventCh:
 				if !open {
+					c.Lock()
 					c.tables = map[int]int{}
+					c.Unlock()
 					linkEventCh = subscribeNetlinkLinkEvents(c.netlink, stop, onError)
 					continue
 				}

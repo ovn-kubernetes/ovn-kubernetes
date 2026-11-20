@@ -9,6 +9,7 @@ import (
 	"net"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/go-logr/logr"
 	"github.com/go-logr/logr/testr"
@@ -880,6 +881,63 @@ func Test_controller_syncLinkUpdate(t *testing.T) {
 			g.Consistently(matchReconcile).WithArguments(tt.expectReconciles).Should(gomega.Succeed())
 		})
 	}
+}
+
+// TestControllerSubscribeWaitsForTableReader verifies that a link subscription
+// reset preserves the table cache while a reader holds the controller's read
+// lock, then clears the cache and resubscribes after the reader releases it.
+func TestControllerSubscribeWaitsForTableReader(t *testing.T) {
+	// 1. Capture both the initial and replacement link subscription channels.
+	// This lets the test observe resubscription across the goroutine boundary.
+	g := gomega.NewWithT(t)
+	stop := make(chan struct{})
+	t.Cleanup(func() { close(stop) })
+	var stopArg <-chan struct{} = stop
+	subscriptions := make(chan chan<- netlink.LinkUpdate, 2)
+	nlmock := &mocks.NetLinkOps{}
+	nlmock.On("RouteSubscribeWithOptions", mock.AnythingOfType("chan<- netlink.RouteUpdate"), stopArg, mock.Anything).
+		Return(nil).Once()
+	nlmock.On("LinkSubscribeWithOptions", mock.AnythingOfType("chan<- netlink.LinkUpdate"), stopArg, mock.Anything).
+		Run(func(args mock.Arguments) { subscriptions <- args.Get(0).(chan<- netlink.LinkUpdate) }).
+		Return(nil).Twice()
+
+	// 2. Seed a cached table hint and start the subscription goroutines.
+	c := &controller{
+		log:     logr.Discard(),
+		netlink: nlmock,
+		tables:  map[int]int{1000: 1},
+	}
+	c.subscribe(stop)
+	var linkEventCh chan<- netlink.LinkUpdate
+	// Wait for the initial subscription so closing its channel triggers a reset.
+	g.Eventually(subscriptions).WithTimeout(5 * subscribePeriod).Should(gomega.Receive(&linkEventCh))
+
+	// 3. Keep the reader in a nested function so its deferred unlock runs before
+	// the next step waits for resubscription, even if an assertion stops the test.
+	func() {
+		// Model a route-processing goroutine reading the cached table hint.
+		c.RLock()
+		defer c.RUnlock()
+		// Model netlink closing the event channel after a subscription error.
+		close(linkEventCh)
+		// The subscriber resets the cache before resubscribing. A replacement
+		// subscription here would mean the reset bypassed the reader's lock.
+		g.Consistently(subscriptions).WithTimeout(100 * time.Millisecond).ShouldNot(gomega.Receive())
+		// The table hint must remain available for the lifetime of this reader.
+		g.Expect(c.tables).To(gomega.HaveKeyWithValue(1000, 1))
+	}()
+
+	// 4. Once the reader releases its lock, the pending reset must proceed and
+	// establish a replacement subscription instead of remaining blocked.
+	g.Eventually(subscriptions).WithTimeout(5 * subscribePeriod).Should(gomega.Receive())
+	c.RLock()
+	defer c.RUnlock()
+	// Inspect under the read lock: an empty cache confirms the reset completed.
+	g.Expect(c.tables).To(gomega.BeEmpty())
+
+	// 5. Require exactly one route subscription and two link subscriptions:
+	// the initial link subscription and its replacement after the reset.
+	nlmock.AssertExpectations(t)
 }
 
 func Test_controller_subscribe(t *testing.T) {
