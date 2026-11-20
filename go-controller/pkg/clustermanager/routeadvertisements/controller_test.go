@@ -801,7 +801,8 @@ func TestController_reconcile(t *testing.T) {
 		cfg.Routers[0].Neighbors[0].Advertise = []string{prefix}
 		return cfg
 	}
-	tests := []struct {
+	type reconcileCase struct {
+		fixtureID            string
 		name                 string
 		ra                   *testRA
 		otherRAs             []*testRA
@@ -827,7 +828,8 @@ func TestController_reconcile(t *testing.T) {
 		expectDegradedMessageContains string
 		expectFRRConfigs              []*testFRRConfig
 		expectNADAnnotations          map[string]map[string]string
-	}{
+	}
+	tests := []reconcileCase{
 		{
 			name: "adds the validated marker to a generated FRRConfiguration that predates input validation",
 			ra:   &testRA{Name: "ra", AdvertisePods: true, SelectsDefault: true},
@@ -871,8 +873,9 @@ func TestController_reconcile(t *testing.T) {
 			},
 		},
 		{
-			name: "reconciles pod+eip RouteAdvertisement for a single FRR config, node and default network and target VRF",
-			ra:   &testRA{Name: "ra", AdvertisePods: true, AdvertiseEgressIPs: true, SelectsDefault: true},
+			fixtureID: "defaultVRF",
+			name:      "reconciles pod+eip RouteAdvertisement for a single FRR config, node and default network and target VRF",
+			ra:        &testRA{Name: "ra", AdvertisePods: true, AdvertiseEgressIPs: true, SelectsDefault: true},
 			frrConfigs: []*testFRRConfig{
 				{
 					Name:      "frrConfig",
@@ -1115,8 +1118,9 @@ func TestController_reconcile(t *testing.T) {
 			expectNADAnnotations: map[string]map[string]string{"red": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}, "blue": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}, "green": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}, "black": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
 		},
 		{
-			name: "(layer3) reconciles eip RouteAdvertisement for a single FRR config, node, non default network and non default target VRF",
-			ra:   &testRA{Name: "ra", TargetVRF: "red", AdvertiseEgressIPs: true, NetworkSelector: map[string]string{"selected": "true"}},
+			fixtureID: "tenantVRF",
+			name:      "(layer3) reconciles eip RouteAdvertisement for a single FRR config, node, non default network and non default target VRF",
+			ra:        &testRA{Name: "ra", TargetVRF: "red", AdvertiseEgressIPs: true, NetworkSelector: map[string]string{"selected": "true"}},
 			frrConfigs: []*testFRRConfig{
 				{
 					Name:      "frrConfig",
@@ -1266,7 +1270,8 @@ func TestController_reconcile(t *testing.T) {
 			reconcile: "ra",
 		},
 		{
-			name: "reconciles a RouteAdvertisement for multiple selected FRR configs, nodes and networks on auto target VRF",
+			fixtureID: "autoVRF",
+			name:      "reconciles a RouteAdvertisement for multiple selected FRR configs, nodes and networks on auto target VRF",
 			ra: &testRA{
 				Name:                     "ra",
 				AdvertisePods:            true,
@@ -1809,8 +1814,9 @@ func TestController_reconcile(t *testing.T) {
 		},
 
 		{
-			name: "rejects invalid peers even while nodes lack InternalIP addresses",
-			ra:   &testRA{Name: "ra", AdvertisePods: true, SelectsDefault: true},
+			fixtureID: "missingInternalIP",
+			name:      "rejects invalid peers even while nodes lack InternalIP addresses",
+			ra:        &testRA{Name: "ra", AdvertisePods: true, SelectsDefault: true},
 			frrConfigs: []*testFRRConfig{{Name: types.ManagedBGPConfigurationName, Namespace: frrNamespace,
 				Routers: []*testRouter{{ASN: 1, Neighbors: []*testNeighbor{{ASN: 1, Address: "10.0.0.2", DualStackAddressFamily: ptr.To(true)}}}},
 			}},
@@ -2244,8 +2250,9 @@ exit
 			expectNADAnnotations: map[string]map[string]string{"red": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
 		},
 		{
-			name: "reconciles EVPN IP-VRF network with auto target and creates a router",
-			ra:   &testRA{Name: "ra", TargetVRF: "auto", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
+			fixtureID: "evpnAutoVRF",
+			name:      "reconciles EVPN IP-VRF network with auto target and creates a router",
+			ra:        &testRA{Name: "ra", TargetVRF: "auto", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
 			frrConfigs: []*testFRRConfig{
 				{
 					Name:      "frrConfig",
@@ -2303,8 +2310,9 @@ exit
 			expectNADAnnotations: map[string]map[string]string{"blue": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
 		},
 		{
-			name: "reconciles EVPN IP-VRF with router ASN from another FRRConfiguration",
-			ra:   &testRA{Name: "ra", TargetVRF: "auto", AdvertisePods: true, SelectsDefault: true, NetworkSelector: map[string]string{"selected": "true"}},
+			fixtureID: "evpnInheritedASN",
+			name:      "reconciles EVPN IP-VRF with router ASN from another FRRConfiguration",
+			ra:        &testRA{Name: "ra", TargetVRF: "auto", AdvertisePods: true, SelectsDefault: true, NetworkSelector: map[string]string{"selected": "true"}},
 			frrConfigs: []*testFRRConfig{
 				{
 					Name:      "frrConfigGlobal",
@@ -2524,8 +2532,9 @@ exit
 			expectNADAnnotations: map[string]map[string]string{"red": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
 		},
 		{
-			name: "advertises VTEP IP /32 in default-VRF router prefixes for EVPN IP-VRF",
-			ra:   &testRA{Name: "ra", TargetVRF: "auto", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
+			fixtureID: "evpnUnderlay",
+			name:      "advertises VTEP IP /32 in default-VRF router prefixes for EVPN IP-VRF",
+			ra:        &testRA{Name: "ra", TargetVRF: "auto", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
 			frrConfigs: []*testFRRConfig{
 				{
 					Name:      "frrConfig",
@@ -2925,8 +2934,9 @@ exit
 			},
 		},
 		{
-			name: "advertises VTEP IPs per node across multiple nodes",
-			ra:   &testRA{Name: "ra", TargetVRF: "auto", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
+			fixtureID: "multiNodeVTEP",
+			name:      "advertises VTEP IPs per node across multiple nodes",
+			ra:        &testRA{Name: "ra", TargetVRF: "auto", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
 			frrConfigs: []*testFRRConfig{
 				{
 					Name:      "frrConfig",
@@ -3307,6 +3317,7 @@ exit
 			expectNADAnnotations: map[string]map[string]string{"blue": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
 		},
 		{
+			fixtureID:  "dynamicUDN",
 			name:       "with dynamic UDN allocation and 'auto' target VRF, only requires matching the networks allocated on each node",
 			dynamicUDN: true,
 			ra:         &testRA{Name: "ra", TargetVRF: "auto", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
@@ -3498,12 +3509,24 @@ exit
 			expectNADAnnotations: map[string]map[string]string{"blue": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}, "red": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
 		},
 	}
+	fixtures := map[string]reconcileCase{}
+	for _, tc := range tests {
+		if tc.fixtureID != "" {
+			fixtures[tc.fixtureID] = tc
+		}
+	}
+	fixture := func(id string) reconcileCase {
+		t.Helper()
+		tc, ok := fixtures[id]
+		if !ok {
+			t.Fatalf("missing route advertisement test fixture %q", id)
+		}
+		return tc
+	}
 	// Seed generated configurations to verify that invalid updates remove
 	// existing advertisements while preserving configurations for valid nodes.
-	for _, base := range slices.Clone(tests) {
-		if base.name != "advertises VTEP IPs per node across multiple nodes" {
-			continue
-		}
+	{
+		base := fixture("multiNodeVTEP")
 		movingEIP := base
 		movingEIP.name = "removes moved EgressIP prefixes with unchanged networks while another node has invalid VTEP"
 		movingRA := *base.ra
@@ -3649,6 +3672,7 @@ exit
 		crossSubset.expectNADAnnotations = map[string]map[string]string{"blue": {types.OvnRouteAdvertisementsKey: ""}}
 		tests = append(tests, crossSubset)
 		for _, invalid := range []struct {
+			fixtureID        string
 			name             string
 			annotation       string
 			generationError  bool
@@ -3657,9 +3681,9 @@ exit
 			ambiguous        bool
 			unsafeInput      bool
 		}{
-			{name: "removes invalid VTEP configuration and unvalidated configurations on unsafe input", annotation: `{"my-vtep":{"ips":["not-an-ip"]}}`, unsafeInput: true},
+			{fixtureID: "unsafeVTEP", name: "removes invalid VTEP configuration and unvalidated configurations on unsafe input", annotation: `{"my-vtep":{"ips":["not-an-ip"]}}`, unsafeInput: true},
 			{name: "removes malformed VTEP advertisements", annotation: "not-json"},
-			{name: "removes invalid node configuration and retries operational generation failure", annotation: "not-json", operationalError: true},
+			{fixtureID: "vtepLookupFailure", name: "removes invalid node configuration and retries operational generation failure", annotation: "not-json", operationalError: true},
 			{name: "withdraws both invalid VTEP and unavailable node configurations", annotation: `{"my-vtep":{"ips":["not-an-ip"]}}`, generationError: true},
 			{name: "removes extra same-family advertisements", annotation: `{"my-vtep":{"ips":["100.64.0.1","100.64.0.99"]}}`},
 			{name: "removes invalid IP advertisements", annotation: `{"my-vtep":{"ips":["not-an-ip"]}}`},
@@ -3667,7 +3691,7 @@ exit
 			{name: "removes out-of-range advertisements", annotation: `{"my-vtep":{"ips":["192.0.2.1"]}}`},
 			{name: "bootstrap collision excludes both nodes", annotation: `{"my-vtep":{"ips":["100.64.0.2"]}}`, noExisting: true},
 			{name: "ambiguous established collision removes configurations for both nodes", annotation: `{"my-vtep":{"ips":["100.64.0.1"]}}`, ambiguous: true},
-			{name: "preserves established advertiser on duplicate VTEP", annotation: `{"my-vtep":{"ips":["100.64.0.2"]}}`},
+			{fixtureID: "duplicateVTEP", name: "preserves established advertiser on duplicate VTEP", annotation: `{"my-vtep":{"ips":["100.64.0.2"]}}`},
 		} {
 			tt := base
 			tt.name = invalid.name
@@ -3748,14 +3772,15 @@ exit
 				copy.Namespace = frrNamespace
 				tt.frrConfigs = append(tt.frrConfigs, &copy)
 			}
+			if invalid.fixtureID != "" {
+				fixtures[invalid.fixtureID] = tt
+			}
 			tests = append(tests, tt)
 		}
 	}
 
-	for _, base := range tests {
-		if base.name != "with dynamic UDN allocation and 'auto' target VRF, only requires matching the networks allocated on each node" {
-			continue
-		}
+	{
+		base := fixture("dynamicUDN")
 		for _, invalid := range []struct {
 			name, message string
 			neighbor      *testNeighbor
@@ -3802,10 +3827,8 @@ exit
 		}
 	}
 
-	for _, base := range tests {
-		if base.name != "advertises VTEP IP /32 in default-VRF router prefixes for EVPN IP-VRF" {
-			continue
-		}
+	{
+		base := fixture("evpnUnderlay")
 		invalid := base
 		invalid.name = "invalid explicit VRF template leaves the underlay template's inherited ASN in use"
 		invalid.frrConfigs = append(slices.Clone(base.frrConfigs), &testFRRConfig{
@@ -3832,15 +3855,7 @@ exit
 
 	// Unused peers must not invalidate the generated configuration. Exercise
 	// each target VRF mode with the same invalid inputs as the early validator.
-	for _, base := range tests {
-		switch base.name {
-		case "reconciles pod+eip RouteAdvertisement for a single FRR config, node and default network and target VRF",
-			"(layer3) reconciles eip RouteAdvertisement for a single FRR config, node, non default network and non default target VRF",
-			"reconciles a RouteAdvertisement for multiple selected FRR configs, nodes and networks on auto target VRF",
-			"with dynamic UDN allocation and 'auto' target VRF, only requires matching the networks allocated on each node":
-		default:
-			continue
-		}
+	for _, base := range []reconcileCase{fixture("defaultVRF"), fixture("tenantVRF"), fixture("autoVRF"), fixture("dynamicUDN")} {
 		for _, invalid := range []struct {
 			name     string
 			neighbor *testNeighbor
@@ -3877,13 +3892,7 @@ exit
 		}
 	}
 
-	for _, base := range tests {
-		switch base.name {
-		case "rejects invalid peers even while nodes lack InternalIP addresses",
-			"reconciles EVPN IP-VRF network with auto target and creates a router":
-		default:
-			continue
-		}
+	for _, base := range []reconcileCase{fixture("missingInternalIP"), fixture("evpnAutoVRF")} {
 		tt := base
 		tt.name = "rejects used dual-stack peers before subnet allocation: " + base.name
 		source := *base.frrConfigs[0]
@@ -3907,43 +3916,35 @@ exit
 
 	// Hostname labels select the FRR daemon, but VTEP ownership and cleanup
 	// must use the node API name stored in the generated annotation.
-	for _, tt := range tests {
-		switch tt.name {
-		case "reconciles EVPN IP-VRF network with auto target and creates a router",
-			"preserves established advertiser on duplicate VTEP",
-			"removes invalid node configuration and retries operational generation failure",
-			"removes invalid VTEP configuration and unvalidated configurations on unsafe input":
-			tt.name += " with distinct hostname labels"
-			tt.nodes = slices.Clone(tt.nodes)
-			for i, node := range tt.nodes {
-				copy := *node
-				copy.Labels = map[string]string{}
-				maps.Copy(copy.Labels, node.Labels)
-				copy.Labels[corev1.LabelHostname] = "host-" + node.Name
-				tt.nodes[i] = &copy
-			}
-			withHostnames := func(configs []*testFRRConfig) []*testFRRConfig {
-				configs = slices.Clone(configs)
-				for i, cfg := range configs {
-					copy := *cfg
-					copy.NodeSelector = maps.Clone(cfg.NodeSelector)
-					if node := copy.NodeSelector[corev1.LabelHostname]; node != "" {
-						copy.NodeSelector[corev1.LabelHostname] = "host-" + node
-					}
-					configs[i] = &copy
-				}
-				return configs
-			}
-			tt.frrConfigs = withHostnames(tt.frrConfigs)
-			tt.expectFRRConfigs = withHostnames(tt.expectFRRConfigs)
-			tests = append(tests, tt)
+	for _, tt := range []reconcileCase{fixture("evpnAutoVRF"), fixture("duplicateVTEP"), fixture("vtepLookupFailure"), fixture("unsafeVTEP")} {
+		tt.name += " with distinct hostname labels"
+		tt.nodes = slices.Clone(tt.nodes)
+		for i, node := range tt.nodes {
+			copy := *node
+			copy.Labels = map[string]string{}
+			maps.Copy(copy.Labels, node.Labels)
+			copy.Labels[corev1.LabelHostname] = "host-" + node.Name
+			tt.nodes[i] = &copy
 		}
+		withHostnames := func(configs []*testFRRConfig) []*testFRRConfig {
+			configs = slices.Clone(configs)
+			for i, cfg := range configs {
+				copy := *cfg
+				copy.NodeSelector = maps.Clone(cfg.NodeSelector)
+				if node := copy.NodeSelector[corev1.LabelHostname]; node != "" {
+					copy.NodeSelector[corev1.LabelHostname] = "host-" + node
+				}
+				configs[i] = &copy
+			}
+			return configs
+		}
+		tt.frrConfigs = withHostnames(tt.frrConfigs)
+		tt.expectFRRConfigs = withHostnames(tt.expectFRRConfigs)
+		tests = append(tests, tt)
 	}
 
-	for _, tt := range tests {
-		if tt.name != "removes invalid VTEP configuration and unvalidated configurations on unsafe input" {
-			continue
-		}
+	{
+		tt := fixture("unsafeVTEP")
 		tt.name = "cleans up deselected network with invalid VTEP and unsafe input"
 		tt.nads = append(slices.Clone(tt.nads), &testNAD{
 			Name: "red", Namespace: "red", Network: util.GenerateCUDNNetworkName("red"), Topology: types.Layer3Topology, Subnet: "10.200.0.0/16",
@@ -3961,12 +3962,8 @@ exit
 			tt.frrConfigs[i] = &copy
 		}
 		tests = append(tests, tt)
-	}
 
-	for _, base := range tests {
-		if base.name != "cleans up deselected network with invalid VTEP and unsafe input" {
-			continue
-		}
+		base := tt
 		for _, invalid := range []struct {
 			name, message string
 			peer          *testNeighbor
@@ -3994,35 +3991,32 @@ exit
 		}
 	}
 
-	for _, tt := range tests {
-		if tt.name == "reconciles EVPN IP-VRF with router ASN from another FRRConfiguration" {
-			// The first node has both templates. Its peers cannot carry blue's routes for node2.
-			split := tt
-			split.name = "degrades an active EVPN IP-VRF whose default router selects another node"
-			split.nodes = append(slices.Clone(tt.nodes), &testNode{Name: "node2", SubnetsAnnotation: `{"default":"1.1.1.0/24","cluster_udn_blue":"10.2.2.0/24"}`})
-			global := *tt.frrConfigs[0]
-			global.NodeSelector = map[string]string{corev1.LabelHostname: "node"}
-			split.frrConfigs = []*testFRRConfig{&global, tt.frrConfigs[1]}
-			tenant := *tt.expectFRRConfigs[1]
-			tenant.NodeSelector = map[string]string{corev1.LabelHostname: "node2"}
-			tenant.Annotations = map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfigVRF/node2"}
-			tenant.Routers = []*testRouter{{ASN: 65100, VRF: "blue", Prefixes: []string{"10.2.2.0/24"}}}
-			split.expectFRRConfigs = append(slices.Clone(tt.expectFRRConfigs), &tenant)
-			split.expectDegradedStatus = metav1.ConditionTrue
-			split.expectDegradedMessageContains = `node "node2": configuration error: EVPN IP-VRF requires a default-VRF router with EVPN peers`
-			tests = append(tests, split)
-		}
-		// Exercise EVPN coverage before prefixes are available, keeping the
-		// expected configuration for the healthy node.
-		switch tt.name {
-		case "reconciles EVPN IP-VRF network with auto target and creates a router",
-			"reconciles EVPN IP-VRF with router ASN from another FRRConfiguration":
-			tt.name += " with a node missing subnets"
-			tt.nodes = append(slices.Clone(tt.nodes), &testNode{Name: "node1"})
-			tt.expectDegradedStatus = metav1.ConditionTrue
-			tt.expectDegradedMessageContains = "node1"
-			tests = append(tests, tt)
-		}
+	{
+		tt := fixture("evpnInheritedASN")
+		// The first node has both templates. Its peers cannot carry blue's routes for node2.
+		split := tt
+		split.name = "degrades an active EVPN IP-VRF whose default router selects another node"
+		split.nodes = append(slices.Clone(tt.nodes), &testNode{Name: "node2", SubnetsAnnotation: `{"default":"1.1.1.0/24","cluster_udn_blue":"10.2.2.0/24"}`})
+		global := *tt.frrConfigs[0]
+		global.NodeSelector = map[string]string{corev1.LabelHostname: "node"}
+		split.frrConfigs = []*testFRRConfig{&global, tt.frrConfigs[1]}
+		tenant := *tt.expectFRRConfigs[1]
+		tenant.NodeSelector = map[string]string{corev1.LabelHostname: "node2"}
+		tenant.Annotations = map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfigVRF/node2"}
+		tenant.Routers = []*testRouter{{ASN: 65100, VRF: "blue", Prefixes: []string{"10.2.2.0/24"}}}
+		split.expectFRRConfigs = append(slices.Clone(tt.expectFRRConfigs), &tenant)
+		split.expectDegradedStatus = metav1.ConditionTrue
+		split.expectDegradedMessageContains = `node "node2": configuration error: EVPN IP-VRF requires a default-VRF router with EVPN peers`
+		tests = append(tests, split)
+	}
+	// Exercise EVPN coverage before prefixes are available, keeping the
+	// expected configuration for the healthy node.
+	for _, tt := range []reconcileCase{fixture("evpnAutoVRF"), fixture("evpnInheritedASN")} {
+		tt.name += " with a node missing subnets"
+		tt.nodes = append(slices.Clone(tt.nodes), &testNode{Name: "node1"})
+		tt.expectDegradedStatus = metav1.ConditionTrue
+		tt.expectDegradedMessageContains = "node1"
+		tests = append(tests, tt)
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
