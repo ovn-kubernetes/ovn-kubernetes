@@ -4,6 +4,17 @@
 E2E_REPORT_DIR:=$(CURDIR)/_artifacts
 JOB_NAME?="$@"
 
+# Cache the kube-apiserver and etcd binaries used by the CRD admission tests.
+ENVTEST_ASSETS_DIR ?= $(CURDIR)/_artifacts/envtest-bin
+# Keep in sync with K8S_VERSION in .github/workflows/test.yml.
+ENVTEST_K8S_VERSION ?= 1.36.2
+
+.PHONY: test-crd
+test-crd:
+	cd crd-integration && \
+	assets="$$(go tool setup-envtest use $(ENVTEST_K8S_VERSION) --bin-dir "$(abspath $(ENVTEST_ASSETS_DIR))" -p path)" && \
+	KUBEBUILDER_ASSETS="$$assets" go test -count=1 -v ./...
+
 # Make no assumptions about network, so run all tests. If on IPv4 or
 # IPv6 only network, set appropriately to skip related tests.
 PLATFORM_IPV4_SUPPORT?=false

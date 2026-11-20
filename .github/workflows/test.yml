@@ -348,6 +348,9 @@ jobs:
         COVERALLS=1 CONTAINER_RUNNABLE=1 make check
         popd
 
+    - name: Run CRD integration tests
+      run: make -C test test-crd
+
     - name: Submit code coverage to Coveralls
       continue-on-error: true
       env:
