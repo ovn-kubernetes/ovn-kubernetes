@@ -53,8 +53,8 @@ type addressManager struct {
 	OnMasqueradeIPChanged      func()
 	// gatewayIfIndex caches the link index of config.Gateway.Interface.
 	// Used in DPUHost mode to filter address events to only the gateway
-	// interface. Refreshed in sync() every 30s; all access is from the
-	// runInternal goroutine so no synchronization is needed.
+	// interface. After initialization, only the DPUHost runInternal
+	// goroutine accesses it; DPUHost does not register the node informer handler.
 	gatewayIfIndex int
 	sync.Mutex
 }
@@ -568,7 +568,7 @@ func (c *addressManager) reconcileMasqueradeResources() {
 }
 
 func (c *addressManager) refreshGatewayIfIndex() {
-	if config.Gateway.Interface == "" {
+	if !config.IsModeDPUHost() || config.Gateway.Interface == "" {
 		return
 	}
 	link, err := util.GetNetLinkOps().LinkByName(config.Gateway.Interface)
