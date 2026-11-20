@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"slices"
 	"sort"
 	"strings"
 
@@ -66,25 +67,74 @@ func findVMRelatedPods(client *factory.WatchFactory, pod *corev1.Pod) ([]*corev1
 	return filteredOutVMPods, nil
 }
 
-// findPodAnnotation returns the OVN pod annotation from any other pod annotated with the same VM as pod.
+// findPodAnnotation returns the OVN pod annotation of another pod annotated with the same VM as pod.
+// A pod that has not completed holds the current IPs of the VM, so its annotation comes first.
+// The default network IPs of completed pods may be released, so they are returned only if
+// they belong to the node of pod. A mirror pod is created by the node it runs on, so its
+// labels and annotations do not prove that it belongs to the VM and it is ignored.
+// It returns nil if no annotation qualifies.
 func findPodAnnotation(client *factory.WatchFactory, pod *corev1.Pod, nadKey string) (*util.PodAnnotation, error) {
 	vmPods, err := findVMRelatedPods(client, pod)
 	if err != nil {
 		return nil, fmt.Errorf("failed finding related pods for pod %s/%s when looking for network info: %v", pod.Namespace, pod.Name, err)
 	}
+	vmPods = slices.DeleteFunc(vmPods, func(vmPod *corev1.Pod) bool {
+		_, isMirrorPod := vmPod.Annotations[corev1.MirrorPodAnnotationKey]
+		return isMirrorPod
+	})
 	// The virtual machine is not being live migrated, so there are no other
 	// VM pods.
 	if len(vmPods) == 0 {
 		return nil, nil
 	}
 
+	var completedPodAnnotations []*util.PodAnnotation
 	for _, vmPod := range vmPods {
 		podAnnotation, err := util.UnmarshalPodAnnotation(vmPod.Annotations, nadKey)
-		if err == nil {
+		if err != nil {
+			continue
+		}
+		if !util.PodCompleted(vmPod) {
+			return podAnnotation, nil
+		}
+		completedPodAnnotations = append(completedPodAnnotations, podAnnotation)
+	}
+	if len(completedPodAnnotations) == 0 {
+		return nil, fmt.Errorf("missing virtual machine pod annotation at stale pods for %s/%s", pod.Namespace, pod.Name)
+	}
+	if nadKey != ovntypes.DefaultNetworkName {
+		return completedPodAnnotations[0], nil
+	}
+	for _, podAnnotation := range completedPodAnnotations {
+		local, err := nodeContainsPodIPs(client, pod.Spec.NodeName, podAnnotation)
+		if err != nil {
+			return nil, fmt.Errorf("failed checking the IPs of the completed pods of %s/%s against node %s: %w",
+				pod.Namespace, pod.Name, pod.Spec.NodeName, err)
+		}
+		if local {
 			return podAnnotation, nil
 		}
 	}
-	return nil, fmt.Errorf("missing virtual machine pod annotation at stale pods for %s/%s", pod.Namespace, pod.Name)
+	return nil, nil
+}
+
+// nodeContainsPodIPs returns true if all the IPs of podAnnotation belong to the
+// default network subnets of the node.
+func nodeContainsPodIPs(client *factory.WatchFactory, nodeName string, podAnnotation *util.PodAnnotation) (bool, error) {
+	node, err := client.GetNode(nodeName)
+	if err != nil {
+		return false, fmt.Errorf("failed to get node %s: %w", nodeName, err)
+	}
+	subnets, err := util.ParseNodeHostSubnetAnnotation(node, ovntypes.DefaultNetworkName)
+	if err != nil {
+		return false, fmt.Errorf("failed to parse the subnets of node %s: %w", nodeName, err)
+	}
+	for _, ip := range podAnnotation.IPs {
+		if !util.IsContainedInAnyCIDR(ip, subnets...) {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // EnsurePodAnnotationForVM extracts OVN pod annotations from the source VM pod
@@ -286,6 +336,10 @@ func NewVMDescriptionFromPod(pod *corev1.Pod) (*VMDescription, error) {
 		// match their truncated form.
 		ownedPods := []*corev1.Pod{}
 		for _, virtLauncherPod := range labelMatchedPods {
+			// The VM name label does not make a pod a virt-launcher pod.
+			if !IsPodOwnedByVirtualMachine(virtLauncherPod) {
+				continue
+			}
 			podVMName, err := vmNameFromPod(virtLauncherPod)
 			if err != nil {
 				return nil, err

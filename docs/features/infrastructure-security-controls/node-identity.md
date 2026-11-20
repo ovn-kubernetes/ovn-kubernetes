@@ -133,6 +133,23 @@ The specific annotation values can be found in `go-controller/pkg/ovnwebhook/nod
 Some of the allowed annotations have additional checks; for instance, the IP addresses in [k8s.ovn.org/pod-networks](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/5d56a53df520a085e629cdc71be092afed9c3f0f/go-controller/pkg/util/pod_annotation.go#L20-L51)
 must match the node's [k8s.ovn.org/node-subnets](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/5d56a53df520a085e629cdc71be092afed9c3f0f/go-controller/pkg/util/subnet_annotations.go#L15-L39) networks.
 
+A KubeVirt virtual machine keeps its default network IP addresses when it live-migrates to another node. For a pod
+annotated with `kubevirt.io/allow-pod-bridge-network-live-migration`, an IP address outside the node's subnets is
+accepted only if the pod already has it, or if another `virt-launcher` pod of the same virtual machine in the same
+namespace has it and has not completed. The IP addresses set on a completed pod may already be released, so they do not
+count. A mirror pod can keep an IP address it already has, but never gets one from another pod, and its own IP addresses
+do not count for other pods. To evaluate this, the webhook watches `virt-launcher` pods in all namespaces. The virtual
+machine of a pod is given by its `kubevirt.io/domain` annotation, which no user can add, change or remove once the pod
+is created.
+
+`ovnkube-controller` follows the same rule: a new pod of a virtual machine gets the IP addresses of another pod of it
+that has not completed. When only completed pods have IP addresses, for example when the virtual machine restarts, the
+new pod keeps them only if they belong to the subnets of its node, and gets new ones otherwise.
+
+The webhook does not start serving until its pod cache is synchronized, so `ovnkube-identity` needs cluster-wide `list`
+and `watch` permissions on `pods`. The Helm chart grants them. Custom deployments must add them to the `ovnkube-identity`
+ClusterRole before upgrading or restarting it.
+
 
 ## DaemonSet
 
