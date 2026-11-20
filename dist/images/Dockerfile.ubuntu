@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1
+
 # SPDX-FileCopyrightText: Copyright The OVN-Kubernetes Contributors
 # SPDX-License-Identifier: Apache-2.0
 
@@ -26,7 +28,9 @@ ARG TARGETARCH
 WORKDIR /workspace
 RUN dnf install --best --refresh -y make git
 COPY ${OVN_KUBERNETES_DIR} ovn-kubernetes
-RUN cd ovn-kubernetes/dist/images && \
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg/mod \
+    cd ovn-kubernetes/dist/images && \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} make bld
 
 FROM ${UBUNTU_BASE_IMAGE}
