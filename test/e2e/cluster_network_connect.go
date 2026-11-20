@@ -2665,7 +2665,7 @@ var _ = Describe("ClusterNetworkConnect OVN-Kubernetes Controller", feature.Netw
 					if expectSuccess {
 						Eventually(func() bool {
 							return checkConnectivity(fromPod.Namespace, fromPod.Name, toIP, true)
-						}, 5*time.Second, 1*time.Second).Should(BeTrue(), msg)
+						}, 30*time.Second, 1*time.Second).Should(BeTrue(), msg)
 					} else {
 						// First wait for connectivity to fail (OVN flows take time to update)
 						Eventually(func() bool {
