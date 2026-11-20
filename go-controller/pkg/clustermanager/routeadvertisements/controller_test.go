@@ -801,7 +801,8 @@ func TestController_reconcile(t *testing.T) {
 		cfg.Routers[0].Neighbors[0].Advertise = []string{prefix}
 		return cfg
 	}
-	tests := []struct {
+	type reconcileCase struct {
+		fixtureID            string
 		name                 string
 		ra                   *testRA
 		otherRAs             []*testRA
@@ -827,7 +828,8 @@ func TestController_reconcile(t *testing.T) {
 		expectDegradedMessageContains string
 		expectFRRConfigs              []*testFRRConfig
 		expectNADAnnotations          map[string]map[string]string
-	}{
+	}
+	tests := []reconcileCase{
 		{
 			name: "adds the validated marker to a generated FRRConfiguration that predates input validation",
 			ra:   &testRA{Name: "ra", AdvertisePods: true, SelectsDefault: true},
@@ -871,8 +873,9 @@ func TestController_reconcile(t *testing.T) {
 			},
 		},
 		{
-			name: "reconciles pod+eip RouteAdvertisement for a single FRR config, node and default network and target VRF",
-			ra:   &testRA{Name: "ra", AdvertisePods: true, AdvertiseEgressIPs: true, SelectsDefault: true},
+			fixtureID: "defaultVRF",
+			name:      "reconciles pod+eip RouteAdvertisement for a single FRR config, node and default network and target VRF",
+			ra:        &testRA{Name: "ra", AdvertisePods: true, AdvertiseEgressIPs: true, SelectsDefault: true},
 			frrConfigs: []*testFRRConfig{
 				{
 					Name:      "frrConfig",
@@ -1115,8 +1118,9 @@ func TestController_reconcile(t *testing.T) {
 			expectNADAnnotations: map[string]map[string]string{"red": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}, "blue": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}, "green": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}, "black": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
 		},
 		{
-			name: "(layer3) reconciles eip RouteAdvertisement for a single FRR config, node, non default network and non default target VRF",
-			ra:   &testRA{Name: "ra", TargetVRF: "red", AdvertiseEgressIPs: true, NetworkSelector: map[string]string{"selected": "true"}},
+			fixtureID: "tenantVRF",
+			name:      "(layer3) reconciles eip RouteAdvertisement for a single FRR config, node, non default network and non default target VRF",
+			ra:        &testRA{Name: "ra", TargetVRF: "red", AdvertiseEgressIPs: true, NetworkSelector: map[string]string{"selected": "true"}},
 			frrConfigs: []*testFRRConfig{
 				{
 					Name:      "frrConfig",
@@ -1266,7 +1270,8 @@ func TestController_reconcile(t *testing.T) {
 			reconcile: "ra",
 		},
 		{
-			name: "reconciles a RouteAdvertisement for multiple selected FRR configs, nodes and networks on auto target VRF",
+			fixtureID: "autoVRF",
+			name:      "reconciles a RouteAdvertisement for multiple selected FRR configs, nodes and networks on auto target VRF",
 			ra: &testRA{
 				Name:                     "ra",
 				AdvertisePods:            true,
@@ -1809,8 +1814,9 @@ func TestController_reconcile(t *testing.T) {
 		},
 
 		{
-			name: "rejects invalid peers even while nodes lack InternalIP addresses",
-			ra:   &testRA{Name: "ra", AdvertisePods: true, SelectsDefault: true},
+			fixtureID: "missingInternalIP",
+			name:      "rejects invalid peers even while nodes lack InternalIP addresses",
+			ra:        &testRA{Name: "ra", AdvertisePods: true, SelectsDefault: true},
 			frrConfigs: []*testFRRConfig{{Name: types.ManagedBGPConfigurationName, Namespace: frrNamespace,
 				Routers: []*testRouter{{ASN: 1, Neighbors: []*testNeighbor{{ASN: 1, Address: "10.0.0.2", DualStackAddressFamily: ptr.To(true)}}}},
 			}},
@@ -2244,8 +2250,9 @@ exit
 			expectNADAnnotations: map[string]map[string]string{"red": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
 		},
 		{
-			name: "reconciles EVPN IP-VRF network with auto target and creates a router",
-			ra:   &testRA{Name: "ra", TargetVRF: "auto", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
+			fixtureID: "evpnAutoVRF",
+			name:      "reconciles EVPN IP-VRF network with auto target and creates a router",
+			ra:        &testRA{Name: "ra", TargetVRF: "auto", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
 			frrConfigs: []*testFRRConfig{
 				{
 					Name:      "frrConfig",
@@ -2303,8 +2310,9 @@ exit
 			expectNADAnnotations: map[string]map[string]string{"blue": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
 		},
 		{
-			name: "reconciles EVPN IP-VRF with router ASN from another FRRConfiguration",
-			ra:   &testRA{Name: "ra", TargetVRF: "auto", AdvertisePods: true, SelectsDefault: true, NetworkSelector: map[string]string{"selected": "true"}},
+			fixtureID: "evpnInheritedASN",
+			name:      "reconciles EVPN IP-VRF with router ASN from another FRRConfiguration",
+			ra:        &testRA{Name: "ra", TargetVRF: "auto", AdvertisePods: true, SelectsDefault: true, NetworkSelector: map[string]string{"selected": "true"}},
 			frrConfigs: []*testFRRConfig{
 				{
 					Name:      "frrConfigGlobal",
@@ -2524,8 +2532,9 @@ exit
 			expectNADAnnotations: map[string]map[string]string{"red": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
 		},
 		{
-			name: "advertises VTEP IP /32 in default-VRF router prefixes for EVPN IP-VRF",
-			ra:   &testRA{Name: "ra", TargetVRF: "auto", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
+			fixtureID: "evpnUnderlay",
+			name:      "advertises VTEP IP /32 in default-VRF router prefixes for EVPN IP-VRF",
+			ra:        &testRA{Name: "ra", TargetVRF: "auto", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
 			frrConfigs: []*testFRRConfig{
 				{
 					Name:      "frrConfig",
@@ -2925,8 +2934,9 @@ exit
 			},
 		},
 		{
-			name: "advertises VTEP IPs per node across multiple nodes",
-			ra:   &testRA{Name: "ra", TargetVRF: "auto", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
+			fixtureID: "multiNodeVTEP",
+			name:      "advertises VTEP IPs per node across multiple nodes",
+			ra:        &testRA{Name: "ra", TargetVRF: "auto", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
 			frrConfigs: []*testFRRConfig{
 				{
 					Name:      "frrConfig",
@@ -3307,6 +3317,7 @@ exit
 			expectNADAnnotations: map[string]map[string]string{"blue": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
 		},
 		{
+			fixtureID:  "dynamicUDN",
 			name:       "with dynamic UDN allocation and 'auto' target VRF, only requires matching the networks allocated on each node",
 			dynamicUDN: true,
 			ra:         &testRA{Name: "ra", TargetVRF: "auto", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
@@ -3498,12 +3509,24 @@ exit
 			expectNADAnnotations: map[string]map[string]string{"blue": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}, "red": {types.OvnRouteAdvertisementsKey: "[\"ra\"]"}},
 		},
 	}
+	fixtures := map[string]reconcileCase{}
+	for _, tc := range tests {
+		if tc.fixtureID != "" {
+			fixtures[tc.fixtureID] = tc
+		}
+	}
+	fixture := func(id string) reconcileCase {
+		t.Helper()
+		tc, ok := fixtures[id]
+		if !ok {
+			t.Fatalf("missing route advertisement test fixture %q", id)
+		}
+		return tc
+	}
 	// Seed generated configurations to verify that invalid updates remove
 	// existing advertisements while preserving configurations for valid nodes.
-	for _, base := range slices.Clone(tests) {
-		if base.name != "advertises VTEP IPs per node across multiple nodes" {
-			continue
-		}
+	{
+		base := fixture("multiNodeVTEP")
 		movingEIP := base
 		movingEIP.name = "removes moved EgressIP prefixes with unchanged networks while another node has invalid VTEP"
 		movingRA := *base.ra
@@ -3649,6 +3672,7 @@ exit
 		crossSubset.expectNADAnnotations = map[string]map[string]string{"blue": {types.OvnRouteAdvertisementsKey: ""}}
 		tests = append(tests, crossSubset)
 		for _, invalid := range []struct {
+			fixtureID        string
 			name             string
 			annotation       string
 			generationError  bool
@@ -3657,9 +3681,9 @@ exit
 			ambiguous        bool
 			unsafeInput      bool
 		}{
-			{name: "removes invalid VTEP configuration and unvalidated configurations on unsafe input", annotation: `{"my-vtep":{"ips":["not-an-ip"]}}`, unsafeInput: true},
+			{fixtureID: "unsafeVTEP", name: "removes invalid VTEP configuration and unvalidated configurations on unsafe input", annotation: `{"my-vtep":{"ips":["not-an-ip"]}}`, unsafeInput: true},
 			{name: "removes malformed VTEP advertisements", annotation: "not-json"},
-			{name: "removes invalid node configuration and retries operational generation failure", annotation: "not-json", operationalError: true},
+			{fixtureID: "vtepLookupFailure", name: "removes invalid node configuration and retries operational generation failure", annotation: "not-json", operationalError: true},
 			{name: "withdraws both invalid VTEP and unavailable node configurations", annotation: `{"my-vtep":{"ips":["not-an-ip"]}}`, generationError: true},
 			{name: "removes extra same-family advertisements", annotation: `{"my-vtep":{"ips":["100.64.0.1","100.64.0.99"]}}`},
 			{name: "removes invalid IP advertisements", annotation: `{"my-vtep":{"ips":["not-an-ip"]}}`},
@@ -3667,7 +3691,7 @@ exit
 			{name: "removes out-of-range advertisements", annotation: `{"my-vtep":{"ips":["192.0.2.1"]}}`},
 			{name: "bootstrap collision excludes both nodes", annotation: `{"my-vtep":{"ips":["100.64.0.2"]}}`, noExisting: true},
 			{name: "ambiguous established collision removes configurations for both nodes", annotation: `{"my-vtep":{"ips":["100.64.0.1"]}}`, ambiguous: true},
-			{name: "preserves established advertiser on duplicate VTEP", annotation: `{"my-vtep":{"ips":["100.64.0.2"]}}`},
+			{fixtureID: "duplicateVTEP", name: "preserves established advertiser on duplicate VTEP", annotation: `{"my-vtep":{"ips":["100.64.0.2"]}}`},
 		} {
 			tt := base
 			tt.name = invalid.name
@@ -3748,14 +3772,15 @@ exit
 				copy.Namespace = frrNamespace
 				tt.frrConfigs = append(tt.frrConfigs, &copy)
 			}
+			if invalid.fixtureID != "" {
+				fixtures[invalid.fixtureID] = tt
+			}
 			tests = append(tests, tt)
 		}
 	}
 
-	for _, base := range tests {
-		if base.name != "with dynamic UDN allocation and 'auto' target VRF, only requires matching the networks allocated on each node" {
-			continue
-		}
+	{
+		base := fixture("dynamicUDN")
 		for _, invalid := range []struct {
 			name, message string
 			neighbor      *testNeighbor
@@ -3802,10 +3827,8 @@ exit
 		}
 	}
 
-	for _, base := range tests {
-		if base.name != "advertises VTEP IP /32 in default-VRF router prefixes for EVPN IP-VRF" {
-			continue
-		}
+	{
+		base := fixture("evpnUnderlay")
 		invalid := base
 		invalid.name = "invalid explicit VRF template leaves the underlay template's inherited ASN in use"
 		invalid.frrConfigs = append(slices.Clone(base.frrConfigs), &testFRRConfig{
@@ -3832,15 +3855,7 @@ exit
 
 	// Unused peers must not invalidate the generated configuration. Exercise
 	// each target VRF mode with the same invalid inputs as the early validator.
-	for _, base := range tests {
-		switch base.name {
-		case "reconciles pod+eip RouteAdvertisement for a single FRR config, node and default network and target VRF",
-			"(layer3) reconciles eip RouteAdvertisement for a single FRR config, node, non default network and non default target VRF",
-			"reconciles a RouteAdvertisement for multiple selected FRR configs, nodes and networks on auto target VRF",
-			"with dynamic UDN allocation and 'auto' target VRF, only requires matching the networks allocated on each node":
-		default:
-			continue
-		}
+	for _, base := range []reconcileCase{fixture("defaultVRF"), fixture("tenantVRF"), fixture("autoVRF"), fixture("dynamicUDN")} {
 		for _, invalid := range []struct {
 			name     string
 			neighbor *testNeighbor
@@ -3877,13 +3892,7 @@ exit
 		}
 	}
 
-	for _, base := range tests {
-		switch base.name {
-		case "rejects invalid peers even while nodes lack InternalIP addresses",
-			"reconciles EVPN IP-VRF network with auto target and creates a router":
-		default:
-			continue
-		}
+	for _, base := range []reconcileCase{fixture("missingInternalIP"), fixture("evpnAutoVRF")} {
 		tt := base
 		tt.name = "rejects used dual-stack peers before subnet allocation: " + base.name
 		source := *base.frrConfigs[0]
@@ -3907,43 +3916,35 @@ exit
 
 	// Hostname labels select the FRR daemon, but VTEP ownership and cleanup
 	// must use the node API name stored in the generated annotation.
-	for _, tt := range tests {
-		switch tt.name {
-		case "reconciles EVPN IP-VRF network with auto target and creates a router",
-			"preserves established advertiser on duplicate VTEP",
-			"removes invalid node configuration and retries operational generation failure",
-			"removes invalid VTEP configuration and unvalidated configurations on unsafe input":
-			tt.name += " with distinct hostname labels"
-			tt.nodes = slices.Clone(tt.nodes)
-			for i, node := range tt.nodes {
-				copy := *node
-				copy.Labels = map[string]string{}
-				maps.Copy(copy.Labels, node.Labels)
-				copy.Labels[corev1.LabelHostname] = "host-" + node.Name
-				tt.nodes[i] = &copy
-			}
-			withHostnames := func(configs []*testFRRConfig) []*testFRRConfig {
-				configs = slices.Clone(configs)
-				for i, cfg := range configs {
-					copy := *cfg
-					copy.NodeSelector = maps.Clone(cfg.NodeSelector)
-					if node := copy.NodeSelector[corev1.LabelHostname]; node != "" {
-						copy.NodeSelector[corev1.LabelHostname] = "host-" + node
-					}
-					configs[i] = &copy
-				}
-				return configs
-			}
-			tt.frrConfigs = withHostnames(tt.frrConfigs)
-			tt.expectFRRConfigs = withHostnames(tt.expectFRRConfigs)
-			tests = append(tests, tt)
+	for _, tt := range []reconcileCase{fixture("evpnAutoVRF"), fixture("duplicateVTEP"), fixture("vtepLookupFailure"), fixture("unsafeVTEP")} {
+		tt.name += " with distinct hostname labels"
+		tt.nodes = slices.Clone(tt.nodes)
+		for i, node := range tt.nodes {
+			copy := *node
+			copy.Labels = map[string]string{}
+			maps.Copy(copy.Labels, node.Labels)
+			copy.Labels[corev1.LabelHostname] = "host-" + node.Name
+			tt.nodes[i] = &copy
 		}
+		withHostnames := func(configs []*testFRRConfig) []*testFRRConfig {
+			configs = slices.Clone(configs)
+			for i, cfg := range configs {
+				copy := *cfg
+				copy.NodeSelector = maps.Clone(cfg.NodeSelector)
+				if node := copy.NodeSelector[corev1.LabelHostname]; node != "" {
+					copy.NodeSelector[corev1.LabelHostname] = "host-" + node
+				}
+				configs[i] = &copy
+			}
+			return configs
+		}
+		tt.frrConfigs = withHostnames(tt.frrConfigs)
+		tt.expectFRRConfigs = withHostnames(tt.expectFRRConfigs)
+		tests = append(tests, tt)
 	}
 
-	for _, tt := range tests {
-		if tt.name != "removes invalid VTEP configuration and unvalidated configurations on unsafe input" {
-			continue
-		}
+	{
+		tt := fixture("unsafeVTEP")
 		tt.name = "cleans up deselected network with invalid VTEP and unsafe input"
 		tt.nads = append(slices.Clone(tt.nads), &testNAD{
 			Name: "red", Namespace: "red", Network: util.GenerateCUDNNetworkName("red"), Topology: types.Layer3Topology, Subnet: "10.200.0.0/16",
@@ -3961,12 +3962,8 @@ exit
 			tt.frrConfigs[i] = &copy
 		}
 		tests = append(tests, tt)
-	}
 
-	for _, base := range tests {
-		if base.name != "cleans up deselected network with invalid VTEP and unsafe input" {
-			continue
-		}
+		base := tt
 		for _, invalid := range []struct {
 			name, message string
 			peer          *testNeighbor
@@ -3994,35 +3991,32 @@ exit
 		}
 	}
 
-	for _, tt := range tests {
-		if tt.name == "reconciles EVPN IP-VRF with router ASN from another FRRConfiguration" {
-			// The first node has both templates. Its peers cannot carry blue's routes for node2.
-			split := tt
-			split.name = "degrades an active EVPN IP-VRF whose default router selects another node"
-			split.nodes = append(slices.Clone(tt.nodes), &testNode{Name: "node2", SubnetsAnnotation: `{"default":"1.1.1.0/24","cluster_udn_blue":"10.2.2.0/24"}`})
-			global := *tt.frrConfigs[0]
-			global.NodeSelector = map[string]string{corev1.LabelHostname: "node"}
-			split.frrConfigs = []*testFRRConfig{&global, tt.frrConfigs[1]}
-			tenant := *tt.expectFRRConfigs[1]
-			tenant.NodeSelector = map[string]string{corev1.LabelHostname: "node2"}
-			tenant.Annotations = map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfigVRF/node2"}
-			tenant.Routers = []*testRouter{{ASN: 65100, VRF: "blue", Prefixes: []string{"10.2.2.0/24"}}}
-			split.expectFRRConfigs = append(slices.Clone(tt.expectFRRConfigs), &tenant)
-			split.expectDegradedStatus = metav1.ConditionTrue
-			split.expectDegradedMessageContains = `node "node2": configuration error: EVPN IP-VRF requires a default-VRF router with EVPN peers`
-			tests = append(tests, split)
-		}
-		// Exercise EVPN coverage before prefixes are available, keeping the
-		// expected configuration for the healthy node.
-		switch tt.name {
-		case "reconciles EVPN IP-VRF network with auto target and creates a router",
-			"reconciles EVPN IP-VRF with router ASN from another FRRConfiguration":
-			tt.name += " with a node missing subnets"
-			tt.nodes = append(slices.Clone(tt.nodes), &testNode{Name: "node1"})
-			tt.expectDegradedStatus = metav1.ConditionTrue
-			tt.expectDegradedMessageContains = "node1"
-			tests = append(tests, tt)
-		}
+	{
+		tt := fixture("evpnInheritedASN")
+		// The first node has both templates. Its peers cannot carry blue's routes for node2.
+		split := tt
+		split.name = "degrades an active EVPN IP-VRF whose default router selects another node"
+		split.nodes = append(slices.Clone(tt.nodes), &testNode{Name: "node2", SubnetsAnnotation: `{"default":"1.1.1.0/24","cluster_udn_blue":"10.2.2.0/24"}`})
+		global := *tt.frrConfigs[0]
+		global.NodeSelector = map[string]string{corev1.LabelHostname: "node"}
+		split.frrConfigs = []*testFRRConfig{&global, tt.frrConfigs[1]}
+		tenant := *tt.expectFRRConfigs[1]
+		tenant.NodeSelector = map[string]string{corev1.LabelHostname: "node2"}
+		tenant.Annotations = map[string]string{types.OvnRouteAdvertisementsKey: "ra/frrConfigVRF/node2"}
+		tenant.Routers = []*testRouter{{ASN: 65100, VRF: "blue", Prefixes: []string{"10.2.2.0/24"}}}
+		split.expectFRRConfigs = append(slices.Clone(tt.expectFRRConfigs), &tenant)
+		split.expectDegradedStatus = metav1.ConditionTrue
+		split.expectDegradedMessageContains = `node "node2": configuration error: EVPN IP-VRF requires a default-VRF router with EVPN peers`
+		tests = append(tests, split)
+	}
+	// Exercise EVPN coverage before prefixes are available, keeping the
+	// expected configuration for the healthy node.
+	for _, tt := range []reconcileCase{fixture("evpnAutoVRF"), fixture("evpnInheritedASN")} {
+		tt.name += " with a node missing subnets"
+		tt.nodes = append(slices.Clone(tt.nodes), &testNode{Name: "node1"})
+		tt.expectDegradedStatus = metav1.ConditionTrue
+		tt.expectDegradedMessageContains = "node1"
+		tests = append(tests, tt)
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -4233,6 +4227,7 @@ exit
 						g.Expect(key).To(gomega.HaveLen(3))
 						g.Expect(frrConfig.Labels).To(gomega.HaveKeyWithValue(types.OvnRouteAdvertisementsNodeKey, util.RouteAdvertisementsNodeLabel(key[2])), "node watch must see %s", frrConfig.Name)
 						delete(frrConfig.Labels, types.OvnRouteAdvertisementsNodeKey)
+						delete(frrConfig.Labels, types.OvnRouteAdvertisementsUIDKey)
 					}
 					actualFRRConfigLabels[frrConfig.Annotations[types.OvnRouteAdvertisementsKey]] = frrConfig.Labels
 					actualFRRConfigSpecs[frrConfig.Annotations[types.OvnRouteAdvertisementsKey]] = &frrConfig.Spec
@@ -5519,6 +5514,9 @@ func TestController_reconcileHostname(t *testing.T) {
 			g := gomega.NewWithT(t)
 			tt := newFRRReconcileTest(t, g, "eth0")
 			ctx := context.Background()
+			ra := (&testRA{Name: "ra", SelectsDefault: true, AdvertisePods: true}).RouteAdvertisements()
+			ra.UID = "original-ra"
+			tt.updateRA(ra)
 			name, hostname := tc.name, tc.hostname
 			node := (&testNode{Name: name, OmitPrimaryAddress: true,
 				SubnetsAnnotation: `{"default":"1.1.1.0/24"}`,
@@ -5549,17 +5547,20 @@ func TestController_reconcileHostname(t *testing.T) {
 			g.Expect(err).NotTo(gomega.HaveOccurred())
 			g.Expect(selector.Matches(labels.Set(node.Labels))).To(gomega.BeTrue())
 
-			// A pre-upgrade object can already have the correct spec and
-			// validated marker. Only its missing label hides it from the node.
+			// An upgrade can leave the right routes in an object that still needs
+			// its node-watch label or, one release later, its RA owner label.
 			client := tt.c.frrClient.ApiV1beta1().FRRConfigurations(cfg.Namespace)
-			delete(cfg.Labels, types.OvnRouteAdvertisementsNodeKey)
-			_, err = client.Update(t.Context(), cfg, metav1.UpdateOptions{})
-			g.Expect(err).NotTo(gomega.HaveOccurred(), "seed an otherwise current configuration without its node-watch label")
-			tt.waitForFRRCache()
-			g.Expect(tt.c.reconcile(t.Context(), "ra")).To(gomega.Succeed(), "backfill the node-watch label")
-			stored, err := client.Get(t.Context(), cfg.Name, metav1.GetOptions{})
-			g.Expect(err).NotTo(gomega.HaveOccurred(), "backfill the original object in place")
-			g.Expect(stored.Labels).To(gomega.HaveKeyWithValue(types.OvnRouteAdvertisementsNodeKey, util.RouteAdvertisementsNodeLabel(name)))
+			for _, key := range []string{types.OvnRouteAdvertisementsNodeKey, types.OvnRouteAdvertisementsUIDKey} {
+				delete(cfg.Labels, key)
+				_, err = client.Update(ctx, cfg, metav1.UpdateOptions{})
+				g.Expect(err).NotTo(gomega.HaveOccurred(), "seed the existing export without %s", key)
+				tt.waitForFRRCache()
+				g.Expect(tt.c.reconcile(ctx, "ra")).To(gomega.Succeed(), "backfill %s", key)
+				cfg, err = client.Get(ctx, cfg.Name, metav1.GetOptions{})
+				g.Expect(err).NotTo(gomega.HaveOccurred(), "read the same export after backfill")
+				g.Expect(cfg.Labels).To(gomega.HaveKeyWithValue(types.OvnRouteAdvertisementsNodeKey, util.RouteAdvertisementsNodeLabel(name)))
+				g.Expect(cfg.Labels).To(gomega.HaveKeyWithValue(types.OvnRouteAdvertisementsUIDKey, string(ra.UID)))
+			}
 		})
 	}
 }
@@ -5855,12 +5856,93 @@ func TestController_reconcileEgressIPLookupFailure(t *testing.T) {
 			g.Expect(current.Status).To(gomega.Equal(published.Status), "shared lookup failure must preserve the published status")
 
 			tt.c.eipLister, tt.c.namespaceLister = eipLister, namespaceLister
+			tt.waitForFRRCache()
 			g.Expect(tt.c.reconcile(ctx, "ra")).To(gomega.Succeed(), "retry succeeds after the shared lookup recovers")
-			updated, err := frr.Get(ctx, owner.Name, metav1.GetOptions{})
-			g.Expect(err).NotTo(gomega.HaveOccurred())
+			recovered := tt.generatedConfigs("ra")
+			g.Expect(recovered).To(gomega.HaveLen(len(configs)), "recovery must keep one generated export per node")
+			updated := recovered["ra/frrConfig/node"]
+			g.Expect(updated).NotTo(gomega.BeNil(), "the original EgressIP owner still has an export")
+			g.Expect(updated.Name).To(gomega.Equal(owner.Name), "update the original owner's export in place")
 			g.Expect(updated.Spec.BGP.Routers[0].Prefixes).To(gomega.ConsistOf("1.1.0.0/24", "192.0.2.10/32"))
 		})
 	}
+}
+
+// Hold the FRR watch behind the API while the EgressIP moves. A committed
+// create whose response was lost must be withdrawn before the new export.
+func TestEgressIPMovesAfterUnconfirmedCreate(t *testing.T) {
+	g := gomega.NewWithT(t)
+	ctx := t.Context()
+	tt := newFRRReconcileTest(t, g, "eth0")
+	ra := (&testRA{Name: "ra", SelectsDefault: true, AdvertiseEgressIPs: true}).RouteAdvertisements()
+	tt.updateRA(ra)
+	eip := (&testEIP{Name: "eip", EIPs: map[string]string{"node": "192.0.2.10"}}).EgressIP()
+	_, err := tt.fakeClientset.EgressIPClient.K8sV1().EgressIPs().Create(ctx, eip, metav1.CreateOptions{})
+	g.Expect(err).NotTo(gomega.HaveOccurred(), "assign the EgressIP to its new owner")
+	g.Eventually(func() error { _, err := tt.c.eipLister.Get(eip.Name); return err }, 5*time.Second).Should(gomega.Succeed())
+
+	index := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+	template, err := tt.c.frrLister.FRRConfigurations("frrNamespace").Get("frrConfig")
+	g.Expect(err).NotTo(gomega.HaveOccurred(), "get the peering template")
+	g.Expect(index.Add(template)).To(gomega.Succeed(), "the watch initially contains only the template")
+	tt.c.frrLister = frrlisters.NewFRRConfigurationLister(index)
+	tt.c.pendingFRR = newPendingWrites(index)
+	queue := &controllerutil.FakeController{}
+	tt.c.raController = queue
+
+	old := generatedFRRConfig(generateName+"former", "former", true).FRRConfiguration()
+	old.Spec.BGP.Routers[0].Prefixes = []string{"192.0.2.10/32"}
+	old.Spec.BGP.Routers[0].Neighbors[0].ToAdvertise.Allowed.Prefixes = old.Spec.BGP.Routers[0].Prefixes
+	client := tt.fakeClientset.FRRClient.(*frrfake.Clientset)
+	client.PrependReactor("create", "frrconfigurations", func(a ctesting.Action) (bool, runtime.Object, error) {
+		cfg := a.(ctesting.CreateAction).GetObject().(*frrapi.FRRConfiguration)
+		if cfg.Name != old.Name {
+			return false, nil, nil
+		}
+		stored := cfg.DeepCopy()
+		stored.ResourceVersion = "10"
+		g.Expect(client.Tracker().Create(a.GetResource(), stored, stored.Namespace)).To(gomega.Succeed(), "commit the former owner's export")
+		return true, nil, context.DeadlineExceeded
+	})
+	result := frrGenerationResult{frrConfigs: []*frrapi.FRRConfiguration{old}}
+	_, err = tt.c.updateFRRConfigurations(ctx, ra.Name, &result)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	g.Expect(errors.Is(result.failureError(), context.DeadlineExceeded)).To(gomega.BeTrue(), "the create response was lost")
+
+	listErr := errors.New("inventory unavailable")
+	lists := 0
+	client.PrependReactor("list", "frrconfigurations", func(a ctesting.Action) (bool, runtime.Object, error) {
+		if a.GetNamespace() != metav1.NamespaceAll {
+			return false, nil, nil
+		}
+		lists++
+		g.Expect(a.(ctesting.ListAction).GetListRestrictions().Labels.String()).To(gomega.Equal(types.OvnRouteAdvertisementsKey+"=ra"), "read only this RA's inventory")
+		if lists == 1 {
+			return true, nil, listErr
+		}
+		return false, nil, nil
+	})
+	g.Expect(errors.Is(tt.c.reconcile(ctx, ra.Name), listErr)).To(gomega.BeTrue(), "retry an unavailable inventory")
+	g.Expect(tt.c.reconcile(ctx, ra.Name)).To(gomega.Succeed())
+	g.Expect(queue.Reconciles).To(gomega.ContainElement("After:ra"), "wait for the watch to see the committed export")
+	exports := tt.generatedConfigs("ra")
+	g.Expect(exports).To(gomega.HaveLen(1), "the address must still have only its former owner")
+	g.Expect(exports).To(gomega.HaveKey("ra/frrConfig/former"))
+	g.Expect(index.Add(exports["ra/frrConfig/former"])).To(gomega.Succeed(), "deliver the delayed create")
+	client.ClearActions()
+	g.Expect(tt.c.reconcile(ctx, ra.Name)).To(gomega.Succeed(), "withdraw before publishing the new owner")
+	var writes []string
+	for _, a := range client.Actions() {
+		if a.GetVerb() == "create" || a.GetVerb() == "delete" {
+			writes = append(writes, a.GetVerb())
+		}
+	}
+	g.Expect(writes).To(gomega.Equal([]string{"delete", "create"}), "withdraw the former owner's export first")
+	g.Expect(lists).To(gomega.Equal(2), "resume cache-only reconciliation once the inventory is known")
+	exports = tt.generatedConfigs("ra")
+	g.Expect(exports).To(gomega.HaveLen(1))
+	g.Expect(exports).To(gomega.HaveKey("ra/frrConfig/node"))
+	g.Expect(util.RouteAdvertisementsConfigurationExportsPrefix(exports["ra/frrConfig/node"], "", "192.0.2.10/32")).To(gomega.BeTrue(), "the new owner advertises the EgressIP")
 }
 
 func TestController_reconcileEgressIPOwnerChange(t *testing.T) {
@@ -6070,7 +6152,7 @@ func TestController_updateRAStatusDegraded(t *testing.T) {
 func TestSharedNADRetainsBothAdvertisements(t *testing.T) {
 	g := gomega.NewWithT(t)
 	ctx := context.Background()
-	stale := &nadtypes.NetworkAttachmentDefinition{ObjectMeta: metav1.ObjectMeta{Namespace: "blue", Name: "blue", ResourceVersion: "1"}}
+	stale := &nadtypes.NetworkAttachmentDefinition{ObjectMeta: metav1.ObjectMeta{Namespace: "blue", Name: "blue", UID: "original", ResourceVersion: "1"}}
 	indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
 	g.Expect(indexer.Add(stale)).To(gomega.Succeed())
 
@@ -6167,6 +6249,13 @@ func TestSharedNADRetainsBothAdvertisements(t *testing.T) {
 	egressOnly.Annotations[types.OvnRouteAdvertisementsIntentKey] = nad.Annotations[types.OvnRouteAdvertisementsIntentKey]
 	checkEvent(changedVRF, egressOnly) // West keeps its reference after dropping pod advertisement.
 	checkEvent(egressOnly, nad)
+
+	replacement := nad.DeepCopy()
+	replacement.UID = "replacement"
+	g.Expect(indexer.Update(replacement)).To(gomega.Succeed(), "recreate the NAD between selection and patch planning")
+	updates, err = c.getNADUpdates("west", &util.RouteAdvertisementsIntent{TargetVRF: "green"}, []*nadtypes.NetworkAttachmentDefinition{stale})
+	g.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("blue/blue")), "retry selection against the replacement")
+	g.Expect(updates).To(gomega.BeEmpty(), "a replacement cannot inherit west's selection")
 }
 
 func TestController_rejectedUpdateWithdrawsConfigurations(t *testing.T) {
@@ -6292,7 +6381,7 @@ func TestController_rejectedUpdateWithdrawsConfigurations(t *testing.T) {
 	g.Expect(generated).To(gomega.HaveKey("ra/frrConfig/node"))
 	g.Expect(generated["ra/frrConfig/node"].Spec.BGP.Routers[0].Prefixes).To(gomega.ConsistOf("1.1.0.0/24", "1.3.0.0/24"))
 	g.Expect(references("green")).To(gomega.ConsistOf("ra", "other"))
-	g.Expect(annotations("green")[types.OvnRouteAdvertisementsIntentKey]).To(gomega.MatchJSON(`{"ra":{"uid":"uid-ra","generation":2,"targetVRF":"","egressIP":true}}`), "green must record the corrected RA generation")
+	g.Expect(annotations("green")[types.OvnRouteAdvertisementsIntentKey]).To(gomega.MatchJSON(`{"ra":{"requireFRROwner":true,"uid":"uid-ra","generation":2,"targetVRF":"","egressIP":true}}`), "green must record the corrected RA generation")
 
 	tt.waitForFRRCache()
 	ra.Spec.FRRConfigurationSelector.MatchExpressions = []metav1.LabelSelectorRequirement{{Key: "peer", Operator: "Unknown"}}
@@ -6385,7 +6474,7 @@ func TestControllerRetriesIndependentTemplateWrites(t *testing.T) {
 				prefix = "1.1.2.0/24"
 				tt.updateNodeSubnets("node", `{"default":"1.1.2.0/24"}`)
 			}
-			failure := errors.New("template rejected")
+			failure := apierrors.NewBadRequest("template rejected")
 			reject := true
 			client.PrependReactor(verb, "frrconfigurations", func(action ctesting.Action) (bool, runtime.Object, error) {
 				cfg := action.(interface{ GetObject() runtime.Object }).GetObject().(*frrapi.FRRConfiguration)
@@ -6395,6 +6484,7 @@ func TestControllerRetriesIndependentTemplateWrites(t *testing.T) {
 				return false, nil, nil
 			})
 			g.Expect(errors.Is(tt.c.reconcile(ctx, "ra"), failure)).To(gomega.BeTrue(), "retry the failed %s", verb)
+			g.Expect(tt.c.uncertainFRRCreates.Has("ra")).To(gomega.BeFalse(), "a definitive API rejection needs no live inventory")
 			// A failed pass counts the cache from before its own writes. The
 			// retry runs once they are cached and refreshes the sample.
 			tt.waitForFRRCache()
@@ -6635,16 +6725,17 @@ func TestRollbackAfterNADPatchFailure(t *testing.T) {
 
 func TestPartialDeselectionWithdrawsBeforeClearingNAD(t *testing.T) {
 	const (
-		gen1       = `{"ra":{"uid":"uid-ra","generation":1,"targetVRF":""}}`
-		gen2Red    = `{"ra":{"uid":"uid-ra","generation":2,"targetVRF":"red"}}`
-		gen2Egress = `{"ra":{"uid":"uid-ra","generation":2,"targetVRF":"","egressIP":true}}`
-		gen3       = `{"ra":{"uid":"uid-ra","generation":3,"targetVRF":""}}`
+		gen1       = `{"ra":{"requireFRROwner":true,"uid":"uid-ra","generation":1,"targetVRF":""}}`
+		gen2Red    = `{"ra":{"requireFRROwner":true,"uid":"uid-ra","generation":2,"targetVRF":"red"}}`
+		gen2Egress = `{"ra":{"requireFRROwner":true,"uid":"uid-ra","generation":2,"targetVRF":"","egressIP":true}}`
+		gen3       = `{"ra":{"requireFRROwner":true,"uid":"uid-ra","generation":3,"targetVRF":""}}`
 	)
 	for _, tc := range []struct{ name, verb, oldVRF, priorIntent string }{
 		{"delete obsolete template", "delete", "red", gen2Red},
 		{"change target VRF", "update", "red", gen2Red},
 		{"drop EgressIP in the same VRF", "update", "", gen2Egress},
 		{"change target VRF with a legacy NAD reference", "update", "red", ""},
+		{"backfill owner UID in the same VRF", "update", "", `{"ra":{"uid":"uid-ra","generation":2,"targetVRF":""}}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			g := gomega.NewWithT(t)
@@ -7102,6 +7193,7 @@ func TestCleanupFailureStatusAtRetryExhaustion(t *testing.T) {
 
 	// Missing allocations must still reach withdrawal.
 	g.Expect(tt.generatedConfigs("ra")).To(gomega.HaveLen(1))
+	tt.waitForFRRCache()
 	tt.updateNodeSubnets("node", `{}`)
 	ra := previous.DeepCopy()
 	ra.Generation++

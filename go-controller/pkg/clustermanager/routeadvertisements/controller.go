@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"maps"
 	"net"
+	"net/http"
 	"net/netip"
 	"reflect"
 	"slices"
@@ -29,6 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	ktypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	corelisters "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
@@ -129,6 +131,8 @@ type Controller struct {
 	raNetworks     map[string]sets.Set[string]
 
 	pendingFRR, pendingNAD *pendingWrites
+	// Only the RA reconcile worker reads and writes this set.
+	uncertainFRRCreates sets.Set[string]
 }
 
 // networkRefReconcilerFunc adapts a function to the
@@ -187,6 +191,7 @@ func NewController(
 		nm:              nm,
 		raNetworks:      map[string]sets.Set[string]{},
 	}
+	c.uncertainFRRCreates = sets.New[string]()
 	c.pendingFRR = newPendingWrites(wf.FRRConfigurationsInformer().Informer().GetStore())
 	c.pendingNAD = newPendingWrites(wf.NADInformer().Informer().GetStore())
 	if util.IsUplinkEnabled() {
@@ -414,6 +419,22 @@ func (c *Controller) handleReconcileError(ctx context.Context, key string, error
 // The controller processes selected events of RouteAdvertisements,
 // FRRConfigurations, Nodes, EgressIPs, NADs and namespaces.
 func (c *Controller) reconcile(ctx context.Context, name string) error {
+	if c.uncertainFRRCreates.Has(name) {
+		// A lost Create response leaves us without the generated name or version.
+		// Recover the committed objects before an EgressIP can move to a new owner.
+		configs, err := c.frrClient.ApiV1beta1().FRRConfigurations(metav1.NamespaceAll).List(ctx,
+			metav1.ListOptions{LabelSelector: labels.Set{types.OvnRouteAdvertisementsKey: name}.String()})
+		if err != nil {
+			return fmt.Errorf("checking unconfirmed FRRConfiguration creates for RouteAdvertisements %q: %w", name, err)
+		}
+		for i := range configs.Items {
+			cfg := &configs.Items[i]
+			if cfg.Annotations[types.OvnRouteAdvertisementsKey] != "" {
+				c.pendingFRR.written(name, cfg)
+			}
+		}
+		c.uncertainFRRCreates.Delete(name)
+	}
 	// The cache must show this RA's own last writes before we compare it
 	// with the desired state again. Their events requeue the RA.
 	if c.pendingFRR.waiting(name) || c.pendingNAD.waiting(name) {
@@ -1884,12 +1905,12 @@ func (c *Controller) generateFRRConfiguration(
 	new := &frrtypes.FRRConfiguration{}
 	new.GenerateName = generateName
 	new.Namespace = source.Namespace
-	// label the FRRConfigurations with the RA name, we use this to find the
-	// existing set of FRRConfigurations that need to be reconciled for a given
-	// RA
+	// The name lets cluster manager find exports after an RA is deleted.
+	// The UID lets nodes distinguish a replacement RA with that same name.
 	new.Labels = map[string]string{
 		types.OvnRouteAdvertisementsKey:     ra.Name,
 		types.OvnRouteAdvertisementsNodeKey: util.RouteAdvertisementsNodeLabel(nodeName),
+		types.OvnRouteAdvertisementsUIDKey:  string(ra.UID),
 	}
 	new.Annotations = map[string]string{
 		types.OvnRouteAdvertisementsKey: fmt.Sprintf("%s/%s/%s", ra.Name, source.Name, nodeName),
@@ -2111,6 +2132,17 @@ func (c *Controller) withdrawMovedEgressIPs(ctx context.Context, configs []*frrt
 	return changed, errors.Join(errs...)
 }
 
+// A client rejection is definitive. A transport failure or a server timeout
+// can arrive after the API server has stored the generated object.
+func createOutcomeUncertain(err error) bool {
+	var status apierrors.APIStatus
+	if !errors.As(err, &status) {
+		return true
+	}
+	code := status.Status().Code
+	return code < http.StatusBadRequest || code == http.StatusRequestTimeout || code >= http.StatusInternalServerError
+}
+
 // updateFRRConfigurations withdraws old objects for any missing desired key,
 // including failed templates on nodes where another template still works.
 // A failed withdrawal blocks replacements on that node. An EgressIP can move
@@ -2212,6 +2244,9 @@ func (c *Controller) updateFRRConfigurations(ctx context.Context, ra string, res
 				},
 			)
 			if err != nil {
+				if createOutcomeUncertain(err) {
+					c.uncertainFRRCreates.Insert(ra)
+				}
 				result.nodeErrors = append(result.nodeErrors, fmt.Errorf("failed to create FRRConfiguration for %s: %w", key, err))
 				continue
 			}
@@ -2230,6 +2265,7 @@ func (c *Controller) updateFRRConfigurations(ctx context.Context, ra string, res
 		// no changes needed so skip
 		if reflect.DeepEqual(newFRRConfig.Spec, oldFRRConfig.Spec) &&
 			oldFRRConfig.Annotations[types.OvnRouteAdvertisementsValidatedKey] == newFRRConfig.Annotations[types.OvnRouteAdvertisementsValidatedKey] &&
+			oldFRRConfig.Labels[types.OvnRouteAdvertisementsUIDKey] == newFRRConfig.Labels[types.OvnRouteAdvertisementsUIDKey] &&
 			oldFRRConfig.Labels[types.OvnRouteAdvertisementsNodeKey] == newFRRConfig.Labels[types.OvnRouteAdvertisementsNodeKey] {
 			metrics.RecordRouteAdvertisementFRRConfigurationProcess(ra, frrConfigOpUnchanged)
 			continue
@@ -2294,7 +2330,8 @@ func intentDependsOnFRR(ra string, refs []string, intents map[string]util.RouteA
 		// intent could move an existing export to a different VRF.
 		return slices.Contains(refs, ra)
 	}
-	return next == nil || old.TargetVRF != next.TargetVRF || (old.EgressIP && !next.EgressIP)
+	return next == nil || old.TargetVRF != next.TargetVRF || (old.EgressIP && !next.EgressIP) ||
+		(!old.RequireFRROwner && next.RequireFRROwner)
 }
 
 // A network can have NADs in several namespaces. Advancing even one to a
@@ -2337,9 +2374,9 @@ func (c *Controller) independentNADUpdates(ra string, intent *util.RouteAdvertis
 
 func (c *Controller) getNADUpdates(ra string, intent *util.RouteAdvertisementsIntent, nads []*nadtypes.NetworkAttachmentDefinition) ([]nadUpdate, error) {
 	var updates []nadUpdate
-	selected := sets.New[string]()
+	selected := make(map[string]ktypes.UID, len(nads))
 	for _, nad := range nads {
-		selected.Insert(nad.Namespace + "/" + nad.Name)
+		selected[nad.Namespace+"/"+nad.Name] = nad.UID
 	}
 
 	// An RA can be deleted right after its last NAD patch. The reconcile
@@ -2357,9 +2394,14 @@ func (c *Controller) getNADUpdates(ra string, intent *util.RouteAdvertisementsIn
 		raSet := sets.New(ras...)
 		nadName := nad.Namespace + "/" + nad.Name
 		next := intent
-		if selected.Has(nadName) {
+		if uid, ok := selected[nadName]; ok {
+			// A CUDN can recreate this name after selection. Retry with its
+			// replacement before publishing the previous network's intent.
+			if uid != nad.UID {
+				continue
+			}
 			raSet.Insert(ra)
-			selected.Delete(nadName)
+			delete(selected, nadName)
 		} else {
 			raSet.Delete(ra)
 			next = nil
@@ -2396,8 +2438,8 @@ func (c *Controller) getNADUpdates(ra string, intent *util.RouteAdvertisementsIn
 			})
 		}
 	}
-	if selected.Len() != 0 {
-		return updates, fmt.Errorf("failed to annotate NADs that were not found %v", selected.UnsortedList())
+	if len(selected) != 0 {
+		return updates, fmt.Errorf("selected NADs disappeared or were replaced before annotation: %v", slices.Sorted(maps.Keys(selected)))
 	}
 	return updates, nil
 }

@@ -242,6 +242,8 @@ const (
 	// VRF and whether EgressIPs are advertised too. Nodes read this instead
 	// of the RouteAdvertisements itself.
 	OvnRouteAdvertisementsIntentKey = OvnK8sPrefix + "/route-advertisements-intent"
+	// OvnRouteAdvertisementsUIDKey identifies the RA that generated the FRRConfiguration.
+	OvnRouteAdvertisementsUIDKey = OvnK8sPrefix + "/route-advertisements-uid"
 	// OvnRouteAdvertisementsNodeKey labels generated configurations for node-scoped watches.
 	OvnRouteAdvertisementsNodeKey = OvnK8sPrefix + "/route-advertisements-node"
 

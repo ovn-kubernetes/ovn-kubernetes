@@ -24,7 +24,7 @@ import (
 // network's NADs, keyed by RouteAdvertisements name, in the
 // route-advertisements-intent annotation:
 //
-//	{"example-ra": {"uid": "ra-uid", "generation": 2, "targetVRF": "auto"}}
+//	{"example-ra": {"uid": "ra-uid", "generation": 2, "targetVRF": "auto", "requireFRROwner": true}}
 //
 // The entry stays until cluster manager applies a different state, so nodes
 // keep the last applied intent while a RouteAdvertisements is edited, rejected
@@ -38,6 +38,9 @@ type RouteAdvertisementsIntent struct {
 	TargetVRF string `json:"targetVRF"`
 	// EgressIP is set if EgressIPs are advertised as well.
 	EgressIP bool `json:"egressIP,omitempty"`
+	// RequireFRROwner tells overlay nodes to wait for exports labeled with this UID.
+	// Older intent can use matching exports while the labels are being backfilled.
+	RequireFRROwner bool `json:"requireFRROwner,omitempty"`
 }
 
 // NewRouteAdvertisementsIntent returns the intent of a RouteAdvertisements, or
@@ -47,10 +50,11 @@ func NewRouteAdvertisementsIntent(ra *ratypes.RouteAdvertisements) *RouteAdverti
 		return nil
 	}
 	return &RouteAdvertisementsIntent{
-		UID:        ra.UID,
-		Generation: ra.Generation,
-		TargetVRF:  ra.Spec.TargetVRF,
-		EgressIP:   slices.Contains(ra.Spec.Advertisements, ratypes.EgressIP),
+		UID:             ra.UID,
+		RequireFRROwner: ra.UID != "",
+		Generation:      ra.Generation,
+		TargetVRF:       ra.Spec.TargetVRF,
+		EgressIP:        slices.Contains(ra.Spec.Advertisements, ratypes.EgressIP),
 	}
 }
 
