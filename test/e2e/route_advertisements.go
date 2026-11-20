@@ -4100,8 +4100,11 @@ func getFRRK8sPodOnNode(ctx context.Context, f *framework.Framework, nodeName st
 	return p, nil
 }
 
-// execVtyshOnFRRK8s runs a vtysh -c command in the FRR sidecar of the frr-k8s pod on the given node.
-func execVtyshOnFRRK8s(ctx context.Context, f *framework.Framework, nodeName string, vtyshCmd string) (string, error) {
+// execVtyshOnFRRK8s runs vtysh -c command(s) in the FRR sidecar of the frr-k8s pod on the given node.
+func execVtyshOnFRRK8s(ctx context.Context, f *framework.Framework, nodeName string, vtyshCmds ...string) (string, error) {
+	if len(vtyshCmds) == 0 {
+		return "", fmt.Errorf("no vtysh command")
+	}
 	pod, err := getFRRK8sPodOnNode(ctx, f, nodeName)
 	if err != nil {
 		return "", err
@@ -4117,9 +4120,12 @@ func execVtyshOnFRRK8s(ctx context.Context, f *framework.Framework, nodeName str
 	} else {
 		timeoutCh = time.NewTimer(30 * time.Second).C
 	}
-	out, _, execErr := e2ekubectl.NewKubectlCommand(deploymentconfig.Get().FRRK8sNamespace(),
-		"exec", pod.Name, "-c", frrContainerName, "--", "vtysh", "-c", vtyshCmd,
-	).WithTimeout(timeoutCh).ExecWithFullOutput()
+	args := []string{"exec", pod.Name, "-c", frrContainerName, "--", "vtysh"}
+	for _, cmd := range vtyshCmds {
+		args = append(args, "-c", cmd)
+	}
+	out, _, execErr := e2ekubectl.NewKubectlCommand(deploymentconfig.Get().FRRK8sNamespace(), args...).
+		WithTimeout(timeoutCh).ExecWithFullOutput()
 	return out, execErr
 }
 
@@ -4137,67 +4143,94 @@ func evpnNetworkVNIs(spec *udnv1.NetworkSpec) []int32 {
 	return vnis
 }
 
-func jsonNumberEqual(v any, want int32) bool {
-	switch n := v.(type) {
-	case float64:
-		return int32(n) == want
-	case json.Number:
-		i, err := n.Int64()
-		return err == nil && int32(i) == want
-	case string:
-		i, err := strconv.ParseInt(n, 10, 32)
-		return err == nil && int32(i) == want
-	default:
-		return false
-	}
+// frrEVPNVNIDetail is the subset of `show evpn vni detail json` we wait on.
+// FRR versions differ on extra field names (vxlanIntf vs vxlanInterface, etc.).
+type frrEVPNVNIDetail struct {
+	VNI   int32  `json:"vni"`
+	Type  string `json:"type"`
+	State string `json:"state"`
 }
 
-func frrEVPNVNIListHasVNI(list []map[string]any, vni int32) bool {
-	for _, item := range list {
-		if jsonNumberEqual(item["vni"], vni) {
-			return true
+func parseFRREVPNVNIDetails(raw string) ([]frrEVPNVNIDetail, error) {
+	// FRR may print vtysh.conf warnings before JSON. Locate the VNI document;
+	// do not take the first '[' (that matches Configuration file[/etc/frr/frr.conf]).
+	payload := strings.TrimSpace(raw)
+	i := strings.Index(raw, `"vni"`)
+	if i < 0 {
+		i = strings.Index(raw, `"VNI"`)
+	}
+	if i >= 0 {
+		start := strings.LastIndexAny(raw[:i], "[{")
+		if start >= 0 {
+			if raw[start] == '{' {
+				j := start - 1
+				for j >= 0 && (raw[j] == ' ' || raw[j] == '\t' || raw[j] == '\n' || raw[j] == '\r') {
+					j--
+				}
+				if j >= 0 && raw[j] == '[' {
+					start = j
+				}
+			}
+			payload = strings.TrimSpace(raw[start:])
 		}
 	}
-	return false
-}
-
-func frrEVPNVNIDetailHasVNI(detailJSON string, vni int32) error {
-	trimmed := strings.TrimSpace(detailJSON)
-	vniStr := strconv.FormatInt(int64(vni), 10)
+	if strings.HasPrefix(payload, "{") && strings.HasSuffix(payload, "]") {
+		payload = "[" + payload
+	}
+	trimmed := payload
 	if strings.HasPrefix(trimmed, "[") {
-		var list []map[string]any
+		var list []frrEVPNVNIDetail
 		if err := json.Unmarshal([]byte(trimmed), &list); err != nil {
-			return fmt.Errorf("decode show evpn vni detail json: %w", err)
+			return nil, fmt.Errorf("decode show evpn vni detail json: %w", err)
 		}
-		if frrEVPNVNIListHasVNI(list, vni) {
-			return nil
-		}
-		return fmt.Errorf("show evpn vni detail json missing VNI %d", vni)
+		return list, nil
 	}
 	var top map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(trimmed), &top); err != nil {
-		return fmt.Errorf("decode show evpn vni detail json: %w", err)
-	}
-	if _, ok := top[vniStr]; ok {
-		return nil
+		return nil, fmt.Errorf("decode show evpn vni detail json: %w", err)
 	}
 	if raw, ok := top["vnis"]; ok {
-		var list []map[string]any
-		if err := json.Unmarshal(raw, &list); err == nil && frrEVPNVNIListHasVNI(list, vni) {
-			return nil
+		var list []frrEVPNVNIDetail
+		if err := json.Unmarshal(raw, &list); err != nil {
+			return nil, fmt.Errorf("decode show evpn vni detail json: %w", err)
 		}
+		return list, nil
 	}
+	list := make([]frrEVPNVNIDetail, 0, len(top))
 	for _, raw := range top {
-		var item map[string]any
-		if json.Unmarshal(raw, &item) == nil && jsonNumberEqual(item["vni"], vni) {
-			return nil
+		var item frrEVPNVNIDetail
+		if err := json.Unmarshal(raw, &item); err != nil {
+			continue
 		}
+		list = append(list, item)
+	}
+	if len(list) == 0 {
+		return nil, fmt.Errorf("decode show evpn vni detail json: no VNI entries")
+	}
+	return list, nil
+}
+
+func frrEVPNVNIDetailHasVNI(detailJSON string, vni int32) error {
+	list, err := parseFRREVPNVNIDetails(detailJSON)
+	if err != nil {
+		return err
+	}
+	for _, item := range list {
+		if item.VNI != vni {
+			continue
+		}
+		// L3 entries report state=Up; some L2 dumps omit state. Require Up when present.
+		if item.State != "" && !strings.EqualFold(item.State, "Up") {
+			return fmt.Errorf("VNI %d state %q, want Up", vni, item.State)
+		}
+		return nil
 	}
 	return fmt.Errorf("show evpn vni detail json missing VNI %d", vni)
 }
 
 // waitForEVPNConvergence waits until every ready node has an established EVPN
-// BGP session with the external FRR and this network's VNIs are active.
+// BGP session with the external FRR and this network's VNIs are present (and
+// state Up when FRR reports it) on both cluster frr-k8s and the external FRR.
 func waitForEVPNConvergence(f *framework.Framework, ipFamilySet sets.Set[utilnet.IPFamily], networkName string, networkSpec *udnv1.NetworkSpec) error {
 	const (
 		timeout = 5 * time.Minute
@@ -4224,36 +4257,41 @@ func waitForEVPNConvergence(f *framework.Framework, ipFamilySet sets.Set[utilnet
 	}
 
 	var lastErr error
-	pollErr := wait.PollUntilContextTimeout(context.Background(), polling, timeout, true, func(ctx context.Context) (bool, error) {
+	pollErr := wait.PollUntilContextTimeout(context.Background(), polling, timeout, true, func(_ context.Context) (bool, error) {
 		for i := range nodeList.Items {
 			nodeName := nodeList.Items[i].Name
-			// "show bgp l2vpn evpn summary established" uses FRR's state filter:
-			// only established peers appear. A missing externalFRRIP means the
-			// session has not converged.
-			attemptCtx, attemptCancel := context.WithTimeout(ctx, 30*time.Second)
-			out, execErr := execVtyshOnFRRK8s(attemptCtx, f, nodeName, "show bgp l2vpn evpn summary established")
+			attemptCtx, attemptCancel := context.WithTimeout(context.Background(), 30*time.Second)
+			out, execErr := execVtyshOnFRRK8s(attemptCtx, f, nodeName,
+				"show bgp l2vpn evpn summary established",
+				"show evpn vni detail json")
 			attemptCancel()
 			if execErr != nil {
-				lastErr = fmt.Errorf("node %s: vtysh error: %w", nodeName, execErr)
+				lastErr = fmt.Errorf("node %s: vtysh error: %w\n%s", nodeName, execErr, out)
 				return false, nil
 			}
 			if !strings.Contains(out, externalFRRIP) {
 				lastErr = fmt.Errorf("node %s: EVPN BGP session with %s is not yet established:\n%s", nodeName, externalFRRIP, out)
 				return false, nil
 			}
-
-			vniCtx, vniCancel := context.WithTimeout(ctx, 30*time.Second)
-			vniOut, vniErr := execVtyshOnFRRK8s(vniCtx, f, nodeName, "show evpn vni detail json")
-			vniCancel()
-			if vniErr != nil {
-				lastErr = fmt.Errorf("node %s: show evpn vni detail json: %w\n%s", nodeName, vniErr, vniOut)
-				return false, nil
-			}
 			for _, vni := range expectedVNIs {
-				if err := frrEVPNVNIDetailHasVNI(vniOut, vni); err != nil {
-					lastErr = fmt.Errorf("node %s: %w\n%s", nodeName, err, vniOut)
+				if err := frrEVPNVNIDetailHasVNI(out, vni); err != nil {
+					lastErr = fmt.Errorf("node %s: %w\n%s", nodeName, err, out)
 					return false, nil
 				}
+			}
+		}
+		extOut, extErr := infraprovider.Get().ExecExternalContainerCommand(
+			infraapi.ExternalContainer{Name: routerContainerName},
+			vtyshCommand("show evpn vni detail json"),
+		)
+		if extErr != nil {
+			lastErr = fmt.Errorf("external FRR: show evpn vni detail json: %w\n%s", extErr, extOut)
+			return false, nil
+		}
+		for _, vni := range expectedVNIs {
+			if err := frrEVPNVNIDetailHasVNI(extOut, vni); err != nil {
+				lastErr = fmt.Errorf("external FRR: %w\n%s", err, extOut)
+				return false, nil
 			}
 		}
 		lastErr = nil
