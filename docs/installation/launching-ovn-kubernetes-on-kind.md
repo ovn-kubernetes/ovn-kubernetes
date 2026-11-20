@@ -182,6 +182,7 @@ usage: kind-helm.sh [--delete]
 -noe | --no-overlay-enable [snat-enabled|managed] Enable no overlay for the default network. Optional value: 'snat-enabled' to enable SNAT, 'managed' to enable SNAT and managed routing. DEFAULT: disabled.
 -ds  | --disable-snat-multiple-gws            Disable SNAT for multiple external gateways. DEFAULT: Enabled
 -df  | --disable-forwarding                   Disable forwarding on all interfaces. DEFAULT: Enabled
+-dllf | --disable-link-local-forwarding      Drop IPv4 link-local destinations in gateway routers and UDN VRFs. DEFAULT: Disabled
 --disable-ovnkube-identity                    Disable per-node cert and ovnkube-identity webhook. DEFAULT: Enabled
 -dgb | --dummy-gateway-bridge                 Use a dummy instead of a real gateway bridge. DEFAULT: Disabled
 -gm  | --gateway-mode                         Configure the cluster gateway mode (local|shared). DEFAULT: shared

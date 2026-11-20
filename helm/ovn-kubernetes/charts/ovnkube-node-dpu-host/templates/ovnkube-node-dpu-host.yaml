@@ -194,6 +194,8 @@ spec:
           value: {{ default "" .Values.global.disableSnatMultipleGws | quote }}
         - name: OVN_DISABLE_FORWARDING
           value: {{ default "" .Values.global.disableForwarding | quote }}
+        - name: OVN_DISABLE_LINK_LOCAL_FORWARDING
+          value: {{ default "" .Values.global.disableLinkLocalForwarding | quote }}
         - name: OVN_ENCAP_PORT
           value: {{ default 6081 .Values.global.encapPort | quote }}
         - name: OVN_DISABLE_PKT_MTU_CHECK

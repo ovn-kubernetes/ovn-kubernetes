@@ -222,6 +222,7 @@ router-subnet=10.50.0.0/16
 single-node=false
 disable-forwarding=true
 allow-no-uplink=false
+disable-link-local-forwarding=false
 
 [hybridoverlay]
 enabled=true
@@ -359,6 +360,7 @@ var _ = Describe("Config Operations", func() {
 			gomega.Expect(Gateway.SingleNode).To(gomega.BeFalse())
 			gomega.Expect(Gateway.DisableForwarding).To(gomega.BeFalse())
 			gomega.Expect(Gateway.AllowNoUplink).To(gomega.BeFalse())
+			gomega.Expect(Gateway.DisableLinkLocalForwarding).To(gomega.BeFalse(), "link-local forwarding must stay enabled")
 			gomega.Expect(OVNKubernetesFeature.EgressIPReachabiltyTotalTimeout).To(gomega.Equal(1))
 			gomega.Expect(OVNKubernetesFeature.EgressIPNodeHealthCheckPort).To(gomega.Equal(0))
 			gomega.Expect(OVNKubernetesFeature.EnableMultiNetwork).To(gomega.BeFalse())
@@ -599,6 +601,7 @@ routing-table-id-start=2002
 			gomega.Expect(Gateway.SingleNode).To(gomega.BeFalse())
 			gomega.Expect(Gateway.DisableForwarding).To(gomega.BeTrue())
 			gomega.Expect(Gateway.AllowNoUplink).To(gomega.BeFalse())
+			gomega.Expect(Gateway.DisableLinkLocalForwarding).To(gomega.BeFalse(), "link-local forwarding must stay enabled")
 
 			gomega.Expect(HybridOverlay.Enabled).To(gomega.BeTrue())
 			gomega.Expect(OVNKubernetesFeature.EgressIPReachabiltyTotalTimeout).To(gomega.Equal(3))
@@ -707,6 +710,7 @@ routing-table-id-start=2002
 			gomega.Expect(Gateway.SingleNode).To(gomega.BeTrue())
 			gomega.Expect(Gateway.DisableForwarding).To(gomega.BeTrue())
 			gomega.Expect(Gateway.AllowNoUplink).To(gomega.BeTrue())
+			gomega.Expect(Gateway.DisableLinkLocalForwarding).To(gomega.BeTrue(), "link-local forwarding must be disabled")
 
 			gomega.Expect(HybridOverlay.Enabled).To(gomega.BeTrue())
 			gomega.Expect(OVNKubernetesFeature.EgressIPReachabiltyTotalTimeout).To(gomega.Equal(5))
@@ -771,6 +775,7 @@ routing-table-id-start=2002
 			"-single-node",
 			"-disable-forwarding",
 			"-allow-no-uplink",
+			"-disable-link-local-forwarding",
 			"-enable-hybrid-overlay",
 			"-hybrid-overlay-cluster-subnets=11.132.0.0/14/23",
 			"-monitor-all=false",
@@ -1161,6 +1166,34 @@ enable-pprof=true
 		}
 		err := app.Run(cliArgs)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	})
+	It("returns an error when link-local forwarding is disabled and the v4 masquerade subnet covers the link-local prefix", func() {
+		app.Action = func(ctx *cli.Context) error {
+			_, err := InitConfig(ctx, kexec.New(), nil)
+			gomega.Expect(err).To(gomega.MatchError("disable-link-local-forwarding requires a gateway v4 masquerade subnet more specific than 169.254.0.0/16, got: 169.254.0.0/16"))
+			return nil
+		}
+		cliArgs := []string{
+			app.Name,
+			"-disable-link-local-forwarding",
+			"-gateway-v4-masquerade-subnet=169.254.0.0/16",
+		}
+		err := app.Run(cliArgs)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "the CLI app failed to run")
+	})
+	It("accepts link-local forwarding disabled with the default v4 masquerade subnet", func() {
+		app.Action = func(ctx *cli.Context) error {
+			_, err := InitConfig(ctx, kexec.New(), nil)
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "the option must be accepted with the default masquerade subnet")
+			gomega.Expect(Gateway.DisableLinkLocalForwarding).To(gomega.BeTrue(), "link-local forwarding must be disabled")
+			return nil
+		}
+		cliArgs := []string{
+			app.Name,
+			"-disable-link-local-forwarding",
+		}
+		err := app.Run(cliArgs)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "the CLI app failed to run")
 	})
 	It("returns an error when the v6 masquerade subnet specified is invalid", func() {
 		app.Action = func(ctx *cli.Context) error {
