@@ -856,10 +856,10 @@ coredns_patch() {
   # 1. Github CI doesn´t offer IPv6 connectivity, so CoreDNS should be configured
   # to work in an offline environment:
   # https://github.com/coredns/coredns/issues/2494#issuecomment-457215452
-  # 2. Github CI adds following domains to resolv.conf search field:
-  # .net.
-  # CoreDNS should handle those domains and answer with NXDOMAIN instead of SERVFAIL
-  # otherwise pods stops trying to resolve the domain.
+  # 2. GitHub runners add cloud search domains: Azure uses *.internal.cloudapp.net,
+  # while AWS uses <region>.compute.internal or ec2.internal. Handle net and
+  # internal locally so search-expanded queries return NXDOMAIN instead of
+  # timing out upstream, allowing pods to continue to the cluster DNS name.
   # Get the current config
   original_coredns=$(kubectl get -oyaml -n=kube-system configmap/coredns)
   echo "Original CoreDNS config:"
@@ -867,7 +867,7 @@ coredns_patch() {
   # Patch it
   fixed_coredns=$(
     printf '%s' "${original_coredns}" | sed \
-      -e 's/^.*kubernetes cluster\.local/& net/' \
+      -e 's/^.*kubernetes cluster\.local/& net internal/' \
       -e '/^.*upstream$/d' \
       -e '/^.*fallthrough.*$/d' \
       -e 's/^\(.*forward \.\).*$/\1 '"$dns_server"' {/' \
