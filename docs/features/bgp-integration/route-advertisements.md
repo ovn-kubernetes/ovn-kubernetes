@@ -938,8 +938,8 @@ red's namespaces still records the previous intent, all of red's NADs wait for
 the old export to be withdrawn. Newly selected networks can receive their own
 intent even if deleting an obsolete configuration on one node fails.
 
-When an EgressIP moves, the controller removes it from the old owner's generated
-configurations before publishing it on the new owner. If both nodes keep
+When an EgressIP moves, the controller withdraws any known exports from the
+old owner before publishing it on the new owner. If both nodes keep
 advertising pod routes, those routes stay in place even when the nodes swap
 EgressIPs. While the RA has EgressIPs to publish, a failed withdrawal delays
 replacements across the RA. When the last assignment is removed, there is no
@@ -1011,10 +1011,12 @@ inputs or write the API is retried; it is not itself evidence of invalid input.
 FRR applies changes asynchronously, so API deletion does not confirm BGP withdrawal.
 
 Before reconciling an RA again, the controller waits for its informer caches to
-reflect the FRR configurations and NAD annotations it wrote. For example, if an
-EgressIP moves while the old owner's configuration is still arriving in the
-cache, reconciliation waits so it can withdraw that route first. Other RAs can
-continue reconciling.
+reflect the FRR configuration and NAD writes the API acknowledged. Other RAs
+can continue reconciling. If the API created the old owner's FRRConfiguration
+but the create response was lost, an EgressIP can move before that configuration
+reaches the cache. Both nodes' configurations can then contain the EgressIP.
+When the informer observes the old configuration, it requeues the RA to withdraw
+the stale export.
 
 Node-specific VTEP validation continues to exclude invalid nodes while applying
 configurations generated for the other nodes. If another input error prevents a
