@@ -23,9 +23,8 @@ var _ = Describe("EVPN: VTEP API validations", func() {
 			DeferCleanup(cleanupValidateCRsTest, scenarios, NodeTimeout(vtepSpecTimeout))
 			for _, s := range scenarios {
 				By(s.Description)
-				obj, err := testscenario.ValidateScenarioToObject(s)
-				Expect(err).ToNot(HaveOccurred(), "must convert scenario to kubernetes object")
-				err = k8sClient.Create(ctx, obj)
+				obj := s.NewObject()
+				err := k8sClient.Create(ctx, obj)
 				Expect(err).To(HaveOccurred(), "should fail to create invalid VTEP CR")
 				Expect(err.Error()).To(ContainSubstring(s.ExpectedErr))
 			}
@@ -38,9 +37,8 @@ var _ = Describe("EVPN: VTEP API validations", func() {
 			DeferCleanup(cleanupValidateCRsTest, scenarios, NodeTimeout(vtepSpecTimeout))
 			for _, s := range scenarios {
 				By(s.Description)
-				obj, err := testscenario.ValidateScenarioToObject(s)
-				Expect(err).ToNot(HaveOccurred(), "must convert scenario to kubernetes object")
-				err = k8sClient.Create(ctx, obj)
+				obj := s.NewObject()
+				err := k8sClient.Create(ctx, obj)
 				Expect(err).NotTo(HaveOccurred(), "should create valid VTEP CR successfully")
 			}
 		},
@@ -52,9 +50,8 @@ var _ = Describe("EVPN: VTEP API validations", func() {
 			DeferCleanup(cleanupUpdateCRScenario, scenarios, NodeTimeout(vtepSpecTimeout))
 			for _, s := range scenarios {
 				By("Creating initial VTEP: " + s.Description)
-				initialObj, updateObj, err := testscenario.UpdateCRScenarioToObject(s)
-				Expect(err).ToNot(HaveOccurred(), "must convert scenario to kubernetes object")
-				err = k8sClient.Create(ctx, initialObj)
+				initialObj, updateObj := s.NewInitialObject(), s.NewObject()
+				err := k8sClient.Create(ctx, initialObj)
 				Expect(err).NotTo(HaveOccurred(), "should create initial VTEP CR successfully")
 
 				By("Updating VTEP (should fail): " + s.Description)
@@ -75,9 +72,8 @@ var _ = Describe("EVPN: VTEP API validations", func() {
 			DeferCleanup(cleanupUpdateCRScenario, scenarios, NodeTimeout(vtepSpecTimeout))
 			for _, s := range scenarios {
 				By("Creating initial VTEP: " + s.Description)
-				initialObj, updateObj, err := testscenario.UpdateCRScenarioToObject(s)
-				Expect(err).ToNot(HaveOccurred(), "must convert scenario to kubernetes object")
-				err = k8sClient.Create(ctx, initialObj)
+				initialObj, updateObj := s.NewInitialObject(), s.NewObject()
+				err := k8sClient.Create(ctx, initialObj)
 				Expect(err).NotTo(HaveOccurred(), "should create initial VTEP CR successfully")
 
 				By("Updating VTEP (should succeed): " + s.Description)

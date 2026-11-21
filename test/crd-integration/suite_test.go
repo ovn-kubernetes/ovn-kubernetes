@@ -33,9 +33,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
 	adminpolicybasedroutev1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1"
+	cncv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
 	egressfirewallv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1"
 	egressipv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressip/v1"
 	uplinkv1alpha1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1"
+	udnv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
+	vtepv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1"
 )
 
 var (
@@ -55,9 +58,12 @@ var _ = BeforeSuite(func() {
 	scheme := k8sruntime.NewScheme()
 	utilruntime.Must(adminpolicybasedroutev1.AddToScheme(scheme))
 	utilruntime.Must(apiextensionsv1.AddToScheme(scheme))
+	utilruntime.Must(cncv1.AddToScheme(scheme))
 	utilruntime.Must(egressfirewallv1.AddToScheme(scheme))
 	utilruntime.Must(egressipv1.AddToScheme(scheme))
 	utilruntime.Must(uplinkv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(udnv1.AddToScheme(scheme))
+	utilruntime.Must(vtepv1.AddToScheme(scheme))
 
 	testEnv = &envtest.Environment{
 		CRDDirectoryPaths: []string{crdDir()},

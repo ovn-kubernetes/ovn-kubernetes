@@ -3,116 +3,51 @@
 
 package clusternetworkconnect
 
-import "github.com/ovn-kubernetes/ovn-kubernetes/test/crd-integration/testscenario"
+import (
+	cncv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/clusternetworkconnect/v1"
+	crdtypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/crd-integration/testscenario"
+)
 
 var ValidScenarios = []testscenario.ValidateCRScenario{
 	{
 		Description: "valid CUDN selector with single connectivity type",
-		Manifest: `
-apiVersion: k8s.ovn.org/v1
-kind: ClusterNetworkConnect
-metadata:
-  name: valid-cudn-single
-spec:
-  networkSelectors:
-    - networkSelectionType: "ClusterUserDefinedNetworks"
-      clusterUserDefinedNetworkSelector:
-        networkSelector:
-          matchLabels:
-            name: test
-  connectSubnets:
-    - cidr: "192.168.0.0/16"
-      networkPrefix: 24
-  connectivity: ["PodNetwork"]
-`,
+		Object: newClusterNetworkConnect("valid-cudn-single", cncv1.ClusterNetworkConnectSpec{
+			NetworkSelectors: crdtypes.NetworkSelectors{cudnSelector("test")},
+			ConnectSubnets:   []cncv1.ConnectSubnet{{CIDR: "192.168.0.0/16", NetworkPrefix: 24}},
+			Connectivity:     []cncv1.ConnectivityType{"PodNetwork"},
+		}),
 	},
 	{
 		Description: "valid PUDN selector with both connectivity types",
-		Manifest: `
-apiVersion: k8s.ovn.org/v1
-kind: ClusterNetworkConnect
-metadata:
-  name: valid-pudn-both
-spec:
-  networkSelectors:
-    - networkSelectionType: "PrimaryUserDefinedNetworks"
-      primaryUserDefinedNetworkSelector:
-        namespaceSelector:
-          matchLabels:
-            name: test
-  connectSubnets:
-    - cidr: "192.168.0.0/16"
-      networkPrefix: 24
-  connectivity: ["PodNetwork", "ServiceNetwork"]
-`,
+		Object: newClusterNetworkConnect("valid-pudn-both", cncv1.ClusterNetworkConnectSpec{
+			NetworkSelectors: crdtypes.NetworkSelectors{primaryUDNSelector("test")},
+			ConnectSubnets:   []cncv1.ConnectSubnet{{CIDR: "192.168.0.0/16", NetworkPrefix: 24}},
+			Connectivity:     []cncv1.ConnectivityType{"PodNetwork", "ServiceNetwork"},
+		}),
 	},
 	{
 		Description: "valid dual-stack CIDRs with matching host bits",
-		Manifest: `
-apiVersion: k8s.ovn.org/v1
-kind: ClusterNetworkConnect
-metadata:
-  name: valid-dual-stack
-spec:
-  networkSelectors:
-    - networkSelectionType: "ClusterUserDefinedNetworks"
-      clusterUserDefinedNetworkSelector:
-        networkSelector:
-          matchLabels:
-            name: test
-  connectSubnets:
-    - cidr: "192.168.0.0/16"
-      networkPrefix: 24
-    - cidr: "fd01::/112"
-      networkPrefix: 120
-  connectivity: ["PodNetwork"]
-`,
+		Object: newClusterNetworkConnect("valid-dual-stack", cncv1.ClusterNetworkConnectSpec{
+			NetworkSelectors: crdtypes.NetworkSelectors{cudnSelector("test")},
+			ConnectSubnets:   []cncv1.ConnectSubnet{{CIDR: "192.168.0.0/16", NetworkPrefix: 24}, {CIDR: "fd01::/112", NetworkPrefix: 120}},
+			Connectivity:     []cncv1.ConnectivityType{"PodNetwork"},
+		}),
 	},
 	{
 		Description: "valid single IPv6 CIDR",
-		Manifest: `
-apiVersion: k8s.ovn.org/v1
-kind: ClusterNetworkConnect
-metadata:
-  name: valid-ipv6-only
-spec:
-  networkSelectors:
-    - networkSelectionType: "ClusterUserDefinedNetworks"
-      clusterUserDefinedNetworkSelector:
-        networkSelector:
-          matchLabels:
-            name: test
-  connectSubnets:
-    - cidr: "fd01::/64"
-      networkPrefix: 96
-  connectivity: ["ServiceNetwork"]
-`,
+		Object: newClusterNetworkConnect("valid-ipv6-only", cncv1.ClusterNetworkConnectSpec{
+			NetworkSelectors: crdtypes.NetworkSelectors{cudnSelector("test")},
+			ConnectSubnets:   []cncv1.ConnectSubnet{{CIDR: "fd01::/64", NetworkPrefix: 96}},
+			Connectivity:     []cncv1.ConnectivityType{"ServiceNetwork"},
+		}),
 	},
 	{
 		Description: "valid multiple network selectors",
-		Manifest: `
-apiVersion: k8s.ovn.org/v1
-kind: ClusterNetworkConnect
-metadata:
-  name: valid-multiple-selectors
-spec:
-  networkSelectors:
-    - networkSelectionType: "ClusterUserDefinedNetworks"
-      clusterUserDefinedNetworkSelector:
-        networkSelector:
-          matchLabels:
-            name: test1
-    - networkSelectionType: "PrimaryUserDefinedNetworks"
-      primaryUserDefinedNetworkSelector:
-        namespaceSelector:
-          matchLabels:
-            name: test2
-  connectSubnets:
-    - cidr: "192.168.0.0/16"
-      networkPrefix: 24
-    - cidr: "fd01::/112"
-      networkPrefix: 120
-  connectivity: ["PodNetwork", "ServiceNetwork"]
-`,
+		Object: newClusterNetworkConnect("valid-multiple-selectors", cncv1.ClusterNetworkConnectSpec{
+			NetworkSelectors: crdtypes.NetworkSelectors{cudnSelector("test1"), primaryUDNSelector("test2")},
+			ConnectSubnets:   []cncv1.ConnectSubnet{{CIDR: "192.168.0.0/16", NetworkPrefix: 24}, {CIDR: "fd01::/112", NetworkPrefix: 120}},
+			Connectivity:     []cncv1.ConnectivityType{"PodNetwork", "ServiceNetwork"},
+		}),
 	},
 }

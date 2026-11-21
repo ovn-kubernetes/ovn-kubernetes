@@ -3,149 +3,86 @@
 
 package cudn
 
-import "github.com/ovn-kubernetes/ovn-kubernetes/test/crd-integration/testscenario"
+import (
+	udnv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/crd-integration/testscenario"
+)
 
 var NoOverlayValid = []testscenario.ValidateCRScenario{
 	{
 		Description: "NoOverlay transport with managed routing and enabled SNAT",
-		Name:        "no-overlay-managed-enabled-snat",
-		Manifest: `
-apiVersion: k8s.ovn.org/v1
-kind: ClusterUserDefinedNetwork
-metadata:
-  name: no-overlay-managed-enabled-snat
-spec:
-  namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: red}}
-  network:
-    topology: Layer3
-    layer3:
-      role: Primary
-      mtu: 1500
-      subnets:
-      - cidr: 10.10.0.0/16
-        hostSubnet: 24
-    transport: NoOverlay
-    noOverlay:
-      outboundSNAT: Enabled
-      routing: Managed
-`,
+		Object: newCUDN("no-overlay-managed-enabled-snat", udnv1.NetworkSpec{
+			Topology: "Layer3",
+			Layer3: &udnv1.Layer3Config{
+				Role:    "Primary",
+				MTU:     1500,
+				Subnets: []udnv1.Layer3Subnet{{CIDR: "10.10.0.0/16", HostSubnet: 24}},
+			},
+			Transport: "NoOverlay",
+			NoOverlay: &udnv1.NoOverlayConfig{OutboundSNAT: "Enabled", Routing: "Managed"},
+		}),
 	},
 	{
 		Description: "NoOverlay transport with unmanaged routing and disabled SNAT",
-		Name:        "no-overlay-unmanaged-disabled-snat",
-		Manifest: `
-apiVersion: k8s.ovn.org/v1
-kind: ClusterUserDefinedNetwork
-metadata:
-  name: no-overlay-unmanaged-disabled-snat
-spec:
-  namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: blue}}
-  network:
-    topology: Layer3
-    layer3:
-      role: Primary
-      mtu: 1500
-      subnets:
-      - cidr: 10.20.0.0/16
-        hostSubnet: 24
-    transport: NoOverlay
-    noOverlay:
-      outboundSNAT: Disabled
-      routing: Unmanaged
-`,
+		Object: newCUDNForNamespaces("no-overlay-unmanaged-disabled-snat", udnv1.NetworkSpec{
+			Topology: "Layer3",
+			Layer3: &udnv1.Layer3Config{
+				Role:    "Primary",
+				MTU:     1500,
+				Subnets: []udnv1.Layer3Subnet{{CIDR: "10.20.0.0/16", HostSubnet: 24}},
+			},
+			Transport: "NoOverlay",
+			NoOverlay: &udnv1.NoOverlayConfig{OutboundSNAT: "Disabled", Routing: "Unmanaged"},
+		}, "blue"),
 	},
 	{
 		Description: "NoOverlay transport with managed routing and disabled SNAT",
-		Name:        "no-overlay-managed-disabled-snat",
-		Manifest: `
-apiVersion: k8s.ovn.org/v1
-kind: ClusterUserDefinedNetwork
-metadata:
-  name: no-overlay-managed-disabled-snat
-spec:
-  namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: green}}
-  network:
-    topology: Layer3
-    layer3:
-      role: Primary
-      mtu: 1500
-      subnets:
-      - cidr: 10.30.0.0/16
-        hostSubnet: 24
-    transport: NoOverlay
-    noOverlay:
-      outboundSNAT: Disabled
-      routing: Managed
-`,
+		Object: newCUDNForNamespaces("no-overlay-managed-disabled-snat", udnv1.NetworkSpec{
+			Topology: "Layer3",
+			Layer3: &udnv1.Layer3Config{
+				Role:    "Primary",
+				MTU:     1500,
+				Subnets: []udnv1.Layer3Subnet{{CIDR: "10.30.0.0/16", HostSubnet: 24}},
+			},
+			Transport: "NoOverlay",
+			NoOverlay: &udnv1.NoOverlayConfig{OutboundSNAT: "Disabled", Routing: "Managed"},
+		}, "green"),
 	},
 	{
 		Description: "NoOverlay transport with unmanaged routing and enabled SNAT",
-		Name:        "no-overlay-unmanaged-enabled-snat",
-		Manifest: `
-apiVersion: k8s.ovn.org/v1
-kind: ClusterUserDefinedNetwork
-metadata:
-  name: no-overlay-unmanaged-enabled-snat
-spec:
-  namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: yellow}}
-  network:
-    topology: Layer3
-    layer3:
-      role: Primary
-      mtu: 1500
-      subnets:
-      - cidr: 10.40.0.0/16
-        hostSubnet: 24
-    transport: NoOverlay
-    noOverlay:
-      outboundSNAT: Enabled
-      routing: Unmanaged
-`,
+		Object: newCUDNForNamespaces("no-overlay-unmanaged-enabled-snat", udnv1.NetworkSpec{
+			Topology: "Layer3",
+			Layer3: &udnv1.Layer3Config{
+				Role:    "Primary",
+				MTU:     1500,
+				Subnets: []udnv1.Layer3Subnet{{CIDR: "10.40.0.0/16", HostSubnet: 24}},
+			},
+			Transport: "NoOverlay",
+			NoOverlay: &udnv1.NoOverlayConfig{OutboundSNAT: "Enabled", Routing: "Unmanaged"},
+		}, "yellow"),
 	},
 	{
 		Description: "NoOverlay transport with dual-stack subnets",
-		Name:        "no-overlay-dual-stack",
-		Manifest: `
-apiVersion: k8s.ovn.org/v1
-kind: ClusterUserDefinedNetwork
-metadata:
-  name: no-overlay-dual-stack
-spec:
-  namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: purple}}
-  network:
-    topology: Layer3
-    layer3:
-      role: Primary
-      mtu: 1500
-      subnets:
-      - cidr: 10.50.0.0/16
-        hostSubnet: 24
-      - cidr: fd00:10:50::/48
-        hostSubnet: 64
-    transport: NoOverlay
-    noOverlay:
-      outboundSNAT: Enabled
-      routing: Managed
-`,
+		Object: newCUDNForNamespaces("no-overlay-dual-stack", udnv1.NetworkSpec{
+			Topology: "Layer3",
+			Layer3: &udnv1.Layer3Config{
+				Role:    "Primary",
+				MTU:     1500,
+				Subnets: []udnv1.Layer3Subnet{{CIDR: "10.50.0.0/16", HostSubnet: 24}, {CIDR: "fd00:10:50::/48", HostSubnet: 64}},
+			},
+			Transport: "NoOverlay",
+			NoOverlay: &udnv1.NoOverlayConfig{OutboundSNAT: "Enabled", Routing: "Managed"},
+		}, "purple"),
 	},
 	{
 		Description: "Layer3 primary network with unset default transport (no transport field set)",
-		Name:        "unset-default-transport",
-		Manifest: `
-apiVersion: k8s.ovn.org/v1
-kind: ClusterUserDefinedNetwork
-metadata:
-  name: unset-default-transport
-spec:
-  namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: orange}}
-  network:
-    topology: Layer3
-    layer3:
-      role: Primary
-      mtu: 1400
-      subnets:
-      - cidr: 10.60.0.0/16
-        hostSubnet: 24
-`,
+		Object: newCUDNForNamespaces("unset-default-transport", udnv1.NetworkSpec{
+			Topology: "Layer3",
+			Layer3: &udnv1.Layer3Config{
+				Role:    "Primary",
+				MTU:     1400,
+				Subnets: []udnv1.Layer3Subnet{{CIDR: "10.60.0.0/16", HostSubnet: 24}},
+			},
+		}, "orange"),
 	},
 }
