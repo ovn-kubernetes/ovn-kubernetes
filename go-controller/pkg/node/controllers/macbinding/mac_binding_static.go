@@ -22,17 +22,17 @@ import (
 
 // repairStaticMacBindings deletes stale static mac bindings owned by the
 // controller for non-existant networks.
-func (c *MACBindingController) repairStaticMacBindings(knownPorts sets.Set[string]) {
+func (c *MACBindingController) repairStaticMacBindings(knownPorts sets.Set[string]) error {
 	start := time.Now()
 	stale := func(smb *nbdb.StaticMACBinding) bool {
 		return !knownPorts.Has(smb.LogicalPort) &&
 			ops.IsMacBindingControllerOwned(smb.LogicalPort, smb.IP)
 	}
-	if err := ops.DeleteStaticMACBindingWithPredicate(c.nbClient, stale); err != nil {
-		klog.Errorf("Failed to delete stale static MAC bindings: %v", err)
-		return
+	if err := ops.DeleteStaticMACBindingsWithPredicate(c.nbClient, stale); err != nil {
+		return fmt.Errorf("failed to delete stale static MAC bindings: %w", err)
 	}
 	klog.V(5).Infof("Deleted stale static MAC bindings, took %s", time.Since(start))
+	return nil
 }
 
 // syncStaticMacBinding (re)applies or removes a single node IP's static MAC

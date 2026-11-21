@@ -238,9 +238,19 @@ func (c *MACBindingController) Run(stopCh <-chan struct{}) error {
 	return nil
 }
 
+// repair cleans up what the controller left behind for networks deleted while
+// it was not running. It runs once per process, on the first full network
+// reconcile; a failure is logged and not retried.
+//
+// knownPorts must hold the port of every network that still exists: anything
+// else is treated as deleted. That relies on the controller starting after the
+// node network manager has synced the existing networks, otherwise the bindings
+// of live networks would be deleted too.
 func (c *MACBindingController) repair(knownPorts sets.Set[string]) {
 	// delete stale static mac bindings
-	c.repairStaticMacBindings(knownPorts)
+	if err := c.repairStaticMacBindings(knownPorts); err != nil {
+		klog.Errorf("Failed to repair static MAC bindings: %v", err)
+	}
 }
 
 // ReconcileUplinkSource is called by the uplinkSourceProvider to report that
