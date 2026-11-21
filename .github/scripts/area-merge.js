@@ -18,6 +18,7 @@ module.exports = async ({ github, context, core }) => {
   // --- Determine which PRs to process and who triggered ---
   let pullNumbers = [];
   let commenter = null;
+  let retrySha = null;
 
   if (context.eventName === 'issue_comment') {
     // Defense in depth (the workflow `if` also enforces this): only accept
@@ -32,10 +33,44 @@ module.exports = async ({ github, context, core }) => {
     }
     pullNumbers.push(context.payload.issue.number);
     commenter = comment.user.login.toLowerCase();
-  } else if (context.eventName === 'check_suite') {
-    const suite = context.payload.check_suite;
-    for (const pr of (suite.pull_requests || [])) {
+  } else if (context.eventName === 'check_suite' || context.eventName === 'workflow_run') {
+    const source = context.payload[context.eventName];
+    if (context.eventName === 'workflow_run' && source.event !== 'pull_request') {
+      core.info('Ignoring workflow run not triggered by a pull request');
+      return;
+    }
+    retrySha = source.head_sha;
+    core.info(`Retry from ${context.eventName} ${source.id} for SHA ${retrySha}`);
+    for (const pr of (source.pull_requests || [])) {
       pullNumbers.push(pr.number);
+    }
+    // Fork PRs can have an empty pull_requests array in both event payloads.
+    // Use the triggering suite/run SHA, not context.sha (the default branch).
+    if (pullNumbers.length === 0 && retrySha) {
+      const associatedPRs = await github.paginate(github.rest.repos.listPullRequestsAssociatedWithCommit, {
+        owner: context.repo.owner,
+        repo: context.repo.repo,
+        commit_sha: retrySha,
+        per_page: 100,
+      });
+      pullNumbers = associatedPRs.filter(pr => pr.state === 'open').map(pr => pr.number);
+    }
+    // The commit association API can also return no results for an open fork
+    // PR. Workflow runs retain the source repository and branch in that case.
+    if (pullNumbers.length === 0 && context.eventName === 'workflow_run' && retrySha &&
+        source.head_repository?.owner?.login && source.head_branch) {
+      const candidates = await github.paginate(github.rest.pulls.list, {
+        owner: context.repo.owner,
+        repo: context.repo.repo,
+        state: 'open',
+        head: `${source.head_repository.owner.login}:${source.head_branch}`,
+        per_page: 100,
+      });
+      // The head query is owner:branch, so also verify the repository identity.
+      pullNumbers = candidates.filter(pr =>
+        pr.head.repo?.id === source.head_repository.id &&
+        pr.head.ref === source.head_branch && pr.head.sha === retrySha
+      ).map(pr => pr.number);
     }
   }
 
@@ -114,6 +149,83 @@ module.exports = async ({ github, context, core }) => {
     return allComments;
   }
 
+  async function fetchCIStatus(ref) {
+    const allCheckRuns = [];
+    let checkPage = 1;
+    while (true) {
+      const { data } = await github.rest.checks.listForRef({
+        owner: context.repo.owner,
+        repo: context.repo.repo,
+        ref: ref,
+        per_page: 100,
+        page: checkPage,
+      });
+      allCheckRuns.push(...data.check_runs);
+      if (allCheckRuns.length >= data.total_count) break;
+      checkPage++;
+    }
+
+    // Deduplicate check runs by name, keeping only the most recent per name.
+    // GitHub returns all runs for a SHA including stale ones from earlier
+    // workflow invocations (e.g. cancelled runs before a close/reopen retry).
+    const latestByName = new Map();
+    for (const run of allCheckRuns) {
+      const existing = latestByName.get(run.name);
+      const runTime = new Date(run.started_at || run.created_at || 0).getTime();
+      const existingTime = existing ? new Date(existing.started_at || existing.created_at || 0).getTime() : 0;
+      if (!existing || runTime > existingTime) {
+        latestByName.set(run.name, run);
+      }
+    }
+    const checkRuns = Array.from(latestByName.values());
+
+    const { data: combinedStatus } = await github.rest.repos.getCombinedStatusForRef({
+      owner: context.repo.owner,
+      repo: context.repo.repo,
+      ref: ref,
+    });
+
+    const pendingChecks = [];
+    const failedChecks = [];
+
+    for (const run of checkRuns) {
+      if (run.name === 'area-merge') continue;
+      if (run.status !== 'completed') {
+        pendingChecks.push(run.name);
+      } else if (run.conclusion !== 'success' && run.conclusion !== 'neutral' && run.conclusion !== 'skipped') {
+        failedChecks.push(run.name);
+      }
+    }
+
+    // Gate on the aggregate state first — it covers ALL commit statuses
+    // regardless of pagination, so we never miss a failure or pending status.
+    // Then iterate the (possibly partial) statuses array for detailed names.
+    // GitHub folds individual "error" statuses into the aggregate "failure" state.
+    if (combinedStatus.state === 'failure') {
+      for (const status of combinedStatus.statuses) {
+        if (status.state === 'failure' || status.state === 'error') {
+          failedChecks.push(status.context);
+        }
+      }
+      if (failedChecks.length === 0) {
+        failedChecks.push('(commit status failure — details may be on a later page)');
+      }
+    } else if (combinedStatus.state === 'pending') {
+      for (const status of combinedStatus.statuses) {
+        if (status.state === 'pending') {
+          pendingChecks.push(status.context);
+        } else if (status.state === 'failure' || status.state === 'error') {
+          failedChecks.push(status.context);
+        }
+      }
+      if (pendingChecks.length === 0 && failedChecks.length === 0) {
+        pendingChecks.push('(commit status pending — details may be on a later page)');
+      }
+    }
+
+    return { pendingChecks, failedChecks };
+  }
+
   // --- Process each PR ---
   for (const prNumber of pullNumbers) {
     core.info(`Processing PR #${prNumber}`);
@@ -126,6 +238,11 @@ module.exports = async ({ github, context, core }) => {
 
     if (pr.state !== 'open') {
       core.info(`PR #${prNumber} is ${pr.state}, skipping`);
+      continue;
+    }
+
+    if (context.eventName !== 'issue_comment' && pr.head.sha !== retrySha) {
+      core.info(`PR #${prNumber} head ${pr.head.sha} does not match retry SHA ${retrySha}, skipping`);
       continue;
     }
 
@@ -143,7 +260,7 @@ module.exports = async ({ github, context, core }) => {
       continue;
     }
 
-    // For check_suite retries, find who previously ran /area-maintainer-approved
+    // For CI completion retries, find who previously ran /area-maintainer-approved
     let requester = commenter;
     let allComments = null;
     if (!requester) {
@@ -163,10 +280,10 @@ module.exports = async ({ github, context, core }) => {
       continue;
     }
 
-    // For check_suite, verify the bot posted a "waiting" comment for the current head SHA.
+    // For CI completion retries, require a bot "waiting" comment for the current head SHA.
     // If new commits were pushed after approval, the SHA won't match and we skip
     // to prevent merging code the area maintainer never reviewed.
-    if (context.eventName === 'check_suite') {
+    if (context.eventName !== 'issue_comment') {
       if (!allComments) allComments = await fetchAllComments(prNumber);
       const waitingMarker = `<!-- area-merge-sha:${pr.head.sha} -->`;
       const isWaiting = allComments.some(c =>
@@ -226,95 +343,9 @@ module.exports = async ({ github, context, core }) => {
 
     // Check CI status
     const ref = pr.head.sha;
+    let { pendingChecks, failedChecks } = await fetchCIStatus(ref);
 
-    const allCheckRuns = [];
-    let checkPage = 1;
-    while (true) {
-      const { data } = await github.rest.checks.listForRef({
-        owner: context.repo.owner,
-        repo: context.repo.repo,
-        ref: ref,
-        per_page: 100,
-        page: checkPage,
-      });
-      allCheckRuns.push(...data.check_runs);
-      if (allCheckRuns.length >= data.total_count) break;
-      checkPage++;
-    }
-
-    // Deduplicate check runs by name, keeping only the most recent per name.
-    // GitHub returns all runs for a SHA including stale ones from earlier
-    // workflow invocations (e.g. cancelled runs before a close/reopen retry).
-    const latestByName = new Map();
-    for (const run of allCheckRuns) {
-      const existing = latestByName.get(run.name);
-      const runTime = new Date(run.started_at || run.created_at || 0).getTime();
-      const existingTime = existing ? new Date(existing.started_at || existing.created_at || 0).getTime() : 0;
-      if (!existing || runTime > existingTime) {
-        latestByName.set(run.name, run);
-      }
-    }
-    const checkRuns = Array.from(latestByName.values());
-
-    const { data: combinedStatus } = await github.rest.repos.getCombinedStatusForRef({
-      owner: context.repo.owner,
-      repo: context.repo.repo,
-      ref: ref,
-    });
-
-    const pendingChecks = [];
-    const failedChecks = [];
-
-    for (const run of checkRuns) {
-      if (run.name === 'area-merge') continue;
-      if (run.status !== 'completed') {
-        pendingChecks.push(run.name);
-      } else if (run.conclusion !== 'success' && run.conclusion !== 'neutral' && run.conclusion !== 'skipped') {
-        failedChecks.push(run.name);
-      }
-    }
-
-    // Gate on the aggregate state first — it covers ALL commit statuses
-    // regardless of pagination, so we never miss a failure or pending status.
-    // Then iterate the (possibly partial) statuses array for detailed names.
-    if (combinedStatus.state === 'failure') {
-      for (const status of combinedStatus.statuses) {
-        if (status.state === 'failure' || status.state === 'error') {
-          failedChecks.push(status.context);
-        }
-      }
-      if (failedChecks.length === 0) {
-        failedChecks.push('(commit status failure — details may be on a later page)');
-      }
-    } else if (combinedStatus.state === 'pending') {
-      for (const status of combinedStatus.statuses) {
-        if (status.state === 'pending') {
-          pendingChecks.push(status.context);
-        } else if (status.state === 'failure' || status.state === 'error') {
-          failedChecks.push(status.context);
-        }
-      }
-      if (pendingChecks.length === 0 && failedChecks.length === 0) {
-        pendingChecks.push('(commit status pending — details may be on a later page)');
-      }
-    }
-
-    if (failedChecks.length > 0) {
-      core.info(`Failed checks: ${failedChecks.join(', ')}`);
-      await github.rest.issues.createComment({
-        owner: context.repo.owner,
-        repo: context.repo.repo,
-        issue_number: prNumber,
-        body: `Cannot merge via \`/area-maintainer-approved\`: the following CI checks have failed:\n` +
-          failedChecks.map(c => `- \`${c}\``).join('\n') +
-          `\n\nPlease fix the failures and run \`/area-maintainer-approved\` again.`,
-      });
-      continue;
-    }
-
-    if (pendingChecks.length > 0) {
-      core.info(`Pending checks: ${pendingChecks.join(', ')}`);
-
+    if (pendingChecks.length > 0 && failedChecks.length === 0) {
       const shaMarker = `<!-- area-merge-sha:${ref} -->`;
       if (!allComments) allComments = await fetchAllComments(prNumber);
       const alreadyWaiting = allComments.some(c =>
@@ -322,7 +353,7 @@ module.exports = async ({ github, context, core }) => {
         c.body.includes(shaMarker)
       );
       if (!alreadyWaiting) {
-        await github.rest.issues.createComment({
+        const { data: waitingComment } = await github.rest.issues.createComment({
           owner: context.repo.owner,
           repo: context.repo.repo,
           issue_number: prNumber,
@@ -331,7 +362,47 @@ module.exports = async ({ github, context, core }) => {
             `Pending checks:\n` +
             pendingChecks.map(c => `- \`${c}\``).join('\n'),
         });
+        allComments.push(waitingComment);
+
+        // The last completion retry may have skipped this PR before the marker
+        // was visible. Recheck once after publishing it, using the approved SHA.
+        core.info(`Rechecking CI after publishing waiting marker for SHA ${ref}`);
+        ({ pendingChecks, failedChecks } = await fetchCIStatus(ref));
       }
+    }
+
+    if (failedChecks.length > 0) {
+      failedChecks = [...new Set(failedChecks)];
+      core.info(`Failed checks: ${failedChecks.join(', ')}`);
+      // Encode normalized names to avoid delimiter collisions and HTML comment terminators.
+      const failureKey = Buffer.from(JSON.stringify([...failedChecks].sort())).toString('base64url');
+      const failureMarker = `<!-- area-merge-failed-sha:${ref}:${failureKey} -->`;
+      if (!allComments) allComments = await fetchAllComments(prNumber);
+      if (context.eventName !== 'issue_comment' && allComments.some(c =>
+        c.user.login === botLogin && c.body.includes(failureMarker)
+      )) {
+        continue;
+      }
+      const alreadyWaiting = allComments.some(c =>
+        c.user.login === botLogin && c.body.includes(`<!-- area-merge-sha:${ref} -->`)
+      );
+      const guidance = alreadyWaiting
+        ? `Please fix or rerun the failed checks. This approved SHA will merge automatically when all checks pass. ` +
+          `If you push new commits, run \`/area-maintainer-approved\` again after review.`
+        : `Please fix the failures and run \`/area-maintainer-approved\` again.`;
+      await github.rest.issues.createComment({
+        owner: context.repo.owner,
+        repo: context.repo.repo,
+        issue_number: prNumber,
+        body: `${failureMarker}\nCannot merge via \`/area-maintainer-approved\`: the following CI checks have failed:\n` +
+          failedChecks.map(c => `- \`${c}\``).join('\n') +
+          `\n\n${guidance}`,
+      });
+      continue;
+    }
+
+    if (pendingChecks.length > 0) {
+      core.info(`Pending checks: ${pendingChecks.join(', ')}`);
       continue;
     }
 
@@ -356,6 +427,21 @@ module.exports = async ({ github, context, core }) => {
 
       core.info(`Successfully merged PR #${prNumber}`);
     } catch (e) {
+      // An approval and a completion retry can merge concurrently. Only
+      // suppress the error if the approved head is confirmed merged.
+      try {
+        const { data: latest } = await github.rest.pulls.get({
+          owner: context.repo.owner,
+          repo: context.repo.repo,
+          pull_number: prNumber,
+        });
+        if (latest.merged && latest.head.sha === ref) {
+          core.info(`PR #${prNumber} is already merged at SHA ${ref}`);
+          continue;
+        }
+      } catch (refreshError) {
+        core.info(`Could not confirm merge state for PR #${prNumber}: ${refreshError.message}`);
+      }
       core.setFailed(`Failed to merge PR #${prNumber}: ${e.message}`);
       await github.rest.issues.createComment({
         owner: context.repo.owner,
