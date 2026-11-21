@@ -47,3 +47,7 @@ Enable controlled connectivity between isolated User Defined Networks.
 **[VTEP](vtep-api-spec.md)**
 
 Configure Virtual Tunnel Endpoints for external network integration.
+
+**[OVNK8sOperator](ovnk8soperator-api-spec.md)**
+
+Install and configure OVN-Kubernetes through the operator.

@@ -1,0 +1,85 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: {{ .global.namespace }}
+  name: ovn-k8s-configmap
+rules:
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "watch", "list"]
+- apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - create
+  - get
+  - list
+  - update
+---
+# The network cidr and service cidr are set in the ovn-config configmap
+kind: ConfigMap
+apiVersion: v1
+metadata:
+  name: ovn-config
+  namespace: {{ .global.namespace }}
+data:
+  net_cidr:      {{ .global.podNetworkCIDR }}
+  svc_cidr:      {{ .global.serviceNetworkCIDR }}
+  k8s_apiserver: {{ .global.k8sAPIServer }}
+  mtu:           "{{ or .global.mtu 1500 }}"
+  host_network_namespace: ovn-host-network
+
+---
+# ovnkube-config ConfigMap
+#
+# Configuration for ovnkube binaries
+kind: ConfigMap
+apiVersion: v1
+metadata:
+  name: ovnkube-config
+  namespace: {{ .global.namespace }}
+data:
+  ovnkube.conf: |
+{{- if has "userDefinedNetworks.noOverlay" .global.featureGates }}
+    [default]
+    transport = no-overlay
+
+    [no-overlay]
+{{- if get .global.featureGateConfig "userDefinedNetworks.noOverlay" "snat" }}
+    outbound-snat = enabled
+{{- else }}
+    outbound-snat = disabled
+{{- end }}
+    routing = {{ if has "userDefinedNetworks.noOverlay.managedRouting" .global.featureGates }}managed{{ else }}unmanaged{{ end }}
+{{- if has "userDefinedNetworks.noOverlay.managedRouting" .global.featureGates }}
+
+    [bgp-managed]
+    as-number = {{ or (get .global.featureGateConfig "userDefinedNetworks.noOverlay.managedRouting" "asNumber") 64512 }}
+    topology = {{ or (get .global.featureGateConfig "userDefinedNetworks.noOverlay.managedRouting" "topology") "full-mesh" }}
+    frr-namespace = {{ or (get .global.featureGateConfig "userDefinedNetworks.noOverlay.managedRouting" "frrNamespace") "frr-k8s-system" }}
+{{- end }}
+{{- end }}
+{{- if .global.routingTableIDStart }}
+
+    [ovnkubenode]
+    routing-table-id-start = {{ .global.routingTableIDStart }}
+{{- end }}
+
+{{- if and (has "routing.routeAdvertisements" .global.featureGates) (get .global.featureGateConfig "routing.routeAdvertisements" "advertiseDefaultNetwork") }}
+---
+apiVersion: k8s.ovn.org/v1
+kind: RouteAdvertisements
+metadata:
+  name: default
+spec:
+  networkSelectors:
+    - networkSelectionType: DefaultNetwork
+  nodeSelector: {}
+  frrConfigurationSelector:
+    matchLabels:
+      name: receive-all
+  advertisements:
+    - "PodNetwork"
+{{- end }}

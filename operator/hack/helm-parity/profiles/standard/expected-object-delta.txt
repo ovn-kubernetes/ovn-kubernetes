@@ -1,0 +1,3 @@
+helm-only: Namespace /ovn-host-network
+helm-only: Namespace /ovn-kubernetes
+helm-only: RoleBinding ovn-kubernetes/ovnkube-node-ic-configmaps-update

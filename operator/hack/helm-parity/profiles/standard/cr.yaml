@@ -1,0 +1,36 @@
+# The operator equivalent of the chart's values-single-node-zone.yaml, used
+# unmodified on the Helm side: the same networks and MTU, the features that
+# file enables, and the identity webhook.
+apiVersion: k8s.ovn.org/v1alpha1
+kind: OVNK8sOperator
+metadata:
+  name: default
+  namespace: ovnk8s-operator-system
+spec:
+  global:
+    k8sAPIServer: https://172.25.0.2:6443
+    podNetwork:
+      - cidr: 10.244.0.0/16
+        hostPrefix: 24
+    serviceNetwork:
+      - 10.96.0.0/16
+    mtu: 1400
+    deploymentMode: standard
+    namespace: ovn-kubernetes
+  featureGates:
+    interconnect:
+      v4TransitSwitchSubnet: 100.88.0.0/16
+      v6TransitSwitchSubnet: fd97::/64
+    egress:
+      ip:
+        healthCheckPort: 9107
+      firewall: {}
+      qos: {}
+      service: {}
+    multiExternalGateway: {}
+    serviceTemplateSupport: {}
+    lflowCache: {}
+    persistentIPs: {}
+  componentOverrides:
+    - resourceName: ovnkubeIdentity
+      enabled: true

@@ -1,0 +1,19 @@
+apiVersion: k8s.ovn.org/v1alpha1
+kind: OVNK8sOperator
+metadata:
+  labels:
+    app.kubernetes.io/name: ovnk8s-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: default
+  namespace: ovnk8s-operator-system
+spec:
+  global:
+    k8sAPIServer: https://172.25.0.2:6443
+    podNetwork:
+      - cidr: 10.244.0.0/16
+        hostPrefix: 24
+    serviceNetwork:
+      - 10.96.0.0/16
+    mtu: 1400
+    deploymentMode: standard
+    namespace: ovn-kubernetes
