@@ -5,6 +5,7 @@ package egressip
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -313,6 +314,29 @@ var _ = ginkgo.Describe("Gateway EgressIP", func() {
 				egressip.GetNetlinkAddress(net.ParseIP(ipV4Addr), bridgeLinkIndex))).Should(gomega.BeTrue())
 			gomega.Expect(nlMock.AssertCalled(ginkgo.GinkgoT(), "AddrAdd", nlLinkMock,
 				egressip.GetNetlinkAddress(net.ParseIP(ipV4Addr2), bridgeLinkIndex))).Should(gomega.BeTrue())
+		})
+
+		ginkgo.It("continues startup repair after a rejected bridge address with TrafficClass disabled", func() {
+			gomega.Expect(config.OVNKubernetesFeature.EnableTrafficClass).To(gomega.BeFalse(), "exercise the legacy gateway path")
+			nlLinkMock.On("Attrs").Return(&netlink.LinkAttrs{Name: bridgeName, Index: bridgeLinkIndex}, nil)
+			nlMock.On("LinkByName", bridgeName).Return(nlLinkMock, nil)
+			nlMock.On("LinkByIndex", bridgeLinkIndex).Return(nlLinkMock, nil)
+			nlMock.On("AddrList", nlLinkMock, 0).Return([]netlink.Addr{}, nil)
+			rejected := egressip.GetNetlinkAddress(net.ParseIP(ipV4Addr), bridgeLinkIndex)
+			healthy := egressip.GetNetlinkAddress(net.ParseIP(ipV4Addr2), bridgeLinkIndex)
+			nlMock.On("AddrAdd", nlLinkMock, rejected).Return(errors.New("injected bridge address rejection")).Twice()
+			nlMock.On("AddrAdd", nlLinkMock, healthy).Return(nil).Once()
+			addrMgr, stopFn := initBridgeEIPAddrManager(nodeName, bridgeName, emptyAnnotation)
+			defer stopFn()
+			eips := []interface{}{getEIPAssignedToNode(nodeName, mark, ipV4Addr), getEIPAssignedToNode(nodeName, mark2, ipV4Addr2)}
+			gomega.Expect(addrMgr.SyncEgressIP(eips)).To(gomega.Succeed(), "startup sync must finish so the gateway watcher can start")
+			gomega.Expect(addrMgr.cache.IsIPPresent(net.ParseIP(ipV4Addr2))).To(gomega.BeTrue(), "retain the healthy owner after the rejected peer")
+			gomega.Eventually(func() []string {
+				node, err := addrMgr.nodeLister.Get(nodeName)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "read gateway startup registration")
+				return parseEIPsFromAnnotation(node)
+			}).Should(gomega.ConsistOf(ipV4Addr, ipV4Addr2), "keep both addresses registered for background repair")
+			nlMock.AssertExpectations(ginkgo.GinkgoT())
 		})
 
 		ginkgo.It("delete previous configuration", func() {

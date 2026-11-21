@@ -252,6 +252,8 @@ func initController(namespaces []corev1.Namespace, pods []corev1.Pod, egressIPs 
 	if err != nil {
 		return nil, nil, err
 	}
+	// Wait for informer handlers before another test resets global configuration.
+	ginkgo.DeferCleanup(watchFactory.Shutdown)
 	if err := watchFactory.Start(); err != nil {
 		return nil, nil, err
 	}
@@ -260,7 +262,7 @@ func initController(namespaces []corev1.Namespace, pods []corev1.Pod, egressIPs 
 	getActiveNetForNsFn := func(string) (util.NetInfo, error) {
 		return &util.DefaultNetInfo{}, nil
 	}
-	c, err := NewController(&ovnkube.Kube{KClient: kubeClient}, watchFactory.EgressIPInformer(), watchFactory.NodeInformer(), watchFactory.NamespaceInformer(),
+	c, err := NewController(&ovnkube.Kube{KClient: kubeClient}, watchFactory.EgressIPInformer(), nil, watchFactory.NodeInformer(), watchFactory.NamespaceInformer(),
 		watchFactory.PodCoreInformer(), getActiveNetForNsFn, rm, v4, v6, node1Name, linkManager)
 	if err != nil {
 		return nil, nil, err
@@ -1820,113 +1822,3 @@ func getEIPIPVersions(eip *egressipv1.EgressIP) (bool, bool) {
 	}
 	return v4, v6
 }
-
-var _ = ginkgo.Describe("isEgressIPOnLink", func() {
-	ginkgo.It("returns false when link does not exist", func() {
-		defer ginkgo.GinkgoRecover()
-		if ovntest.NoRoot() {
-			ginkgo.Skip("Test requires root privileges")
-		}
-		runtime.LockOSThread()
-		defer runtime.UnlockOSThread()
-
-		// Use a non-existent link index
-		nonExistentLinkIndex := 99999
-		assignedEIPs := sets.New[string]("192.168.1.100")
-
-		// Create a test namespace to ensure we're in a clean network environment
-		testNS, err := testutils.NewNS()
-		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
-		defer func() {
-			gomega.Expect(testNS.Close()).Should(gomega.Succeed())
-			gomega.Expect(testutils.UnmountNS(testNS)).Should(gomega.Succeed())
-		}()
-
-		err = testNS.Do(func(ns.NetNS) error {
-			// Call isEgressIPOnLink with a non-existent link index
-			// This should return false, nil instead of an error
-			result, err := isEgressIPOnLink(nonExistentLinkIndex, netlink.FAMILY_V4, assignedEIPs)
-			if err != nil {
-				return fmt.Errorf("isEgressIPOnLink should not return error for non-existent link, got: %v", err)
-			}
-			if result {
-				return fmt.Errorf("isEgressIPOnLink should return false for non-existent link")
-			}
-			return nil
-		})
-		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
-	})
-
-	ginkgo.It("returns true when EgressIP is on link", func() {
-		defer ginkgo.GinkgoRecover()
-		if ovntest.NoRoot() {
-			ginkgo.Skip("Test requires root privileges")
-		}
-		runtime.LockOSThread()
-		defer runtime.UnlockOSThread()
-
-		testNS, cleanupFn, err := setupFakeTestNode(nodeConfig{
-			linkConfigs: []linkConfig{
-				{dummyLink1Name, []address{{dummy1IPv4CIDR, false}, {egressIP1IPV4CIDR, true}}},
-			},
-		})
-		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
-		defer func() {
-			gomega.Expect(cleanupFn()).Should(gomega.Succeed())
-		}()
-
-		err = testNS.Do(func(ns.NetNS) error {
-			link, err := netlink.LinkByName(dummyLink1Name)
-			if err != nil {
-				return err
-			}
-			assignedEIPs := sets.New[string](egressIP1IPV4)
-			result, err := isEgressIPOnLink(link.Attrs().Index, netlink.FAMILY_V4, assignedEIPs)
-			if err != nil {
-				return fmt.Errorf("isEgressIPOnLink should not return error: %v", err)
-			}
-			if !result {
-				return fmt.Errorf("isEgressIPOnLink should return true when EgressIP is on link")
-			}
-			return nil
-		})
-		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
-	})
-
-	ginkgo.It("returns false when no EgressIP is on link", func() {
-		defer ginkgo.GinkgoRecover()
-		if ovntest.NoRoot() {
-			ginkgo.Skip("Test requires root privileges")
-		}
-		runtime.LockOSThread()
-		defer runtime.UnlockOSThread()
-
-		testNS, cleanupFn, err := setupFakeTestNode(nodeConfig{
-			linkConfigs: []linkConfig{
-				{dummyLink1Name, []address{{dummy1IPv4CIDR, false}}},
-			},
-		})
-		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
-		defer func() {
-			gomega.Expect(cleanupFn()).Should(gomega.Succeed())
-		}()
-
-		err = testNS.Do(func(ns.NetNS) error {
-			link, err := netlink.LinkByName(dummyLink1Name)
-			if err != nil {
-				return err
-			}
-			// Use an EgressIP that is NOT on the link
-			assignedEIPs := sets.New[string](egressIP1IPV4)
-			result, err := isEgressIPOnLink(link.Attrs().Index, netlink.FAMILY_V4, assignedEIPs)
-			if err != nil {
-				return fmt.Errorf("isEgressIPOnLink should not return error: %v", err)
-			}
-			if result {
-				return fmt.Errorf("isEgressIPOnLink should return false when EgressIP is not on link")
-			}
-			return nil
-		})
-		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
-	})
-})

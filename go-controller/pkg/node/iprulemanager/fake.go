@@ -25,6 +25,6 @@ func (f *FakeControllerWithError) Delete(_ IPRule) error {
 func (f *FakeControllerWithError) DeleteWithMetadata(_ string) error {
 	return fmt.Errorf("fake delete metadata error")
 }
-func (f *FakeControllerWithError) OwnPriority(_ int) error {
+func (f *FakeControllerWithError) OwnPriority(_ int, _ ...IPRule) error {
 	return nil
 }

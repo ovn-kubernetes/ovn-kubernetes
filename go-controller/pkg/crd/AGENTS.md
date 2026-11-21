@@ -34,6 +34,7 @@ Each CRD has its own sub-package with this structure:
 | `egressservice/` | EgressService |
 | `networkqos/` | NetworkQoS |
 | `routeadvertisements/` | RouteAdvertisements |
+| `trafficclass/` | TrafficClass |
 | `userdefinednetwork/` | UserDefinedNetwork, ClusterUserDefinedNetwork |
 | `vtep/` | VTEP |
 

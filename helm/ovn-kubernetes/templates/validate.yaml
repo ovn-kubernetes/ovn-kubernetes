@@ -1,0 +1,3 @@
+{{- if and .Values.global.enableTrafficClass (not .Values.global.enableEgressIp) }}
+{{- fail "global.enableTrafficClass requires global.enableEgressIp" }}
+{{- end }}

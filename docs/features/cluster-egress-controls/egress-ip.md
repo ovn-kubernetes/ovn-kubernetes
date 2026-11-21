@@ -180,12 +180,12 @@ COMMIT
 ...
 ```
 
-IPRoute2 rules will look like the following - note rule with priority `6000` and also the table `1111`:
+IPRoute2 rules will look like the following - note rule with priority `6001` and also the table `1111`:
 ```shell
 sh-5.2# ip rule
 0:	from all lookup local
 30:	from all fwmark 0x1745ec lookup 7
-6000:	from 10.244.2.3 lookup 1111
+6001:	from 10.244.2.3 lookup 1111
 32766:	from all lookup main
 32767:	from all lookup default
 ```
@@ -232,9 +232,10 @@ This is required to make `pod -> node IP` traffic behave the same regardless of 
 Implementation details: https://github.com/ovn-kubernetes/ovn-kubernetes/commit/e2c981a42a28e6213d9daf3b4489c18dc2b84b19.
 
 For local gateway mode, in which an Egress IP is assigned to a non-primary interface, an IP rule is added to send packets
-to the main routing table at a priority higher than that of EgressIP IP rules, which are set to priority `6000`:
+to the main routing table at a priority higher than that of selective and catch-all EgressIP IP rules,
+which use priorities `6000` and `6001`, respectively:
 ```shell
-5999:	from all fwmark 0x3f0 lookup main
+4999:	from all fwmark 0x3f0 lookup main
 ```
 Note: `0x3f0` is `1008` in hexadecimal. Lower IP rule priority number indicates higher precedence versus higher IP rule priority number.
 
