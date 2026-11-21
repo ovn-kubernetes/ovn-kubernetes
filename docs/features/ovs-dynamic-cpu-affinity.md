@@ -188,7 +188,11 @@ The following diagram illustrates how the OVS Dynamic CPU Affinity feature works
 
 3. **Continuous monitoring**: A ticker runs every second to:
    - Query the Pod Resources API for allocatable CPUs and currently pinned CPUs.
-   - Calculate non-pinned CPUs as: `allocatable - used_by_guaranteed_containers`.
+   - If either `GetAllocatableResources` or `List` fails, log a warning and skip
+     the current affinity update for both OVS daemons, retaining their existing
+     masks until a subsequent query succeeds.
+   - After both queries succeed, calculate non-pinned CPUs as:
+     `allocatable - used_by_guaranteed_containers`.
    - Add reserved system CPUs to the set.
    - Apply this CPU set as the affinity mask for both `ovs-vswitchd` and
      `ovsdb-server` processes (including all their threads).
@@ -305,7 +309,11 @@ This warning indicates the kubelet configuration file couldn't be read. The
 feature falls back to detecting reserved CPUs from the Pod Resources API.
 Ensure `/host/etc/kubernetes/kubelet.conf` is accessible from the pod.
 
-#### Issue: "GetAllocatableResources failed"
+#### Issue: "GetAllocatableResources failed" or "ListPodResources failed"
+
+When either query fails during continuous monitoring, the current affinity masks
+of both OVS daemons are retained. Updates are retried on subsequent ticks. The
+existing masks are not replaced with `reservedSystemCPUs` as a fallback.
 
 Verify the Pod Resources API is available:
 
@@ -365,11 +373,15 @@ affinity changes are logged and can be observed in the ovnkube-node logs.
   reset. The affinity will remain until changed by another mechanism or process
   restart.
 
-- **Brief interference window**: The affinity is updated every second, plus up to
-  5 seconds for the CPU Manager reconciliation loop to update the exclusive CPUs
-  set. During this window, OVS processes may still run on CPUs that have been
-  assigned to a newly admitted Guaranteed pod, potentially causing brief
-  interruptions to sensitive workloads.
+- **Interference window**: When Pod Resources API queries succeed, the affinity
+  is updated every second, with an additional delay for the CPU Manager
+  reconciliation loop to update the exclusive CPU set. During this window, OVS
+  processes may still run on CPUs assigned to a newly admitted Guaranteed pod.
+  If API queries fail, OVS retains its existing affinity masks, which may overlap
+  newly assigned exclusive CPUs for the duration of the outage. There is no
+  timeout for retaining these masks; the overlap can persist until queries
+  recover and affinity updates succeed, potentially interrupting sensitive
+  workloads.
 
 ## References
 

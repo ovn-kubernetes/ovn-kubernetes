@@ -143,6 +143,16 @@ if [[ "${WHAT}" != *"${DHCP_IPAM_TESTS}"* ]]; then
   skip_label "Feature:DHCPIPAM"
 fi
 
+# OVS CPU affinity tests stop kubelet and change daemon CPU masks, so run them
+# only in a serial e2e lane.
+OVS_CPU_PIN_TESTS="OVS CPU affinity pinning"
+SERIAL_LABEL="Serial"
+if [[ "${WHAT}" = "${OVS_CPU_PIN_TESTS}"* ]]; then
+  require_label "Feature:OVSCPUPin"
+elif [[ "${WHAT}" != "${SERIAL_LABEL}" ]]; then
+  skip_label "Feature:OVSCPUPin"
+fi
+
 # Select all Uplink tests by feature label. These tests span network
 # segmentation and route advertisement suites, with individual specs deciding
 # whether to use or skip DPU-specific behavior.
@@ -185,7 +195,6 @@ if [[ "${WHAT}" != "${CLUSTER_NETWORK_CONNECT_TESTS}"* ]]; then
   skip $CLUSTER_NETWORK_CONNECT_TESTS
 fi
 
-SERIAL_LABEL="Serial"
 if [[ "${WHAT}" = "$SERIAL_LABEL" ]]; then
   require_label "$SERIAL_LABEL"
   shift # don't "focus" on Serial since we filter by label

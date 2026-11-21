@@ -209,6 +209,46 @@ func TestAlignCPUAffinity(t *testing.T) {
 	}
 }
 
+func TestAlignCPUAffinityPodResourcesFailure(t *testing.T) {
+	for _, failingMethod := range []string{"GetAllocatableResources", "List"} {
+		t.Run(failingMethod, func(t *testing.T) {
+			defer setTickDuration(20 * time.Millisecond)()
+			defer mockFeatureEnableFile(t, "1")()
+			defer mockKubeletConfigFile(t, cpuset.New(0))()
+			ovsClient, ovsTestCtx, err := libovsdbtest.NewOVSTestHarness(libovsdbtest.TestSetup{
+				OVSData: []libovsdbtest.TestData{&vswitchd.OpenvSwitch{UUID: "root-ovs"}},
+			})
+			require.NoError(t, err)
+			defer ovsTestCtx.Cleanup()
+
+			previousVSwitchdGetter, previousDBGetter := getOvsVSwitchdPIDFn, getOvsDBServerPIDFn
+			defer func() {
+				getOvsVSwitchdPIDFn, getOvsDBServerPIDFn = previousVSwitchdGetter, previousDBGetter
+			}()
+			// PID lookup is the first step of each daemon's affinity update.
+			unexpectedAffinityUpdate := func() (string, error) {
+				t.Error("must not attempt an affinity update after a PodResources query failure")
+				return "", fmt.Errorf("unexpected affinity update")
+			}
+			getOvsVSwitchdPIDFn, getOvsDBServerPIDFn = unexpectedAffinityUpdate, unexpectedAffinityUpdate
+
+			stopCh := make(chan struct{})
+			var stopOnce sync.Once
+			mockClient := mocks.NewPodResourcesListerClient(t)
+			if failingMethod == "List" {
+				mockClient.On("GetAllocatableResources", mock.Anything, mock.Anything).
+					Return(&kubeletpodresourcesv1.AllocatableResourcesResponse{CpuIds: []int64{1}}, nil)
+			}
+			// closing stopCh stops the loop after it finishes handling the failed tick.
+			mockClient.On(failingMethod, mock.Anything, mock.Anything).
+				Run(func(mock.Arguments) { stopOnce.Do(func() { close(stopCh) }) }).
+				Return(nil, context.DeadlineExceeded)
+
+			Run(context.Background(), stopCh, mockClient, ovsClient)
+		})
+	}
+}
+
 func TestIsFileNotEmpty(t *testing.T) {
 	defer mockFeatureEnableFile(t, "")()
 
