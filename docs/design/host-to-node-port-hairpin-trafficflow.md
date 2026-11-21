@@ -52,6 +52,13 @@ and OVN GR.
 
 For Host to pod access (and vice versa) the management port (ovn-k8s-mp0) is still used.
 
+A host process that connects to a NodePort on its own node IP selects the local route via `lo` (MTU 65536) before the
+host DNATs the connection to the service. The socket therefore does not see the service route MTU, and an endpoint can
+announce an MSS that is too large for that route. IPv4 connections then stall, because the host refuses to send the
+oversized segments and the socket never shrinks them; IPv6 recovers through Packet Too Big. To avoid this, the
+`services-mss-clamp` chain of the `inet ovn-kubernetes` nftables table lowers the MSS in the endpoint's SYN-ACK to the
+service route MTU minus the IP and TCP headers. It never raises a smaller MSS.
+
 ## New Load Balancer Behavior
 
 Load balancers with OVN are placed either on a router or worker switch. Previously, the "node port" load balancers (created on a per node basis) were applied to the GR and the worker switch, while singleton cluster wide load balancers for Cluster IP services were applied across all worker switches. With the new implementation, Cluster IP service traffic is destined for GR from the host and therefore the GR requires load balancers that can handle Cluster IP. In addition, the load balancer must not have the node's IP address as and endpoint. This is due to the fact that on a GR the node IP address is used. Therefore if a load balancer on the GR were to DNAT to its own node IP, the packet would be dropped.

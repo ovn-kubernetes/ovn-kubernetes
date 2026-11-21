@@ -42,6 +42,8 @@ const (
 
 	nftablesETPNoNodePortChain = "services-etp-no-nodeport"
 
+	nftablesServiceMSSClampChain = "services-mss-clamp"
+
 	nftablesITPMarkSetV4     = "itp-services-to-mark-v4"
 	nftablesITPMarkSetV6     = "itp-services-to-mark-v6"
 	nftablesITPServicesMapV4 = "itp-services-to-redirect-v4"
@@ -296,6 +298,20 @@ func initGatewayNFTables() error {
 		),
 	})
 
+	tx.Add(&knftables.Chain{
+		Name:     nftablesServiceMSSClampChain,
+		Type:     knftables.PtrTo(knftables.FilterType),
+		Hook:     knftables.PtrTo(knftables.PreroutingHook),
+		Priority: knftables.PtrTo(knftables.ManglePriority),
+		Comment:  knftables.PtrTo("Clamp the MSS of Service connections DNATed on the host to the Service route MTU"),
+	})
+	tx.Flush(&knftables.Chain{
+		Name: nftablesServiceMSSClampChain,
+	})
+	for _, rule := range getServiceMSSClampNFTRules() {
+		tx.Add(rule)
+	}
+
 	if err := nft.Run(context.TODO(), tx); err != nil {
 		return fmt.Errorf("could not set up service nftables rules: %w", err)
 	}
@@ -304,6 +320,48 @@ func initGatewayNFTables() error {
 	cleanupGatewayIPTables()
 
 	return nil
+}
+
+// getServiceMSSClampNFTRules returns the rules that lower the MSS in the SYN-ACK
+// of a connection the host DNATed to a Service, such as a NodePort on the node's
+// own IP. The client sized its segments for the route to the original
+// destination (lo, for a local address), but they leave through the Service
+// route, whose MTU is lower; without the clamp the kernel never sends them.
+func getServiceMSSClampNFTRules() []*knftables.Rule {
+	const ipv4TCPHeaders, ipv6TCPHeaders = 40, 60
+	var v4CIDRs, v6CIDRs []string
+	for _, cidr := range config.Kubernetes.ServiceCIDRs {
+		if utilnet.IsIPv6CIDR(cidr) {
+			v6CIDRs = append(v6CIDRs, cidr.String())
+		} else {
+			v4CIDRs = append(v4CIDRs, cidr.String())
+		}
+	}
+	mtu := serviceRouteMTU()
+	var rules []*knftables.Rule
+	for _, family := range []struct {
+		ip    string
+		cidrs []string
+		mss   int
+	}{
+		{"ip", v4CIDRs, mtu - ipv4TCPHeaders},
+		{"ip6", v6CIDRs, mtu - ipv6TCPHeaders},
+	} {
+		if len(family.cidrs) == 0 {
+			continue
+		}
+		rules = append(rules, &knftables.Rule{
+			Chain: nftablesServiceMSSClampChain,
+			Rule: knftables.Concat(
+				"ct direction reply ct status dnat",
+				"ct reply", family.ip, "saddr {", strings.Join(family.cidrs, ", "), "}",
+				"tcp flags & (syn | rst) == syn",
+				"tcp option maxseg size >", family.mss,
+				"tcp option maxseg size set", family.mss,
+			),
+		})
+	}
+	return rules
 }
 
 // getNodePortNFTRules returns the nftables DNAT rules for a service of type nodePort.

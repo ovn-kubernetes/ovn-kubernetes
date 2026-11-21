@@ -163,6 +163,14 @@ func getInterfaceByIP(ip net.IP) (string, error) {
 	return "", fmt.Errorf("failed to find network interface with IP: %s", ip)
 }
 
+// serviceRouteMTU returns the MTU of the host routes to the Service CIDRs.
+func serviceRouteMTU() int {
+	if config.Default.RoutableMTU != 0 {
+		return config.Default.RoutableMTU
+	}
+	return config.Default.MTU
+}
+
 // configureSvcRouteViaInterface routes svc traffic through the provided interface
 func configureSvcRouteViaInterface(routeManager *routemanager.Controller, iface string, gwIPs []net.IP) error {
 	link, err := util.LinkSetUp(iface)
@@ -181,10 +189,7 @@ func configureSvcRouteViaInterface(routeManager *routemanager.Controller, iface 
 			srcIP = config.Gateway.MasqueradeIPs.V6HostMasqueradeIP
 		}
 		// Remove MTU from service route once https://bugzilla.redhat.com/show_bug.cgi?id=2169839 is fixed.
-		mtu := config.Default.MTU
-		if config.Default.RoutableMTU != 0 {
-			mtu = config.Default.RoutableMTU
-		}
+		mtu := serviceRouteMTU()
 		subnetCopy := *subnet
 		gwIPCopy := gwIP[0]
 		err = routeManager.Add(netlink.Route{LinkIndex: link.Attrs().Index, Gw: gwIPCopy, Dst: &subnetCopy, Src: srcIP, MTU: mtu})
