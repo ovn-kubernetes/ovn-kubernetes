@@ -329,6 +329,13 @@ func newNetworkQoS(name, namespace string) *networkqos.NetworkQoS {
 	}
 }
 
+// The setup helpers return plain *watch.FakeWatcher. FakeWatcher hands the
+// exact pointer passed to Add/Modify/Delete to the informer, so tests must pass
+// a deep copy of every object they publish. A real API server serializes
+// objects; without the copy, mutating the test's object later would also mutate
+// the shared informer's cache and trip client-go's cache mutation detector.
+// The list reactors below build their lists from deep copies for the same
+// reason.
 func objSetup(c *fake.Clientset, objType string, listFn func(core.Action) (bool, runtime.Object, error)) *watch.FakeWatcher {
 	w := watch.NewFake()
 	c.AddWatchReactor(objType, core.DefaultWatchReactor(w, nil))
@@ -648,7 +655,7 @@ var _ = Describe("Watch Factory Operations", func() {
 		podWatch = objSetup(fakeClient, "pods", func(core.Action) (bool, runtime.Object, error) {
 			obj := &corev1.PodList{}
 			for _, p := range pods {
-				obj.Items = append(obj.Items, *p)
+				obj.Items = append(obj.Items, *p.DeepCopy())
 			}
 			return true, obj, nil
 		})
@@ -657,7 +664,7 @@ var _ = Describe("Watch Factory Operations", func() {
 		namespaceWatch = objSetup(fakeClient, "namespaces", func(core.Action) (bool, runtime.Object, error) {
 			obj := &corev1.NamespaceList{}
 			for _, p := range namespaces {
-				obj.Items = append(obj.Items, *p)
+				obj.Items = append(obj.Items, *p.DeepCopy())
 			}
 			return true, obj, nil
 		})
@@ -666,7 +673,7 @@ var _ = Describe("Watch Factory Operations", func() {
 		nodeWatch = objSetup(fakeClient, "nodes", func(core.Action) (bool, runtime.Object, error) {
 			obj := &corev1.NodeList{}
 			for _, p := range nodes {
-				obj.Items = append(obj.Items, *p)
+				obj.Items = append(obj.Items, *p.DeepCopy())
 			}
 			return true, obj, nil
 		})
@@ -675,7 +682,7 @@ var _ = Describe("Watch Factory Operations", func() {
 		policyWatch = objSetup(fakeClient, "networkpolicies", func(core.Action) (bool, runtime.Object, error) {
 			obj := &knet.NetworkPolicyList{}
 			for _, p := range policies {
-				obj.Items = append(obj.Items, *p)
+				obj.Items = append(obj.Items, *p.DeepCopy())
 			}
 			return true, obj, nil
 		})
@@ -684,7 +691,7 @@ var _ = Describe("Watch Factory Operations", func() {
 		serviceWatch = objSetup(fakeClient, "services", func(core.Action) (bool, runtime.Object, error) {
 			obj := &corev1.ServiceList{}
 			for _, p := range services {
-				obj.Items = append(obj.Items, *p)
+				obj.Items = append(obj.Items, *p.DeepCopy())
 			}
 			return true, obj, nil
 		})
@@ -693,7 +700,7 @@ var _ = Describe("Watch Factory Operations", func() {
 		endpointSliceWatch = objSetup(fakeClient, "endpointslices", func(core.Action) (bool, runtime.Object, error) {
 			obj := &discovery.EndpointSliceList{}
 			for _, p := range endpointSlices {
-				obj.Items = append(obj.Items, *p)
+				obj.Items = append(obj.Items, *p.DeepCopy())
 			}
 			return true, obj, nil
 		})
@@ -702,7 +709,7 @@ var _ = Describe("Watch Factory Operations", func() {
 		egressFirewallWatch = egressFirewallObjSetup(egressFirewallFakeClient, "egressfirewalls", func(core.Action) (bool, runtime.Object, error) {
 			obj := &egressfirewall.EgressFirewallList{}
 			for _, p := range egressFirewalls {
-				obj.Items = append(obj.Items, *p)
+				obj.Items = append(obj.Items, *p.DeepCopy())
 			}
 			return true, obj, nil
 		})
@@ -711,7 +718,7 @@ var _ = Describe("Watch Factory Operations", func() {
 		egressIPWatch = egressIPObjSetup(egressIPFakeClient, "egressips", func(core.Action) (bool, runtime.Object, error) {
 			obj := &egressip.EgressIPList{}
 			for _, p := range egressIPs {
-				obj.Items = append(obj.Items, *p)
+				obj.Items = append(obj.Items, *p.DeepCopy())
 			}
 			return true, obj, nil
 		})
@@ -720,7 +727,7 @@ var _ = Describe("Watch Factory Operations", func() {
 		cloudPrivateIPConfigWatch = cloudPrivateIPConfigObjSetup(cloudNetworkFakeClient, "cloudprivateipconfigs", func(core.Action) (bool, runtime.Object, error) {
 			obj := &ocpcloudnetworkapi.CloudPrivateIPConfigList{}
 			for _, p := range cloudPrivateIPConfigs {
-				obj.Items = append(obj.Items, *p)
+				obj.Items = append(obj.Items, *p.DeepCopy())
 			}
 			return true, obj, nil
 		})
@@ -729,7 +736,7 @@ var _ = Describe("Watch Factory Operations", func() {
 		egressQoSWatch = egressQoSObjSetup(egressQoSFakeClient, "egressqoses", func(core.Action) (bool, runtime.Object, error) {
 			obj := &egressqos.EgressQoSList{}
 			for _, p := range egressQoSes {
-				obj.Items = append(obj.Items, *p)
+				obj.Items = append(obj.Items, *p.DeepCopy())
 			}
 			return true, obj, nil
 		})
@@ -738,7 +745,7 @@ var _ = Describe("Watch Factory Operations", func() {
 		egressServiceWatch = egressServiceObjSetup(egressServiceFakeClient, "egressservices", func(core.Action) (bool, runtime.Object, error) {
 			obj := &egressservice.EgressServiceList{}
 			for _, p := range egressServices {
-				obj.Items = append(obj.Items, *p)
+				obj.Items = append(obj.Items, *p.DeepCopy())
 			}
 			return true, obj, nil
 		})
@@ -747,7 +754,7 @@ var _ = Describe("Watch Factory Operations", func() {
 		adminNetPolWatch = adminNetworkPolicyObjSetup(adminNetworkPolicyFakeClient, "adminnetworkpolicies", func(core.Action) (bool, runtime.Object, error) {
 			obj := &anpapi.AdminNetworkPolicyList{}
 			for _, p := range adminNetworkPolicies {
-				obj.Items = append(obj.Items, *p)
+				obj.Items = append(obj.Items, *p.DeepCopy())
 			}
 			return true, obj, nil
 		})
@@ -756,7 +763,7 @@ var _ = Describe("Watch Factory Operations", func() {
 		baselineAdminNetPolWatch = adminNetworkPolicyObjSetup(adminNetworkPolicyFakeClient, "baselineadminnetworkpolicies", func(core.Action) (bool, runtime.Object, error) {
 			obj := &anpapi.BaselineAdminNetworkPolicyList{}
 			for _, p := range baselineAdminNetworkPolicies {
-				obj.Items = append(obj.Items, *p)
+				obj.Items = append(obj.Items, *p.DeepCopy())
 			}
 			return true, obj, nil
 		})
@@ -765,7 +772,7 @@ var _ = Describe("Watch Factory Operations", func() {
 		ipamClaimsWatch = ipamClaimsObjSetup(ipamClaimsFakeClient, "ipamclaims", func(core.Action) (bool, runtime.Object, error) {
 			obj := &ipamclaimsapi.IPAMClaimList{}
 			for _, p := range ipamClaims {
-				obj.Items = append(obj.Items, *p)
+				obj.Items = append(obj.Items, *p.DeepCopy())
 			}
 			return true, obj, nil
 		})
@@ -774,7 +781,7 @@ var _ = Describe("Watch Factory Operations", func() {
 		networkQoSWatch = networkQoSObjSetup(networkQoSFakeClient, "networkqoses", func(core.Action) (bool, runtime.Object, error) {
 			obj := &networkqos.NetworkQoSList{}
 			for _, p := range networkQoSes {
-				obj.Items = append(obj.Items, *p)
+				obj.Items = append(obj.Items, *p.DeepCopy())
 			}
 			return true, obj, nil
 		})
@@ -1209,6 +1216,9 @@ var _ = Describe("Watch Factory Operations", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		added := newPod("pod1", "default")
+		// Informer handlers receive the object after informerObjectTrim has
+		// run, so trim the test's object the same way before comparing.
+		_, _ = informerObjectTrim(added)
 		h, c := addHandler(wf, PodType, cache.ResourceEventHandlerFuncs{
 			AddFunc: func(obj interface{}) {
 				pod := obj.(*corev1.Pod)
@@ -1226,13 +1236,13 @@ var _ = Describe("Watch Factory Operations", func() {
 		})
 
 		pods = append(pods, added)
-		podWatch.Add(added)
+		podWatch.Add(added.DeepCopy())
 		Eventually(c.getAdded, 2).Should(Equal(1))
 		added.Spec.NodeName = "foobar"
-		podWatch.Modify(added)
+		podWatch.Modify(added.DeepCopy())
 		Eventually(c.getUpdated, 2).Should(Equal(1))
 		pods = pods[:0]
-		podWatch.Delete(added)
+		podWatch.Delete(added.DeepCopy())
 		Eventually(c.getDeleted, 2).Should(Equal(1))
 
 		wf.RemovePodHandler(h)
@@ -1261,21 +1271,21 @@ var _ = Describe("Watch Factory Operations", func() {
 		})
 
 		pods = append(pods, added)
-		podWatch.Add(added)
+		podWatch.Add(added.DeepCopy())
 		Eventually(c.getAdded, 2).Should(Equal(1))
 		podCopy := added.DeepCopy()
 		podCopy.Spec.NodeName = "foobar"
-		podWatch.Modify(podCopy)
+		podWatch.Modify(podCopy.DeepCopy())
 		Eventually(c.getUpdated, 2).Should(Equal(1))
 		podCopy = added.DeepCopy()
 		podCopy.UID = "foobar"
 		podCopy.Spec.NodeName = "mynode"
-		podWatch.Modify(podCopy)
+		podWatch.Modify(podCopy.DeepCopy())
 		Eventually(c.getDeleted, 2).Should(Equal(1))
 		Eventually(c.getAdded, 2).Should(Equal(2))
 		Eventually(c.getUpdated, 2).Should(Equal(1))
 		pods = pods[:0]
-		podWatch.Delete(added)
+		podWatch.Delete(added.DeepCopy())
 		Eventually(c.getDeleted, 2).Should(Equal(2))
 
 		wf.RemovePodHandler(h)
@@ -1338,13 +1348,13 @@ var _ = Describe("Watch Factory Operations", func() {
 		for i := 0; i < 2; i++ {
 			for _, ot := range testPods {
 				pods = append(pods, ot.pod)
-				podWatch.Add(ot.pod)
+				podWatch.Add(ot.pod.DeepCopy())
 				ot.mu.Lock()
 				ot.pod.Spec.NodeName = nodeName
 				ot.mu.Unlock()
-				podWatch.Modify(ot.pod)
+				podWatch.Modify(ot.pod.DeepCopy())
 				pods = pods[:0]
-				podWatch.Delete(ot.pod)
+				podWatch.Delete(ot.pod.DeepCopy())
 			}
 		}
 
@@ -1388,13 +1398,13 @@ var _ = Describe("Watch Factory Operations", func() {
 		})
 
 		namespaces = append(namespaces, added)
-		namespaceWatch.Add(added)
+		namespaceWatch.Add(added.DeepCopy())
 		Eventually(c.getAdded, 2).Should(Equal(1))
 		added.Status.Phase = corev1.NamespaceTerminating
-		namespaceWatch.Modify(added)
+		namespaceWatch.Modify(added.DeepCopy())
 		Eventually(c.getUpdated, 2).Should(Equal(1))
 		namespaces = namespaces[:0]
-		namespaceWatch.Delete(added)
+		namespaceWatch.Delete(added.DeepCopy())
 		Eventually(c.getDeleted, 2).Should(Equal(1))
 
 		wf.RemoveNamespaceHandler(h)
@@ -1424,13 +1434,13 @@ var _ = Describe("Watch Factory Operations", func() {
 		})
 
 		nodes = append(nodes, added)
-		nodeWatch.Add(added)
+		nodeWatch.Add(added.DeepCopy())
 		Eventually(c.getAdded, 2).Should(Equal(1))
 		added.Status.Phase = corev1.NodeTerminated
-		nodeWatch.Modify(added)
+		nodeWatch.Modify(added.DeepCopy())
 		Eventually(c.getUpdated, 2).Should(Equal(1))
 		nodes = nodes[:0]
-		nodeWatch.Delete(added)
+		nodeWatch.Delete(added.DeepCopy())
 		Eventually(c.getDeleted, 2).Should(Equal(1))
 
 		wf.RemoveNodeHandler(h)
@@ -1492,13 +1502,13 @@ var _ = Describe("Watch Factory Operations", func() {
 		for i := 0; i < 2; i++ {
 			for _, ot := range testNodes {
 				nodes = append(nodes, ot.node)
-				nodeWatch.Add(ot.node)
+				nodeWatch.Add(ot.node.DeepCopy())
 				ot.mu.Lock()
 				ot.node.Status.Phase = corev1.NodeTerminated
 				ot.mu.Unlock()
-				nodeWatch.Modify(ot.node)
+				nodeWatch.Modify(ot.node.DeepCopy())
 				nodes = nodes[:0]
-				nodeWatch.Delete(ot.node)
+				nodeWatch.Delete(ot.node.DeepCopy())
 			}
 		}
 
@@ -1572,7 +1582,7 @@ var _ = Describe("Watch Factory Operations", func() {
 			// Send an update event for each node
 			for _, n := range nodes {
 				n.Status.Phase = corev1.NodeTerminated
-				nodeWatch.Modify(n)
+				nodeWatch.Modify(n.DeepCopy())
 			}
 			done <- true
 		}()
@@ -1634,7 +1644,7 @@ var _ = Describe("Watch Factory Operations", func() {
 			// Send an update event for each namespace
 			for _, n := range namespaces {
 				n.Status.Phase = corev1.NamespaceTerminating
-				namespaceWatch.Modify(n)
+				namespaceWatch.Modify(n.DeepCopy())
 			}
 		}()
 
@@ -1796,7 +1806,7 @@ var _ = Describe("Watch Factory Operations", func() {
 			// Send an update event for each namespace
 			for _, n := range namespaces {
 				n.Status.Phase = corev1.NamespaceActive
-				namespaceWatch.Modify(n)
+				namespaceWatch.Modify(n.DeepCopy())
 			}
 			done <- true
 		}()
@@ -1826,7 +1836,7 @@ var _ = Describe("Watch Factory Operations", func() {
 			// Send a delete event for each namespace
 			for _, n := range namespaces {
 				n.Status.Phase = corev1.NamespaceTerminating
-				namespaceWatch.Delete(n)
+				namespaceWatch.Delete(n.DeepCopy())
 			}
 			done <- true
 		}()
@@ -1870,13 +1880,13 @@ var _ = Describe("Watch Factory Operations", func() {
 		})
 
 		policies = append(policies, added)
-		policyWatch.Add(added)
+		policyWatch.Add(added.DeepCopy())
 		Eventually(c.getAdded, 2).Should(Equal(1))
 		added.Spec.PolicyTypes = []knet.PolicyType{knet.PolicyTypeIngress}
-		policyWatch.Modify(added)
+		policyWatch.Modify(added.DeepCopy())
 		Eventually(c.getUpdated, 2).Should(Equal(1))
 		policies = policies[:0]
-		policyWatch.Delete(added)
+		policyWatch.Delete(added.DeepCopy())
 		Eventually(c.getDeleted, 2).Should(Equal(1))
 
 		wf.RemovePolicyHandler(h)
@@ -1906,15 +1916,15 @@ var _ = Describe("Watch Factory Operations", func() {
 		})
 
 		endpointSlices = append(endpointSlices, added)
-		endpointSliceWatch.Add(added)
+		endpointSliceWatch.Add(added.DeepCopy())
 		Eventually(c.getAdded, 2).Should(Equal(1))
 		added.Endpoints = append(added.Endpoints, discovery.Endpoint{
 			Addresses: []string{"1.1.1.1"},
 		})
-		endpointSliceWatch.Modify(added)
+		endpointSliceWatch.Modify(added.DeepCopy())
 		Eventually(c.getUpdated, 2).Should(Equal(1))
 		endpointSlices = endpointSlices[:0]
-		endpointSliceWatch.Delete(added)
+		endpointSliceWatch.Delete(added.DeepCopy())
 		Eventually(c.getDeleted, 2).Should(Equal(1))
 
 		wf.RemoveEndpointSliceHandler(h)
@@ -1944,13 +1954,13 @@ var _ = Describe("Watch Factory Operations", func() {
 		})
 
 		services = append(services, added)
-		serviceWatch.Add(added)
+		serviceWatch.Add(added.DeepCopy())
 		Eventually(c.getAdded, 2).Should(Equal(1))
 		added.Spec.ClusterIP = "1.1.1.1"
-		serviceWatch.Modify(added)
+		serviceWatch.Modify(added.DeepCopy())
 		Eventually(c.getUpdated, 2).Should(Equal(1))
 		services = services[:0]
-		serviceWatch.Delete(added)
+		serviceWatch.Delete(added.DeepCopy())
 		Eventually(c.getDeleted, 2).Should(Equal(1))
 
 		wf.RemoveServiceHandler(h)
@@ -1980,13 +1990,13 @@ var _ = Describe("Watch Factory Operations", func() {
 		})
 
 		egressFirewalls = append(egressFirewalls, added)
-		egressFirewallWatch.Add(added)
+		egressFirewallWatch.Add(added.DeepCopy())
 		Eventually(c.getAdded, 2).Should(Equal(1))
 		added.Spec.Egress[0].Type = egressfirewall.EgressFirewallRuleDeny
-		egressFirewallWatch.Modify(added)
+		egressFirewallWatch.Modify(added.DeepCopy())
 		Eventually(c.getUpdated, 2).Should(Equal(1))
 		egressFirewalls = egressFirewalls[:0]
-		egressFirewallWatch.Delete(added)
+		egressFirewallWatch.Delete(added.DeepCopy())
 		Eventually(c.getDeleted, 2).Should(Equal(1))
 
 		wf.RemoveEgressFirewallHandler(h)
@@ -2015,13 +2025,13 @@ var _ = Describe("Watch Factory Operations", func() {
 		})
 
 		egressIPs = append(egressIPs, added)
-		egressIPWatch.Add(added)
+		egressIPWatch.Add(added.DeepCopy())
 		Eventually(c.getAdded, 2).Should(Equal(1))
 		added.Spec.EgressIPs = []string{"192.168.126.10"}
-		egressIPWatch.Modify(added)
+		egressIPWatch.Modify(added.DeepCopy())
 		Eventually(c.getUpdated, 2).Should(Equal(1))
 		egressIPs = egressIPs[:0]
-		egressIPWatch.Delete(added)
+		egressIPWatch.Delete(added.DeepCopy())
 		Eventually(c.getDeleted, 2).Should(Equal(1))
 
 		wf.RemoveEgressIPHandler(h)
@@ -2050,13 +2060,13 @@ var _ = Describe("Watch Factory Operations", func() {
 		})
 
 		cloudPrivateIPConfigs = append(cloudPrivateIPConfigs, added)
-		cloudPrivateIPConfigWatch.Add(added)
+		cloudPrivateIPConfigWatch.Add(added.DeepCopy())
 		Eventually(c.getAdded, 2).Should(Equal(1))
 		added.Spec.Node = "nodeA"
-		cloudPrivateIPConfigWatch.Modify(added)
+		cloudPrivateIPConfigWatch.Modify(added.DeepCopy())
 		Eventually(c.getUpdated, 2).Should(Equal(1))
 		cloudPrivateIPConfigs = cloudPrivateIPConfigs[:0]
-		cloudPrivateIPConfigWatch.Delete(added)
+		cloudPrivateIPConfigWatch.Delete(added.DeepCopy())
 		Eventually(c.getDeleted, 2).Should(Equal(1))
 
 		wf.RemoveCloudPrivateIPConfigHandler(h)
@@ -2085,13 +2095,13 @@ var _ = Describe("Watch Factory Operations", func() {
 		})
 
 		egressQoSes = append(egressQoSes, added)
-		egressQoSWatch.Add(added)
+		egressQoSWatch.Add(added.DeepCopy())
 		Eventually(c.getAdded, 2).Should(Equal(1))
 		added.Spec.Egress[0].DSCP = 40
-		egressQoSWatch.Modify(added)
+		egressQoSWatch.Modify(added.DeepCopy())
 		Eventually(c.getUpdated, 2).Should(Equal(1))
 		egressQoSes = egressQoSes[:0]
-		egressQoSWatch.Delete(added)
+		egressQoSWatch.Delete(added.DeepCopy())
 		Eventually(c.getDeleted, 2).Should(Equal(1))
 
 		wf.RemoveEgressQoSHandler(h)
@@ -2124,17 +2134,17 @@ var _ = Describe("Watch Factory Operations", func() {
 		})
 
 		egressServices = append(egressServices, added)
-		egressServiceWatch.Add(added)
+		egressServiceWatch.Add(added.DeepCopy())
 		Eventually(c.getAdded, 2).Should(Equal(1))
 		added.Spec.NodeSelector = metav1.LabelSelector{
 			MatchLabels: map[string]string{
 				"kubernetes.io/hostname": "node2",
 			},
 		}
-		egressServiceWatch.Modify(added)
+		egressServiceWatch.Modify(added.DeepCopy())
 		Eventually(c.getUpdated, 2).Should(Equal(1))
 		egressServices = egressServices[:0]
-		egressServiceWatch.Delete(added)
+		egressServiceWatch.Delete(added.DeepCopy())
 		Eventually(c.getDeleted, 2).Should(Equal(1))
 
 		wf.RemoveEgressServiceHandler(h)
@@ -2163,13 +2173,13 @@ var _ = Describe("Watch Factory Operations", func() {
 		})
 
 		adminNetworkPolicies = append(adminNetworkPolicies, added)
-		adminNetPolWatch.Add(added)
+		adminNetPolWatch.Add(added.DeepCopy())
 		Eventually(c.getAdded, 2).Should(Equal(1))
 		added.Spec.Priority = 3
-		adminNetPolWatch.Modify(added)
+		adminNetPolWatch.Modify(added.DeepCopy())
 		Eventually(c.getUpdated, 2).Should(Equal(1))
 		adminNetworkPolicies = adminNetworkPolicies[:0]
-		adminNetPolWatch.Delete(added)
+		adminNetPolWatch.Delete(added.DeepCopy())
 		Eventually(c.getDeleted, 2).Should(Equal(1))
 
 		wf.RemoveAdminNetworkPolicyHandler(h)
@@ -2203,17 +2213,17 @@ var _ = Describe("Watch Factory Operations", func() {
 		})
 
 		baselineAdminNetworkPolicies = append(baselineAdminNetworkPolicies, added)
-		baselineAdminNetPolWatch.Add(added)
+		baselineAdminNetPolWatch.Add(added.DeepCopy())
 		Eventually(c.getAdded, 2).Should(Equal(1))
 		added.Spec.Subject.Namespaces = &metav1.LabelSelector{
 			MatchLabels: map[string]string{
 				"kubernetes.io/metadata.name": "default",
 			},
 		}
-		baselineAdminNetPolWatch.Modify(added)
+		baselineAdminNetPolWatch.Modify(added.DeepCopy())
 		Eventually(c.getUpdated, 2).Should(Equal(1))
 		baselineAdminNetworkPolicies = baselineAdminNetworkPolicies[:0]
-		baselineAdminNetPolWatch.Delete(added)
+		baselineAdminNetPolWatch.Delete(added.DeepCopy())
 		Eventually(c.getDeleted, 2).Should(Equal(1))
 
 		wf.RemoveBaselineAdminNetworkPolicyHandler(h)
@@ -2241,16 +2251,16 @@ var _ = Describe("Watch Factory Operations", func() {
 		})
 
 		ipamClaims = append(ipamClaims, added)
-		ipamClaimsWatch.Add(added)
+		ipamClaimsWatch.Add(added.DeepCopy())
 
 		Eventually(c.getAdded, 2).Should(Equal(1))
 		added.Status.IPs = []string{"10.10.10.10/24"}
-		ipamClaimsWatch.Modify(added)
+		ipamClaimsWatch.Modify(added.DeepCopy())
 
 		Eventually(c.getUpdated, 2).Should(Equal(1))
 
 		ipamClaims = ipamClaims[:0]
-		ipamClaimsWatch.Delete(added)
+		ipamClaimsWatch.Delete(added.DeepCopy())
 		Eventually(c.getDeleted, 2).Should(Equal(1))
 
 		wf.RemoveIPAMClaimsHandler(h)
@@ -2280,13 +2290,13 @@ var _ = Describe("Watch Factory Operations", func() {
 		})
 
 		networkQoSes = append(networkQoSes, added)
-		networkQoSWatch.Add(added)
+		networkQoSWatch.Add(added.DeepCopy())
 		Eventually(c.getAdded, 2).Should(Equal(1))
 		added.Spec.Egress[0].DSCP = 42
-		networkQoSWatch.Modify(added)
+		networkQoSWatch.Modify(added.DeepCopy())
 		Eventually(c.getUpdated, 2).Should(Equal(1))
 		networkQoSes = networkQoSes[:0]
-		networkQoSWatch.Delete(added)
+		networkQoSWatch.Delete(added.DeepCopy())
 		Eventually(c.getDeleted, 2).Should(Equal(1))
 
 		wf.RemoveNetworkQoSHandler(h)
@@ -2306,20 +2316,20 @@ var _ = Describe("Watch Factory Operations", func() {
 		})
 
 		namespaces = append(namespaces, added)
-		namespaceWatch.Add(added)
+		namespaceWatch.Add(added.DeepCopy())
 		Eventually(c.getAdded, 2).Should(Equal(1))
 		wf.RemoveNamespaceHandler(h)
 
 		added2 := newNamespace("other")
 		namespaces = append(namespaces, added2)
-		namespaceWatch.Add(added2)
+		namespaceWatch.Add(added2.DeepCopy())
 		Consistently(c.getAdded, 2).Should(Equal(1))
 
 		added2.Status.Phase = corev1.NamespaceTerminating
-		namespaceWatch.Modify(added2)
+		namespaceWatch.Modify(added2.DeepCopy())
 		Consistently(c.getUpdated, 2).Should(Equal(0))
 		namespaces = []*corev1.Namespace{added}
-		namespaceWatch.Delete(added2)
+		namespaceWatch.Delete(added2.DeepCopy())
 		Consistently(c.getDeleted, 2).Should(Equal(0))
 	})
 
@@ -2331,6 +2341,9 @@ var _ = Describe("Watch Factory Operations", func() {
 
 		passesFilter := newPod("pod1", "default")
 		passesFilter.ObjectMeta.Labels["blah"] = "foobar"
+		// Informer handlers receive the object after informerObjectTrim has
+		// run, so trim the test's object the same way before comparing.
+		_, _ = informerObjectTrim(passesFilter)
 		failsFilter := newPod("pod2", "default")
 		failsFilter.ObjectMeta.Labels["blah"] = "baz"
 		failsFilter2 := newPod("pod3", "otherns")
@@ -2364,34 +2377,34 @@ var _ = Describe("Watch Factory Operations", func() {
 			})
 
 		pods = append(pods, passesFilter)
-		podWatch.Add(passesFilter)
+		podWatch.Add(passesFilter.DeepCopy())
 		Eventually(c.getAdded, 2).Should(Equal(1))
 
 		// numAdded should remain 1
 		pods = append(pods, failsFilter)
-		podWatch.Add(failsFilter)
+		podWatch.Add(failsFilter.DeepCopy())
 		Consistently(c.getAdded, 2).Should(Equal(1))
 
 		// numAdded should remain 1
 		pods = append(pods, failsFilter2)
-		podWatch.Add(failsFilter2)
+		podWatch.Add(failsFilter2.DeepCopy())
 		Consistently(c.getAdded, 2).Should(Equal(1))
 
 		passesFilter.Status.Phase = corev1.PodFailed
-		podWatch.Modify(passesFilter)
+		podWatch.Modify(passesFilter.DeepCopy())
 		Eventually(c.getUpdated, 2).Should(Equal(1))
 
 		// numAdded should remain 1
 		failsFilter.Status.Phase = corev1.PodFailed
-		podWatch.Modify(failsFilter)
+		podWatch.Modify(failsFilter.DeepCopy())
 		Consistently(c.getUpdated, 2).Should(Equal(1))
 
 		failsFilter2.Status.Phase = corev1.PodFailed
-		podWatch.Modify(failsFilter2)
+		podWatch.Modify(failsFilter2.DeepCopy())
 		Consistently(c.getUpdated, 2).Should(Equal(1))
 
 		pods = []*corev1.Pod{failsFilter, failsFilter2}
-		podWatch.Delete(passesFilter)
+		podWatch.Delete(passesFilter.DeepCopy())
 		Eventually(c.getDeleted, 2).Should(Equal(1))
 	})
 
@@ -2434,21 +2447,22 @@ var _ = Describe("Watch Factory Operations", func() {
 		podCopy2 := pod.DeepCopy()
 
 		// Pod doesn't pass filter; shouldn't be added
-		podWatch.Add(pod)
+		podWatch.Add(pod.DeepCopy())
 		Consistently(c.getAdded, 2).Should(Equal(0))
 
 		// Update pod to pass filter; should be treated as add.  Need
 		// to deep-copy pod when modifying because it's a pointer all
 		// the way through when using FakeClient
 		podCopy.ObjectMeta.Labels["blah"] = "foobar"
+		_, _ = informerObjectTrim(podCopy)
 		pods = []*corev1.Pod{podCopy}
 		equalPod = podCopy
-		podWatch.Modify(podCopy)
+		podWatch.Modify(podCopy.DeepCopy())
 		Eventually(c.getAdded, 2).Should(Equal(1))
 
 		// Update pod to fail filter; should be treated as delete
 		podCopy2.ObjectMeta.Labels["blah"] = "baz"
-		podWatch.Modify(podCopy2)
+		podWatch.Modify(podCopy2.DeepCopy())
 		Eventually(c.getDeleted, 2).Should(Equal(1))
 		Consistently(c.getAdded, 2).Should(Equal(1))
 		Consistently(c.getUpdated, 2).Should(Equal(0))
