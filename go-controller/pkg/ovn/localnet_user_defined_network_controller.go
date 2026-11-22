@@ -284,7 +284,7 @@ func (oc *LocalnetUserDefinedNetworkController) init() error {
 }
 
 func (oc *LocalnetUserDefinedNetworkController) Stop() {
-	klog.Infof("Stoping controller for UDN %s", oc.GetNetworkName())
+	klog.Infof("Stopping controller for UDN %s", oc.GetNetworkName())
 	oc.BaseLayer2UserDefinedNetworkController.stop()
 }
 

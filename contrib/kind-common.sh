@@ -1060,7 +1060,7 @@ install_plugins() {
   pushd plugins
   CGO_ENABLED=0 ./build_linux.sh
   KIND_NODES=$(kind_get_nodes)
-  # Opted for not overwritting the existing plugins
+  # Opted for not overwriting the existing plugins
   for node in $KIND_NODES; do
     for plugin in bandwidth bridge dhcp dummy firewall host-device ipvlan macvlan sbr static tuning vlan vrf; do
       $OCI_BIN cp ./bin/$plugin $node:/opt/cni/bin/
@@ -1492,7 +1492,7 @@ refresh_ovn_pods() {
 install_image() {
   # If local registry is being used push image there for consumption by kind cluster
   if [ "$KIND_LOCAL_REGISTRY" == true ]; then
-    echo "${1} should already be avaliable in local registry, not loading"
+    echo "${1} should already be available in local registry, not loading"
   else
     # Write the archive under a unique temporary directory per invocation:
     # podman save refuses to write to an existing file, and concurrent or
@@ -1820,7 +1820,7 @@ deploy_bgp_external_server() {
       set_nodes_default_gw "$kind_network_frr_v6"
     fi
   else
-    # disable the default route to make sure the container only routes accross
+    # disable the default route to make sure the container only routes across
     # directly connected or learnt networks (doing this at the very end since
     # docker changes the routing table when a new network is connected)
     $OCI_BIN exec "${FRR_CONTAINER_NAME}" ip route delete default
@@ -1891,7 +1891,7 @@ install_frr_k8s() {
   #
   # In regular PR e2e jobs where nobody sets a custom FRR_K8S_FRR_IMAGE
   # environment variable, both containers use FRR_DEPLOYED_IMAGE.
-  # FRR_K8S_FRR_IMAGE remains overrideable for tests that intentionally need a
+  # FRR_K8S_FRR_IMAGE remains overridable for tests that intentionally need a
   # different in-cluster daemonset image.
   #
   # Match the manifest's current upstream image exactly. If the pinned frr-k8s
@@ -1943,7 +1943,7 @@ wait_for_frr_k8s() {
 }
 
 apply_frr_k8s_receive_config() {
-  # apply a BGP peer configration with the external gateway that does not
+  # apply a BGP peer configuration with the external gateway that does not
   # exchange routes
   pushd "${FRR_TMP_DIR}"/frr-k8s/hack/demo/configs || exit 1
   sed 's/mode: all/mode: filtered/g' receive_all.yaml > receive_filtered.yaml
@@ -1965,7 +1965,7 @@ apply_frr_k8s_receive_config() {
   
   # frr-k8s webhook is declaring readiness before its endpoint is serving.
   # Let's do our own probing. Also will print logs in case of failure so we get
-  # insights on why this is hapenning. In remote mode the host API does not use
+  # insights on why this is happening. In remote mode the host API does not use
   # the DPU-cluster webhook service, so skip this probe.
   local r
   r=0

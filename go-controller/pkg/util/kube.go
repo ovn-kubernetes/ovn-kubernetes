@@ -334,7 +334,7 @@ func StartNodeCertificateManager(ctx context.Context, wg *sync.WaitGroup, nodeNa
 	var noCertKeyError *certificate.NoCertKeyError
 	if err != nil && !errors.As(err, &noCertKeyError) {
 		var pathErr *os.PathError
-		klog.Errorf("Failed to load the currect certificate file: %v", err)
+		klog.Errorf("Failed to load the current certificate file: %v", err)
 		// Do not try to remove the file if os.Stat failed on it
 		if errors.As(err, &pathErr) {
 			return err

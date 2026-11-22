@@ -300,7 +300,7 @@ ovn_conntrack_zone=${OVN_KUBERNETES_CONNTRACK_ZONE:-64000}
 
 ovn_ex_gw_network_interface=${OVN_EX_GW_NETWORK_INTERFACE:-}
 # OVN_NORTHD_BACKOFF_INTERVAL - northd backoff interval in ms
-# defualt is 300; no backoff delay if set to 0
+# default is 300; no backoff delay if set to 0
 ovn_northd_backoff_interval=${OVN_NORTHD_BACKOFF_INTERVAL:-"300"}
 # OVN_ENABLE_SVC_TEMPLATE_SUPPORT - enable svc template support
 ovn_enable_svc_template_support=${OVN_ENABLE_SVC_TEMPLATE_SUPPORT:-true}
@@ -321,7 +321,7 @@ ovn_disable_requestedchassis=${OVN_DISABLE_REQUESTEDCHASSIS:-false}
 
 # external_ids:host-k8s-nodename is set on an Open_vSwitch enabled system if the ovnkube stack
 # should function on behalf of a different host than external_ids:hostname. This includes
-# all the components that belond in an ovnkube stack (i.e. NB DB, SB DB, ovnkube etc)
+# all the components that belong in an ovnkube stack (i.e. NB DB, SB DB, ovnkube etc)
 # overwrite the K8S_NODE env var with the one found within the OVS metadata in this case
 ovn_k8s_node=$(ovs-vsctl --if-exists get Open_vSwitch . external_ids:host-k8s-nodename | tr -d '\"')
 if [[ ! -z $ovn_k8s_node ]]; then
@@ -412,7 +412,7 @@ wait_for_event() {
 # wait_ovnkube_controller_with_node_done - Wait for ovnkube-controller-with-node process to complete
 # Checks if the ovnkube-controller-with-node process is running by looking for its PID file.
 # If the PID file exists, waits for that process to finish before continuing.
-# If the PID file doesnt exist, it means the process has already exited.
+# If the PID file doesn't exist, it means the process has already exited.
 wait_ovnkube_controller_with_node_done() {
   local pid_file=${OVN_RUNDIR}/ovnkube-controller-with-node.pid
    if [[ -f ${pid_file} ]]; then
@@ -1325,7 +1325,7 @@ ovnkube-controller() {
 ovnkube-controller-with-node() {
   # send sig term to background job (ovnkube-node process), remove CNI conf and resume background job until it ends.
   # currently we the process to background, therefore wait until that process removes its pid file on exit.
-  # if the pid file doesnt exist, we exit immediately.
+  # if the pid file doesn't exist, we exit immediately.
   trap 'kill $(jobs -p) ; rm -f /etc/cni/net.d/10-ovn-kubernetes.conf ; wait_ovnkube_controller_with_node_done; exit 0' TERM
   check_ovn_daemonset_version "1.4.0"
   rm -f ${OVN_RUNDIR}/ovnkube-controller-with-node.pid
@@ -1348,7 +1348,7 @@ ovnkube-controller-with-node() {
   fi
 
   # start temp work around
-  # remove when https://issues.redhat.com/browse/FDP-1537 is avilable
+  # remove when https://issues.redhat.com/browse/FDP-1537 is available
   if [[ ${ovnkube_node_mode} == "full" && ${ovn_egressip_enable} == "true" ]]; then
     echo "=============== ovnkube-controller-with-node - (add GARP drop flows if external bridge exists)"
     # bridge may not yet exist

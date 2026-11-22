@@ -2826,7 +2826,7 @@ func nsNeedsUpdate(oldObj, newObj *corev1.Namespace) bool {
 func (c *Controller) reconcileFRRConfiguration(_ context.Context, key string) error {
 	namespace, name, err := cache.SplitMetaNamespaceKey(key)
 	if err != nil {
-		klog.Errorf("Failed spliting FRFConfiguration reconcile key %q: %v", key, err)
+		klog.Errorf("Failed splitting FRFConfiguration reconcile key %q: %v", key, err)
 		return nil
 	}
 
@@ -2865,7 +2865,7 @@ func (c *Controller) reconcileFRRConfiguration(_ context.Context, key string) er
 func (c *Controller) reconcileNAD(_ context.Context, key string) error {
 	namespace, name, err := cache.SplitMetaNamespaceKey(key)
 	if err != nil {
-		klog.Errorf("Failed spliting NAD reconcile key %q: %v", key, err)
+		klog.Errorf("Failed splitting NAD reconcile key %q: %v", key, err)
 		return nil
 	}
 

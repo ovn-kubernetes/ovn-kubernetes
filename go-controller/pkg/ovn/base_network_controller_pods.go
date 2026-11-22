@@ -408,7 +408,7 @@ func (bnc *BaseNetworkController) addLogicalPortToNetwork(ctx context.Context, p
 	podDesc := fmt.Sprintf("%s/%s/%s", nadKey, pod.Namespace, pod.Name)
 	switchName, err := bnc.getExpectedSwitchName(pod)
 	if err != nil {
-		return nil, nil, nil, false, fmt.Errorf("[%s] failed geting expected switch name when adding logical switch port: %v", podDesc, err)
+		return nil, nil, nil, false, fmt.Errorf("[%s] failed getting expected switch name when adding logical switch port: %v", podDesc, err)
 	}
 
 	// it is possible to try to add a pod here that has no node. For example if a pod was deleted with

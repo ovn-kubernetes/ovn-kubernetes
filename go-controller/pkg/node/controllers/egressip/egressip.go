@@ -1037,7 +1037,7 @@ func (c *Controller) repairNode() error {
 	}
 	staleAddresses := assignedAddr.Difference(expectedAddrs)
 	if err := c.removeStaleAddresses(staleAddresses, assignedAddrStrToAddrs); err != nil {
-		return fmt.Errorf("failed to remove stale Egress IP addresse(s) (%+v): %v", staleAddresses, err)
+		return fmt.Errorf("failed to remove stale Egress IP address(es) (%+v): %v", staleAddresses, err)
 	}
 
 	staleIPRoutes := assignedIPRoutes.Difference(expectedIPRoutes)

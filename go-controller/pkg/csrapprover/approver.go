@@ -261,7 +261,7 @@ func (c *OVNKubeCSRController) Reconcile(ctx context.Context, request reconcile.
 	}
 
 	if req.Spec.ExpirationSeconds == nil {
-		return reconcile.Result{}, c.denyCSR(ctx, req, fmt.Errorf("CSR %q was created without specyfying the expirationSeconds", req.Name))
+		return reconcile.Result{}, c.denyCSR(ctx, req, fmt.Errorf("CSR %q was created without specifying the expirationSeconds", req.Name))
 	}
 
 	if csr.ExpirationSecondsToDuration(*req.Spec.ExpirationSeconds) > c.maxDuration {

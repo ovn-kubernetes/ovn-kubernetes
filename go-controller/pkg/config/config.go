@@ -3331,7 +3331,7 @@ func buildOvnKubeNodeConfig(cli, file *config) error {
 	// configure the management port.
 	if OvnKubeNode.MgmtPortNetdev != "" && OvnKubeNode.MgmtPortDPResourceName != "" {
 		klog.Warningf("ovnkube-node-mgmt-port-netdev (%s) and ovnkube-node-mgmt-port-dp-resource-name (%s) "+
-			"both specified. The provided netdev in ovnkube-node-mgmt-port-netdev will be overriden by a netdev "+
+			"both specified. The provided netdev in ovnkube-node-mgmt-port-netdev will be overridden by a netdev "+
 			"chosen by the resource provided by ovnkube-node-mgmt-port-dp-resource-name.",
 			OvnKubeNode.MgmtPortNetdev, OvnKubeNode.MgmtPortDPResourceName)
 	}
