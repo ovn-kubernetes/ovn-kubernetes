@@ -138,7 +138,6 @@ const (
 	MGMTPortPolicyPriority                = "1005"
 	NodeSubnetPolicyPriority              = "1004"
 	InterNodePolicyPriority               = "1003"
-	UDNHostCIDRPolicyPriority             = "99"
 	HybridOverlaySubnetPriority           = 1002
 	HybridOverlayReroutePriority          = 501
 	DefaultNoRereoutePriority             = 102
@@ -237,6 +236,14 @@ const (
 	// OvnRouteAdvertisementsValidatedKey annotates a FRRConfiguration
 	// generated from input validated by the RouteAdvertisements controller
 	OvnRouteAdvertisementsValidatedKey = OvnK8sPrefix + "/route-advertisements-validated"
+
+	// OvnRouteAdvertisementsIntentKey annotates a NAD with what each applied
+	// RouteAdvertisements that advertises its pod network asks for: the target
+	// VRF and whether EgressIPs are advertised too. Nodes read this instead
+	// of the RouteAdvertisements itself.
+	OvnRouteAdvertisementsIntentKey = OvnK8sPrefix + "/route-advertisements-intent"
+	// OvnRouteAdvertisementsNodeKey labels generated configurations for node-scoped watches.
+	OvnRouteAdvertisementsNodeKey = OvnK8sPrefix + "/route-advertisements-node"
 
 	// name of the configmap used to synchronize status (e.g. watch for topology changes)
 	OvnK8sStatusCMName         = "control-plane-status"

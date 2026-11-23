@@ -391,7 +391,7 @@ func (bnc *BaseNetworkController) delPolicyFromDefaultPortGroups(np *networkPoli
 			// last policy was deleted, delete port group
 			err := bnc.deleteDefaultDenyPGAndACLs(np.namespace)
 			if err != nil {
-				return fmt.Errorf("failed to delete defaul deny port group: %v", err)
+				return fmt.Errorf("failed to delete default deny port group: %v", err)
 			}
 			bnc.sharedNetpolPortGroups.Delete(pgKey)
 		}

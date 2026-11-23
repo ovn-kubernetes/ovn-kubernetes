@@ -230,11 +230,11 @@ if [ "$ENABLE_ROUTE_ADVERTISEMENTS" != true ]; then
 else
   if [ "$ADVERTISE_DEFAULT_NETWORK" = true ]; then
     # Some test don't work when the default network is advertised, either because
-    # the configuration that the test excercises does not make sense for an advertised network, or
+    # the configuration that the test exercises does not make sense for an advertised network, or
     # there is some bug or functional gap
     # call out case by case
 
-    # pod reached from default network through secondary interface, asymetric, configuration does not make sense
+    # pod reached from default network through secondary interface, asymmetric, configuration does not make sense
     # TODO: perhaps the secondary network attached pods should not be attached to default network
     skip "Multi Homing A single pod with an OVN-K secondary network attached to a localnet network mapped to external primary interface bridge can be reached by a client pod in the default network on the same node"
     skip "Multi Homing A single pod with an OVN-K secondary network attached to a localnet network mapped to external primary interface bridge can be reached by a client pod in the default network on a different node"
@@ -325,8 +325,10 @@ if [ "$ENABLE_EVPN" = true ] && [[ "${WHAT}" != "${KV_LIVE_MIGRATION_TESTS}"* ]]
   # subnets). Use the ginkgo CLI so that -procs=3 spawns 3 coordinated worker
   # processes — one per DescribeTable entry.  go test cannot drive Ginkgo
   # parallelism directly; only the ginkgo binary can start the sync server and
-  # fan out the worker processes.
-  ginkgo run \
+  # fan out the worker processes. Run the CLI from this module so its version
+  # always matches the ginkgo library the suite is compiled with, independent
+  # of the Kubernetes test tarball that provides /usr/local/bin/ginkgo.
+  go tool ginkgo run \
         -procs=3 \
         -v \
         --focus="${FOCUS:-.}" \

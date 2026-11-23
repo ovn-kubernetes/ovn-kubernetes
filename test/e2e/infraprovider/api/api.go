@@ -29,10 +29,9 @@ type ClusterProvider interface {
 	GetK8NodeNetworkInterface(instance string, network Network) (NetworkInterface, error)
 	// ExecK8NodeCommand executes a command on a K8 Node host network namespace and filesystem
 	ExecK8NodeCommand(nodeName string, cmd []string) (string, error)
-	// GetK8HostPort returns a Node port. Requesting a port that maybe exposed in tests to avoid multiple parallel
-	// tests utilizing conflicting ports. It also allows infra provider implementations to set Nodes
-	// allowed port range and therefore comply with cloud provider firewall rules.
-	GetK8HostPort() uint16 // supported K8 host ports
+	// GetK8HostPort returns a ConfigMap-reserved host port; providers choose the allowed range.
+	// Deallocation is registered on cleanup.
+	GetK8HostPort(f *framework.Framework, cleanup ContextCleanUp) uint16
 	// ShutdownNode shuts down the specified node
 	ShutdownNode(nodeName string) error
 	// StartNode starts the specified node

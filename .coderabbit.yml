@@ -269,8 +269,10 @@ reviews:
         - Flag comments that merely restate what the code does
           (e.g. "// set a to b" above "a = b", "// return the error"
           above "return err", "// create the pod" above CreatePod()).
-          Comments should explain why, not what. Only non-obvious
-          intent, trade-offs, or constraints warrant a comment.
+          Review comments using the root AGENTS.md "Code comment style"
+          guidance. Allow concise explanations of non-obvious intent,
+          behavior, invariants, dependencies, lifecycle, and consequences,
+          including small examples when helpful.
     - path: "test/e2e/**"
       instructions: |
         - Verify CI reachability for every new spec or changed selection
@@ -532,7 +534,8 @@ reviews:
           project files stale or inaccurate: .coderabbit.yml (path
           instructions, pre-merge checks, global review instructions),
           CONTRIBUTING.md, AGENTS.md, docs/developer-guide/,
-          docs/governance/, docs/design/architecture.md, CODEOWNERS, or mkdocs.yml
+          docs/governance/, docs/design/architecture.md,
+          docs/features/requirements.md, CODEOWNERS, or mkdocs.yml
           navigation entries.
 
           Examples of staleness:
@@ -549,6 +552,16 @@ reviews:
 
           4. Architecture or component boundaries change but
           docs/design/architecture.md is not updated.
+
+          5. An external dependency version changes (the OVN RPM in
+          dist/images/Dockerfile*, k8s.io dependencies in
+          go-controller/go.mod or K8S_VERSION in CI and kind scripts,
+          multus, frr-k8s or FRR versions in contrib/kind-common.sh,
+          or config.CNISpecVersion) such that the version listed in
+          the master rows of docs/features/requirements.md no longer
+          matches. Versions listed as major.minor (OVN, Kubernetes,
+          FRR) only become stale when that major.minor changes; patch
+          bumps do not require a table update.
 
           Fail if any project docs or config become stale due to the
           changes. Pass only if the PR does not introduce any such
@@ -611,12 +624,15 @@ reviews:
           1. Flag use of fmt.Print, fmt.Println, log.Print, log.Fatal,
           or log.* for logging. The project uses klog exclusively.
 
-          2. Flag bare error returns without context wrapping. Errors
-          must be wrapped with fmt.Errorf("...: %w", err). Use %w when
-          the caller should be able to inspect the underlying error
-          with errors.Is/errors.As. Use %v when the underlying error
-          is an implementation detail that should not be exposed as
-          part of the API.
+          2. Flag missing diagnostic context, not bare error returns.
+          Trace the error's origin and reporting site before requesting
+          wrapping. Add operation or object context where it is missing;
+          do not require redundant wrappers in propagation or aggregation
+          helpers. Use %w when the caller should be able to inspect the
+          underlying error with errors.Is/errors.As. Use %v when the
+          underlying error is an implementation detail that should not
+          be exposed as part of the API. Preserve error classification
+          and nil success returns.
 
           3. Flag bare integers passed as time.Duration without
           explicit units. Must use e.g. 10*time.Second, not 10.

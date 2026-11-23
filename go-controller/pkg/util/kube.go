@@ -103,6 +103,7 @@ type OVNKubeControllerClientset struct {
 	NetworkConnectClient      networkconnectclientset.Interface
 	UplinkClient              uplinkclientset.Interface
 	VTEPClient                vtepclientset.Interface
+	FRRClient                 frrclientset.Interface
 }
 
 type OVNNodeClientset struct {
@@ -115,6 +116,7 @@ type OVNNodeClientset struct {
 	RouteAdvertisementsClient routeadvertisementsclientset.Interface
 	UplinkClient              uplinkclientset.Interface
 	VTEPClient                vtepclientset.Interface
+	FRRClient                 frrclientset.Interface
 }
 
 type OVNClusterManagerClientset struct {
@@ -163,6 +165,7 @@ func (cs *OVNClientset) GetOVNKubeControllerClientset() *OVNKubeControllerClient
 		NetworkAttchDefClient:     cs.NetworkAttchDefClient,
 		UserDefinedNetworkClient:  cs.UserDefinedNetworkClient,
 		RouteAdvertisementsClient: cs.RouteAdvertisementsClient,
+		FRRClient:                 cs.FRRClient,
 		NetworkQoSClient:          cs.NetworkQoSClient,
 		NetworkConnectClient:      cs.NetworkConnectClient,
 		UplinkClient:              cs.UplinkClient,
@@ -202,6 +205,7 @@ func (cs *OVNClientset) GetNodeClientset() *OVNNodeClientset {
 		NetworkAttchDefClient:     cs.NetworkAttchDefClient,
 		UserDefinedNetworkClient:  cs.UserDefinedNetworkClient,
 		RouteAdvertisementsClient: cs.RouteAdvertisementsClient,
+		FRRClient:                 cs.FRRClient,
 		UplinkClient:              cs.UplinkClient,
 		VTEPClient:                cs.VTEPClient,
 	}
@@ -330,7 +334,7 @@ func StartNodeCertificateManager(ctx context.Context, wg *sync.WaitGroup, nodeNa
 	var noCertKeyError *certificate.NoCertKeyError
 	if err != nil && !errors.As(err, &noCertKeyError) {
 		var pathErr *os.PathError
-		klog.Errorf("Failed to load the currect certificate file: %v", err)
+		klog.Errorf("Failed to load the current certificate file: %v", err)
 		// Do not try to remove the file if os.Stat failed on it
 		if errors.As(err, &pathErr) {
 			return err

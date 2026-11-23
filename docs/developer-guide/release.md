@@ -49,6 +49,8 @@ Each new release of OVN-Kubernetes is defined with a "version" that represents t
   label of the release that goes out of support.
 * Mark the release that goes out of support as not maintained anymore in
   [Information on Past Releases](#information-on-past-releases).
+* Add a row for the new release to the tables in
+  [External requirements](../features/requirements.md).
 
 ### Release Notes
 
