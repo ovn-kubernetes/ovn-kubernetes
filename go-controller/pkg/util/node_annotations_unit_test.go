@@ -806,9 +806,6 @@ func TestParseUDNLayer2NodeGRLRPTunnelIDs(t *testing.T) {
 				require.True(t, IsAnnotationNotSetError(err))
 			}
 			assert.Equal(t, tc.res, res)
-			// callers choose between reading the ID and allocating one based on
-			// HasUDNLayer2NodeGRLRPTunnelID, so it has to agree with the parse
-			assert.Equal(t, err == nil, HasUDNLayer2NodeGRLRPTunnelID(tc.inpNode, tc.inpNetName))
 		})
 	}
 }

@@ -305,13 +305,8 @@ const (
 	RequiredUDNNamespaceLabel = "k8s.ovn.org/primary-user-defined-network"
 	// NodeSubnetsAnnotation contains the pod subnets allocated to each node+network
 	NodeSubnetsAnnotation = OvnK8sPrefix + "/node-subnets"
-	// UDNLayer2NodeGRLRPTunnelIDAnnotation is the constant string representing the tunnel id allocated for the
-	// UDN L2 network for this node's GR LRP by cluster manager. This is used to create the remote tunnel
-	// ports for each node.
-	// "k8s.ovn.org/udn-layer2-node-gateway-router-lrp-tunnel-ids": "{
-	//		"l2-network-a":"5",
-	//		"l2-network-b":"10"}
-	// }",
+	// UDNLayer2NodeGRLRPTunnelIDAnnotation maps network names to legacy gateway port tunnel IDs.
+	// Older nodes can retain entries until their networks are removed.
 	UDNLayer2NodeGRLRPTunnelIDAnnotation = "k8s.ovn.org/udn-layer2-node-gateway-router-lrp-tunnel-ids"
 	// OvnPodAnnotationName is the constant string representing the POD annotation key
 	OvnPodAnnotationName = OvnK8sPrefix + "/pod-networks"

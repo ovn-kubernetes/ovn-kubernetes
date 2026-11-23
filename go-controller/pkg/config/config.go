@@ -269,12 +269,6 @@ var (
 	ManagedBGP = ManagedBGPConfig{
 		ASNumber: 64512, // Default AS number
 	}
-
-	// Layer2UsesTransitRouter selects the current primary Layer2 topology.
-	// Both controller managers enable it at startup.
-	//
-	// DEPRECATED: retained only until the legacy topology branches are removed.
-	Layer2UsesTransitRouter bool
 )
 
 const (
@@ -923,7 +917,6 @@ func PrepareTestConfig() error {
 	if Gateway.Mode != GatewayModeDisabled {
 		Gateway.EphemeralPortRange = DefaultEphemeralPortRange
 	}
-	Layer2UsesTransitRouter = true
 
 	if err := completeConfig(); err != nil {
 		return err

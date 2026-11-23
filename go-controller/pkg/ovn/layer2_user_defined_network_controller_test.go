@@ -545,7 +545,6 @@ var _ = Describe("OVN Multi-Homed pod operations for layer 2 network", func() {
 
 	It("retries a repaired transit router tunnel key after a database failure", func() {
 		config.OVNKubernetesFeature.EnableMultiNetwork = true
-		config.Layer2UsesTransitRouter = true
 		setupConfig(dummyLayer2PrimaryUserDefinedNetwork("192.168.0.0/16"), testConfiguration{}, config.GatewayModeShared)
 		app.Action = func(_ *cli.Context) error {
 			netInfo := dummyLayer2PrimaryUserDefinedNetwork("192.168.0.0/16")

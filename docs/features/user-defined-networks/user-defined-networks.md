@@ -109,6 +109,9 @@ for compatibility with older peers during rolling upgrades. The annotation
 records topology selection, not successful completion of all network
 reconciliation. Setting it manually does not migrate an existing network.
 
+Migrated nodes may still have entries in `k8s.ovn.org/udn-layer2-node-gateway-router-lrp-tunnel-ids`.
+The cluster manager no longer allocates these IDs. Deleting a network removes its entry.
+
 This prerequisite concerns legacy primary Layer2 deployments. Secondary Layer2
 networks and the current EVPN topology retain their existing behavior.
 

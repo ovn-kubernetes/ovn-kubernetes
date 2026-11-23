@@ -146,13 +146,7 @@ const (
 	// default network and other layer3 secondary networks by cluster manager.
 	OvnNetworkIDs = "k8s.ovn.org/network-ids"
 
-	// types.UDNLayer2NodeGRLRPTunnelIDAnnotation is the constant string representing the tunnel id allocated for the
-	// UDN L2 network for this node's GR LRP by cluster manager. This is used to create the remote tunnel
-	// ports for each node.
-	// "k8s.ovn.org/udn-layer2-node-gateway-router-lrp-tunnel-ids": "{
-	//		"l2-network-a":"5",
-	//		"l2-network-b":"10"}
-	// }",
+	// Layer2TopologyVersion is published for older peers during rolling upgrades.
 	Layer2TopologyVersion    = "k8s.ovn.org/layer2-topology-version"
 	TransitRouterTopoVersion = "2.0"
 
@@ -516,20 +510,8 @@ func ParseNodeManagementPortMACAddresses(node *corev1.Node, netName string) (net
 	return net.ParseMAC(macAddress)
 }
 
-func HasUDNLayer2NodeGRLRPTunnelID(node *corev1.Node, netName string) bool {
-	// an ID that ParseUDNLayer2NodeGRLRPTunnelIDs reports as unset is not an
-	// allocation, so answering from the bare annotation would disagree with
-	// every caller that goes on to read it
-	_, err := ParseUDNLayer2NodeGRLRPTunnelIDs(node, netName)
-	return err == nil
-}
-
-// ParseUDNLayer2NodeGRLRPTunnelIDs parses the UDN L2 node GR LRP tunnel ID annotation
-// for the specified network in 'netName' and returns the tunnelID. An ID outside
-// [1, types.MaxLogicalPortTunnelKey) is reported as unset so that a usable one is
-// allocated in its place. Zero is excluded because it is the reserved NoTunnelID:
-// the allocator hands it to no one, so reserving an annotated zero for a node
-// fails and aborts network setup.
+// ParseUDNLayer2NodeGRLRPTunnelIDs returns the legacy gateway port tunnel ID for netName.
+// IDs outside [1, types.MaxLogicalPortTunnelKey) are reported as unset.
 func ParseUDNLayer2NodeGRLRPTunnelIDs(node *corev1.Node, netName string) (int, error) {
 	tunnelIDsMap, err := parseNetworkMapAnnotation(node.Annotations, types.UDNLayer2NodeGRLRPTunnelIDAnnotation)
 	if err != nil {
@@ -545,12 +527,6 @@ func ParseUDNLayer2NodeGRLRPTunnelIDs(node *corev1.Node, netName string) (int, e
 	if err != nil {
 		return types.InvalidID, err
 	}
-	// Existing annotations may contain invalid IDs, and callers only screen
-	// the result against InvalidID. Report an out of range ID as unset rather
-	// than as an error: callers replace an unset ID with a freshly allocated
-	// one, whereas an error here aborts network setup for every node. Zero is
-	// out of range too: it is the reserved NoTunnelID, so reserving it for a
-	// node clashes with that reservation and fails.
 	if id <= 0 || id >= types.MaxLogicalPortTunnelKey {
 		klog.Warningf("Ignoring out of range %q tunnel ID %q for network %s on node %q, expected [1, %d)",
 			types.UDNLayer2NodeGRLRPTunnelIDAnnotation, tunnelID, netName, node.Name, types.MaxLogicalPortTunnelKey)

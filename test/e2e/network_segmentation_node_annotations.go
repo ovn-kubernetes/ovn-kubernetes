@@ -47,39 +47,9 @@ var _ = Describe("Network Segmentation: Node Annotations", feature.NetworkSegmen
 	})
 
 	Context("Tunnel ID Annotations", func() {
-		// NOTE: These tests validate the behavior based on the Layer2UsesTransitRouter configuration.
-		// The configuration is determined by the k8s.ovn.org/layer2-topology-version annotation on nodes.
-		// Version "2.0" indicates transit router topology (Layer2UsesTransitRouter=true).
-		// Missing or other values indicate legacy topology (Layer2UsesTransitRouter=false).
-
-		// Serial() is required because this test modifies cluster-wide state (node annotations)
-		// that controls Layer2UsesTransitRouter and affects ovnkube-control-plane behavior.
+		// Run serially because the test patches annotations on every schedulable node.
 		It("should clean up tunnel ID annotations when UDN is deleted with transit router topology", Serial, func(ctx SpecContext) {
-			// This test verifies that tunnel ID annotations are cleaned up when a UDN is deleted
-			// in transit router topology. The test simulates a migration scenario by:
-			// 1. Creating an L2 primary network
-			// 2. Ensuring all nodes have transit router topology annotation
-			// 3. Manually injecting tunnel ID annotations on nodes (simulating legacy state)
-			// 4. Deleting the UDN
-			// 5. Verifying that tunnel ID annotations are cleaned up during UDN deletion
 			testUdnName := "node-annotation-l2-tunnel-id-cleanup"
-
-			By("ensuring all nodes have transit router topology annotation")
-			nodeList, err := e2enode.GetReadySchedulableNodes(context.TODO(), cs)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(len(nodeList.Items)).To(BeNumerically(">", 0), "should have at least one node")
-
-			for i := range nodeList.Items {
-				node := &nodeList.Items[i]
-				if node.Annotations[ovnkubeutil.Layer2TopologyVersion] != ovnkubeutil.TransitRouterTopoVersion {
-					node.Annotations[ovnkubeutil.Layer2TopologyVersion] = ovnkubeutil.TransitRouterTopoVersion
-					_, err = cs.CoreV1().Nodes().Update(context.TODO(), node, metav1.UpdateOptions{})
-					Expect(err).NotTo(HaveOccurred(), "failed to set transit router topology on node %s", node.Name)
-					framework.Logf("Set transit router topology on node %s", node.Name)
-				} else {
-					framework.Logf("Node %s already has transit router topology", node.Name)
-				}
-			}
 
 			By("creating an L2 primary network")
 			netConfig := &networkAttachmentConfigParams{
@@ -98,8 +68,9 @@ var _ = Describe("Network Segmentation: Node Annotations", feature.NetworkSegmen
 
 			By("verifying no tunnel ID annotations are allocated in transit router topology")
 
-			nodeList, err = e2enode.GetReadySchedulableNodes(context.TODO(), cs)
+			nodeList, err := e2enode.GetReadySchedulableNodes(ctx, cs)
 			Expect(err).NotTo(HaveOccurred())
+			Expect(nodeList.Items).NotTo(BeEmpty(), "should have at least one node")
 			for i := range nodeList.Items {
 				node := &nodeList.Items[i]
 				node, err = cs.CoreV1().Nodes().Get(context.TODO(), node.Name, metav1.GetOptions{})

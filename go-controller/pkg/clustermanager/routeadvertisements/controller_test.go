@@ -774,7 +774,6 @@ func init() {
 	// cannot stop the NAD informer properly (the api we use was generated with
 	// an old codegen and the informer has no shutdown method)
 	config.IPv4Mode = true
-	config.Layer2UsesTransitRouter = true
 
 	// Set feature flags before any test calls RegisterClusterManagerFunctional().
 	// The sync.Once in registration captures whichever flags are set on the first call.

@@ -1259,7 +1259,6 @@ func TestSyncReservesPlatformTunnelIDs(t *testing.T) {
 
 			err := config.PrepareTestConfig()
 			g.Expect(err).ToNot(gomega.HaveOccurred())
-			config.Layer2UsesTransitRouter = true
 
 			idAlloc := id.NewIDAllocator("test", types.MaxLogicalPortTunnelKey)
 			g.Expect(idAlloc.ReserveID("zero", 0)).To(gomega.Succeed())
@@ -1278,7 +1277,7 @@ func TestSyncReservesPlatformTunnelIDs(t *testing.T) {
 			nextID, err := idAlloc.AllocateID("test-pod")
 			g.Expect(err).ToNot(gomega.HaveOccurred())
 			g.Expect(nextID).To(gomega.BeNumerically(">=", tt.wantAllocMinID),
-				"pod tunnel IDs should start at %d when transit router is enabled", tt.wantAllocMinID)
+				"pod tunnel IDs should start at %d", tt.wantAllocMinID)
 		})
 	}
 }
