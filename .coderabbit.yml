@@ -534,7 +534,8 @@ reviews:
           project files stale or inaccurate: .coderabbit.yml (path
           instructions, pre-merge checks, global review instructions),
           CONTRIBUTING.md, AGENTS.md, docs/developer-guide/,
-          docs/governance/, docs/design/architecture.md, CODEOWNERS, or mkdocs.yml
+          docs/governance/, docs/design/architecture.md,
+          docs/features/requirements.md, CODEOWNERS, or mkdocs.yml
           navigation entries.
 
           Examples of staleness:
@@ -551,6 +552,16 @@ reviews:
 
           4. Architecture or component boundaries change but
           docs/design/architecture.md is not updated.
+
+          5. An external dependency version changes (the OVN RPM in
+          dist/images/Dockerfile*, k8s.io dependencies in
+          go-controller/go.mod or K8S_VERSION in CI and kind scripts,
+          multus, frr-k8s or FRR versions in contrib/kind-common.sh,
+          or config.CNISpecVersion) such that the version listed in
+          the master rows of docs/features/requirements.md no longer
+          matches. Versions listed as major.minor (OVN, Kubernetes,
+          FRR) only become stale when that major.minor changes; patch
+          bumps do not require a table update.
 
           Fail if any project docs or config become stale due to the
           changes. Pass only if the PR does not introduce any such
