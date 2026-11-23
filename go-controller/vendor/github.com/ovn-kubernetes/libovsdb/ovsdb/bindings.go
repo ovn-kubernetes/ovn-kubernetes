@@ -150,7 +150,7 @@ func OvsToNative(column *ColumnSchema, ovsElem any) (any, error) {
 		// The inner slice is []any
 		// We need to convert it to the real type os slice
 		switch naType.Kind() {
-		case reflect.Ptr:
+		case reflect.Pointer:
 			switch ovsSet := ovsElem.(type) {
 			case OvsSet:
 				if len(ovsSet.GoSet) > 1 {
@@ -410,7 +410,7 @@ func isDefaultBaseValue(elem any, etype ExtendedType) bool {
 	if !value.IsValid() {
 		return true
 	}
-	if reflect.TypeOf(elem).Kind() == reflect.Ptr {
+	if reflect.TypeOf(elem).Kind() == reflect.Pointer {
 		return reflect.ValueOf(elem).IsZero()
 	}
 	switch etype {

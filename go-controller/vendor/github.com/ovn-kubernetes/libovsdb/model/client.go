@@ -136,7 +136,7 @@ func NewClientDBModel(name string, models map[string]Model) (ClientDBModel, erro
 	types := make(map[string]reflect.Type, len(models))
 	for table, model := range models {
 		modelType := reflect.TypeOf(model)
-		if modelType.Kind() != reflect.Ptr || modelType.Elem().Kind() != reflect.Struct {
+		if modelType.Kind() != reflect.Pointer || modelType.Elem().Kind() != reflect.Struct {
 			return ClientDBModel{}, fmt.Errorf("model is expected to be a pointer to struct")
 		}
 		hasUUID := false
