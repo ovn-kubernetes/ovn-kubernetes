@@ -63,6 +63,21 @@ import (
 	kvmigrationsv1alpha1 "kubevirt.io/api/migrations/v1alpha1"
 )
 
+func ovnkubeNodePodsByNode(ctx context.Context, f *e2eframework.Framework) (map[string]corev1.Pod, error) {
+	pods, err := f.ClientSet.CoreV1().Pods(deploymentconfig.Get().OVNKubernetesNamespace()).List(
+		ctx,
+		metav1.ListOptions{LabelSelector: "app=ovnkube-node"},
+	)
+	if err != nil {
+		return nil, err
+	}
+	byNode := map[string]corev1.Pod{}
+	for _, pod := range pods.Items {
+		byNode[pod.Spec.NodeName] = pod
+	}
+	return byNode, nil
+}
+
 func newControllerRuntimeClient() (crclient.Client, error) {
 	config, err := clientcmd.BuildConfigFromFlags("", os.Getenv("KUBECONFIG"))
 	if err != nil {
@@ -1210,7 +1225,7 @@ config:
 			return ips, nil
 		}
 
-		createNetshootTestPods = func(nodes []corev1.Node, udnName string, role udnv1.NetworkRole, staticSubnets []string, script string) ([]*corev1.Pod, error) {
+		createNetshootTestPods = func(nodes []corev1.Node, udnName string, role udnv1.NetworkRole, staticSubnets []string, script string, podOptions ...func(*corev1.Pod)) ([]*corev1.Pod, error) {
 			var pods []*corev1.Pod
 			for i, node := range nodes {
 				var nse *nadapi.NetworkSelectionElement
@@ -1231,6 +1246,9 @@ config:
 					}
 					pod.Spec.Containers[0].Image = images.Netshoot()
 					pod.Spec.Containers[0].Args = []string{script}
+					for _, option := range podOptions {
+						option(pod)
+					}
 				})
 				if err != nil {
 					return nil, err
@@ -1242,6 +1260,30 @@ config:
 
 		createIperfServerPods = func(nodes []corev1.Node, udnName string, role udnv1.NetworkRole, staticSubnets []string) ([]*corev1.Pod, error) {
 			return createNetshootTestPods(nodes, udnName, role, staticSubnets, iperfServerScript+"\n sleep infinity")
+		}
+
+		pingVMFromPeerPod = func(ctx context.Context, peerPod *corev1.Pod, vmCIDRs []string) (string, error) {
+			GinkgoHelper()
+			var commands []string
+			for _, cidr := range vmCIDRs {
+				ip := netip.MustParsePrefix(cidr).Addr()
+				commands = append(commands, fmt.Sprintf("ip neigh flush to %[1]s && ping -c 5 -W 2 %[1]s", ip))
+			}
+			execCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			defer cancel()
+			stdout, stderr, err := e2epod.Exec(fr.TContext(execCtx), e2epod.ExecOptions{
+				Command:       []string{"bash", "-c", strings.Join(commands, " && ")},
+				Namespace:     peerPod.Namespace,
+				PodName:       peerPod.Name,
+				ContainerName: peerPod.Spec.Containers[0].Name,
+				CaptureStdout: true,
+				CaptureStderr: true,
+			})
+			output := fmt.Sprintf("stdout:\n%s\nstderr:\n%s", stdout, stderr)
+			if err != nil {
+				return output, fmt.Errorf("peer %s failed to resolve and ping the VM: %w", peerPod.Name, err)
+			}
+			return output, nil
 		}
 
 		waitForPodsCondition = func(pods []*corev1.Pod, conditionFn func(g Gomega, pod *corev1.Pod)) {
@@ -2258,6 +2300,116 @@ password: fedora
 chpasswd: { expire: False }
 `
 		)
+		It("should resolve the VM address from a peer after live migration with a northd recompute", func(ctx SpecContext) {
+			By("setting up the localnet underlay")
+			cudn, networkName := kubevirt.GenerateCUDN(namespace, "net1", udnv1.NetworkTopologyLocalnet, udnv1.NetworkRoleSecondary, udnv1.DualStackCIDRs{})
+			createCUDN(ctx, cudn)
+			Expect(providerCtx.SetupUnderlay(fr, infraapi.Underlay{LogicalNetworkName: networkName})).To(Succeed())
+
+			cidrs := filterCIDRs(fr.ClientSet, vmiIPv4, vmiIPv6)
+			networkData, err := staticIPsNetworkData(cidrs)
+			Expect(err).NotTo(HaveOccurred())
+			holdOnDstLauncherPodCreationAnnotation := kubevirtv1.FuncTestBlockLauncherPrepareMigrationTargetAnnotation
+			vm := fedoraWithTestToolingVM(nil, map[string]string{holdOnDstLauncherPodCreationAnnotation: ""}, nil, kubevirtv1.NetworkSource{
+				Multus: &kubevirtv1.MultusNetwork{NetworkName: cudn.Name},
+			}, userData, networkData)
+			vm.Spec.Template.Spec.Domain.Devices.Interfaces[0].MacAddress = vmiMAC
+			createVirtualMachine(vm)
+			vmi := &kubevirtv1.VirtualMachineInstance{
+				ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: vm.Name},
+			}
+			waitVirtualMachineInstanceReadiness(vmi)
+			Expect(crClient.Get(ctx, crclient.ObjectKeyFromObject(vmi), vmi)).To(Succeed())
+			Eventually(func() error {
+				return virtClient.LoginToFedora(vmi, "fedora", "fedora")
+			}).WithTimeout(5 * time.Second).WithPolling(time.Second).Should(Succeed())
+			output, err := virtClient.RunCommand(vmi, "cloud-init status --wait", time.Minute)
+			Expect(err).NotTo(HaveOccurred(), output)
+
+			workerNodeList, err := fr.ClientSet.CoreV1().Nodes().List(ctx, metav1.ListOptions{
+				LabelSelector: labels.FormatLabels(map[string]string{"node-role.kubernetes.io/worker": ""}),
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(workerNodeList.Items).NotTo(BeEmpty(), "should find worker nodes for peer probes")
+			nadName := vmi.Spec.Networks[0].Multus.NetworkName
+			peerCIDRs, err := nextIPs(1, cidrs)
+			Expect(err).NotTo(HaveOccurred())
+			peerPods, err := createNetshootTestPods(workerNodeList.Items, nadName, udnv1.NetworkRoleSecondary, peerCIDRs, "sleep infinity", func(pod *corev1.Pod) {
+				pod.Spec.Containers[0].SecurityContext = &corev1.SecurityContext{
+					Capabilities: &corev1.Capabilities{Add: []corev1.Capability{"NET_ADMIN"}},
+				}
+			})
+			Expect(err).NotTo(HaveOccurred())
+			for _, peerPod := range peerPods {
+				By(fmt.Sprintf("checking fresh neighbor resolution toward the VM from node %s before migration", peerPod.Spec.NodeName))
+				output, err = pingVMFromPeerPod(ctx, peerPod, cidrs)
+				Expect(err).NotTo(HaveOccurred(), output)
+			}
+
+			unblockPatch := crclient.RawPatch(types.MergePatchType, []byte(fmt.Sprintf(`{"metadata":{"annotations":{%q:null}}}`, holdOnDstLauncherPodCreationAnnotation)))
+			// On failure, remove the test's migration block so it does not keep
+			// migration pending and delay VM finalizer cleanup during namespace deletion.
+			DeferCleanup(func(cleanupCtx SpecContext) {
+				if err := crClient.Patch(cleanupCtx, vmi, unblockPatch); err != nil {
+					e2eframework.Logf("failed to unblock migration target preparation: %v", err)
+				}
+			}, NodeTimeout(time.Minute))
+			sourceNode := vmi.Status.NodeName
+			vmim := liveMigrateVirtualMachine(vmi.Name)
+
+			Eventually(ctx, func(g Gomega) {
+				g.Expect(crClient.Get(ctx, crclient.ObjectKeyFromObject(vmim), vmim)).To(Succeed())
+				g.Expect(vmim.Status.Phase).To(Equal(kubevirtv1.MigrationPreparingTarget))
+			}).WithTimeout(2 * time.Minute).WithPolling(time.Second).Should(Succeed())
+
+			Expect(crClient.Get(ctx, crclient.ObjectKeyFromObject(vmi), vmi)).To(Succeed())
+			state := vmi.Status.MigrationState
+			Expect(state).NotTo(BeNil())
+			Expect(state.TargetNode).NotTo(BeEmpty())
+			Expect(state.TargetPod).NotTo(BeEmpty())
+			targetNode, targetPod := state.TargetNode, state.TargetPod
+			targetLSP := util.GetUserDefinedNetworkLogicalPortName(namespace, targetPod, fmt.Sprintf("%s/%s", namespace, nadName))
+
+			podsByNode, err := ovnkubeNodePodsByNode(ctx, fr)
+			Expect(err).NotTo(HaveOccurred(), "failed to list ovnkube-node pods")
+			pod, ok := podsByNode[targetNode]
+			Expect(ok).To(BeTrue(), "should find ovnkube-node pod on node %s", targetNode)
+			ovnPod := pod.Name
+			execNorthd := func(cmd ...string) (string, error) {
+				execCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+				defer cancel()
+				stdout, stderr, err := e2epod.Exec(fr.TContext(execCtx), e2epod.ExecOptions{
+					Command: cmd, Namespace: deploymentconfig.Get().OVNKubernetesNamespace(),
+					PodName: ovnPod, ContainerName: "ovn-northd",
+					CaptureStdout: true, CaptureStderr: true,
+				})
+				if err != nil {
+					return "", fmt.Errorf("northd command %q failed: %w, stderr: %q", cmd, err, stderr)
+				}
+				return strings.TrimSpace(stdout), nil
+			}
+
+			By("waiting for the blocked migration target's logical switch port to be disabled")
+			Eventually(func(g Gomega) string {
+				output, err := execNorthd("ovn-nbctl", "--if-exists", "get", "logical-switch-port", targetLSP, "enabled")
+				g.Expect(err).NotTo(HaveOccurred())
+				return output
+			}).WithTimeout(time.Minute).WithPolling(time.Second).Should(Equal("false"))
+
+			By("requesting one northd recompute before unblocking migration target preparation")
+			output, err = execNorthd("ovn-appctl", "-t", "ovn-northd", "inc-engine/recompute")
+			Expect(err).NotTo(HaveOccurred(), "recompute request failed: %s", output)
+			Expect(crClient.Patch(ctx, vmi, unblockPatch)).To(Succeed())
+
+			checkLiveMigrationSucceeded(vmi.Name, sourceNode, kubevirtv1.MigrationPreCopy)
+
+			for _, peerPod := range peerPods {
+				By(fmt.Sprintf("checking fresh neighbor resolution toward the VM from node %s after migration", peerPod.Spec.NodeName))
+				output, err = pingVMFromPeerPod(ctx, peerPod, cidrs)
+				Expect(err).NotTo(HaveOccurred(), output)
+			}
+		})
+
 		It("should start multiple VMs with same hostname", func(ctx SpecContext) {
 			By("setting up the localnet underlay")
 			cudn, networkName := kubevirt.GenerateCUDN(namespace, "net1", udnv1.NetworkTopologyLocalnet, udnv1.NetworkRoleSecondary, udnv1.DualStackCIDRs{})
