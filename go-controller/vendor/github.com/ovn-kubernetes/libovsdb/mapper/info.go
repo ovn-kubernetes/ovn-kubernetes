@@ -74,7 +74,7 @@ func (i *Info) SetField(column string, value any) error {
 // ColumnByPtr returns the column name that corresponds to the field by the field's pointer
 func (i *Info) ColumnByPtr(fieldPtr any) (string, error) {
 	fieldPtrVal := reflect.ValueOf(fieldPtr)
-	if fieldPtrVal.Kind() != reflect.Ptr {
+	if fieldPtrVal.Kind() != reflect.Pointer {
 		return "", ovsdb.NewErrWrongType("ColumnByPointer", "pointer to a field in the struct", fieldPtr)
 	}
 	offset := fieldPtrVal.Pointer() - reflect.ValueOf(i.Obj).Pointer()
@@ -127,7 +127,7 @@ OUTER:
 // NewInfo creates a MapperInfo structure around an object based on a given table schema
 func NewInfo(tableName string, table *ovsdb.TableSchema, obj any) (*Info, error) {
 	objPtrVal := reflect.ValueOf(obj)
-	if objPtrVal.Type().Kind() != reflect.Ptr {
+	if objPtrVal.Type().Kind() != reflect.Pointer {
 		return nil, ovsdb.NewErrWrongType("NewMapperInfo", "pointer to a struct", obj)
 	}
 	objVal := reflect.Indirect(objPtrVal)

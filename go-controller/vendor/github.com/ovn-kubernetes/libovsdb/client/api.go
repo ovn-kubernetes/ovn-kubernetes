@@ -27,6 +27,14 @@ type API interface {
 	// ConditionFromFunc(func(l *LogicalSwitch) bool { return l.Enabled })
 	WhereCache(predicate any) ConditionalAPI
 
+	// WhereCacheByUUIDs filters cached rows using a predicate limited to the
+	// supplied UUIDs. The predicate must accept a Model implementation and
+	// return a boolean. Missing UUIDs are ignored, duplicate UUIDs are evaluated
+	// once, and an empty UUID list matches no rows.
+	//
+	// Like WhereCache, the result can be used for List or server-side operations.
+	WhereCacheByUUIDs(predicate any, uuids ...string) ConditionalAPI
+
 	// Create a ConditionalAPI from a Model's index data, where operations
 	// apply to elements that match the values provided in one or more
 	// model.Models according to the indexes. All provided Models must be
@@ -128,7 +136,7 @@ func (a api) List(ctx context.Context, result any) error {
 	}
 
 	resultPtr := reflect.ValueOf(result)
-	if resultPtr.Type().Kind() != reflect.Ptr {
+	if resultPtr.Type().Kind() != reflect.Pointer {
 		return &ErrWrongType{resultPtr.Type(), "Expected pointer to slice of valid Models"}
 	}
 
@@ -141,7 +149,7 @@ func (a api) List(ctx context.Context, result any) error {
 	// structs
 	var appendValue func(reflect.Value)
 	var m model.Model
-	if resultVal.Type().Elem().Kind() == reflect.Ptr {
+	if resultVal.Type().Elem().Kind() == reflect.Pointer {
 		m = reflect.New(resultVal.Type().Elem().Elem()).Interface()
 		appendValue = func(v reflect.Value) {
 			resultVal.Set(reflect.Append(resultVal, v))
@@ -158,9 +166,14 @@ func (a api) List(ctx context.Context, result any) error {
 		return err
 	}
 
-	if a.cond != nil && a.cond.Table() != table {
-		return &ErrWrongType{resultPtr.Type(),
-			fmt.Sprintf("Table derived from input type (%s) does not match Table from Condition (%s)", table, a.cond.Table())}
+	if a.cond != nil {
+		if errCond, ok := a.cond.(*errorConditional); ok {
+			return errCond.err
+		}
+		if a.cond.Table() != table {
+			return &ErrWrongType{resultPtr.Type(),
+				fmt.Sprintf("Table derived from input type (%s) does not match Table from Condition (%s)", table, a.cond.Table())}
+		}
 	}
 
 	tableCache := a.cache.Table(table)
@@ -219,6 +232,11 @@ func (a api) WhereCache(predicate any) ConditionalAPI {
 	return newConditionalAPI(a.cache, a.conditionFromFunc(predicate), a.logger, a.validateModel, a.withReadLock)
 }
 
+// WhereCacheByUUIDs filters cached rows using a predicate limited to the supplied UUIDs.
+func (a api) WhereCacheByUUIDs(predicate any, uuids ...string) ConditionalAPI {
+	return newConditionalAPI(a.cache, a.conditionFromFuncByUUIDs(predicate, uuids), a.logger, a.validateModel, a.withReadLock)
+}
+
 // Conditional interface implementation
 // FromFunc returns a Condition from a function
 func (a api) conditionFromFunc(predicate any) Conditional {
@@ -228,6 +246,20 @@ func (a api) conditionFromFunc(predicate any) Conditional {
 	}
 
 	condition, err := newPredicateConditional(table, a.cache, predicate)
+	if err != nil {
+		return newErrorConditional(err)
+	}
+	return condition
+}
+
+// conditionFromFuncByUUIDs returns a UUID-limited predicate condition.
+func (a api) conditionFromFuncByUUIDs(predicate any, uuids []string) Conditional {
+	table, err := a.getTableFromFunc(predicate)
+	if err != nil {
+		return newErrorConditional(err)
+	}
+
+	condition, err := newPredicateConditionalByUUIDs(table, a.cache, predicate, uuids)
 	if err != nil {
 		return newErrorConditional(err)
 	}
@@ -622,6 +654,9 @@ func (a api) getTableFromModel(m any) (string, error) {
 	if _, ok := m.(model.Model); !ok {
 		return "", &ErrWrongType{reflect.TypeOf(m), "Type does not implement Model interface"}
 	}
+	if a.cache == nil {
+		return "", ErrNotConnected
+	}
 	table := a.cache.DatabaseModel().FindTable(reflect.TypeOf(m))
 	if table == "" {
 		return "", &ErrWrongType{reflect.TypeOf(m), "Model not found in Database Model"}
@@ -636,6 +671,9 @@ func (a api) getTableFromFunc(predicate any) (string, error) {
 	if predType == nil || predType.Kind() != reflect.Func {
 		return "", &ErrWrongType{predType, "Expected function"}
 	}
+	if reflect.ValueOf(predicate).IsNil() {
+		return "", &ErrWrongType{predType, "Expected non-nil function"}
+	}
 	if predType.NumIn() != 1 || predType.NumOut() != 1 || predType.Out(0).Kind() != reflect.Bool {
 		return "", &ErrWrongType{predType, "Expected func(Model) bool"}
 	}
@@ -645,6 +683,9 @@ func (a api) getTableFromFunc(predicate any) (string, error) {
 	if !modelType.Implements(modelInterface) {
 		return "", &ErrWrongType{predType,
 			fmt.Sprintf("Type %s does not implement Model interface", modelType.String())}
+	}
+	if a.cache == nil {
+		return "", ErrNotConnected
 	}
 
 	table := a.cache.DatabaseModel().FindTable(modelType)
