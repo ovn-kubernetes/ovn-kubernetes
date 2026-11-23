@@ -5,7 +5,9 @@ supported versions.
 
 | OVN-Kubernetes release | OVN release | nft binary | multus | CNI spec | k8s  |
 |------------------------|-------------|------------|--------|----------|------|
-| master                 | 26.03       | 1.0.1+     | v4.1.3 | 1.1.0    | 1.33+ |
+| master                 | 26.09       | 1.0.1+     | v4.1.3 | 1.1.0    | 1.37 |
+| 1.4                    | 26.03       | 1.0.1+     | v4.1.3 | 1.1.0    | 1.36 |
+| 1.3                    | 25.09       | 1.0.1+     | v4.1.3 | 1.1.0    | 1.35 |
 | 1.2                    | 25.09       | 1.0.1+     | v4.1.3 | 0.4.0    | 1.34 |
 | 1.1                    | 25.03       | 1.0.1+     | v4.1.3 | 0.4.0    | 1.33 |
 | 1.0                    | 24.03       | -          | v4.1.0 | 0.4.0    | 1.29 |
@@ -32,11 +34,13 @@ For kubelet network probes to work with UDN pods, the following are required:
 - [Route Advertisements feature link](bgp-integration/route-advertisements.md)
 - [No-overlay feature link](bgp-integration/no-overlay.md)
 
-| OVN-Kubernetes release | frr-k8s | frr  | 
-|------------------------|---------|------|
-| master                 | v0.0.21 | 10.4 |
-| 1.2                    | v0.0.17 | 9.1  |
-| 1.1                    | v0.0.17 | 9.1  |
+| OVN-Kubernetes release | frr-k8s                            | frr  |
+|------------------------|------------------------------------|------|
+| master                 | v0.0.0-20260603082256-b43efcb206be | 10.6 |
+| 1.4                    | v0.0.0-20260603082256-b43efcb206be | 10.6 |
+| 1.3                    | v0.0.21                            | 10.6 |
+| 1.2                    | v0.0.17                            | 9.1  |
+| 1.1                    | v0.0.17                            | 9.1  |
 
 ## OVN Observability
 
