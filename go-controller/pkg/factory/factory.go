@@ -5,6 +5,7 @@ package factory
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math/rand/v2"
 	"reflect"
@@ -21,6 +22,7 @@ import (
 	mnpinformerfactory "github.com/k8snetworkplumbingwg/multi-networkpolicy/pkg/client/informers/externalversions"
 	mnplister "github.com/k8snetworkplumbingwg/multi-networkpolicy/pkg/client/listers/k8s.cni.cncf.io/v1beta1"
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
+	nadclient "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned"
 	nadscheme "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/scheme"
 	nadinformerfactory "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/informers/externalversions"
 	nadinformer "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/informers/externalversions/k8s.cni.cncf.io/v1"
@@ -528,10 +530,13 @@ func NewOVNKubeControllerWatchFactory(ovnClientset *util.OVNKubeControllerClient
 
 	if config.OVNKubernetesFeature.EnableMultiNetwork {
 		wf.nadFactory = nadinformerfactory.NewSharedInformerFactory(ovnClientset.NetworkAttchDefClient, resyncInterval)
+		wf.nadFactory.InformerFor(&nadapi.NetworkAttachmentDefinition{}, func(c nadclient.Interface, resync time.Duration) cache.SharedIndexInformer {
+			return nadinformer.NewNetworkAttachmentDefinitionInformer(c, metav1.NamespaceAll, resync, nadIndexers())
+		})
 		wf.informers[NetworkAttachmentDefinitionType], err = newQueuedInformer(eventQueueSize, NetworkAttachmentDefinitionType,
 			wf.nadFactory.K8sCniCncfIo().V1().NetworkAttachmentDefinitions().Informer(), wf.stopChan, minNumEventQueues)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to create NAD queued informer: %w", err)
 		}
 
 	}
@@ -966,13 +971,16 @@ func NewNodeWatchFactory(ovnClientset *util.OVNNodeClientset, nodeName string) (
 	// need to configure OVS interfaces for Pods on secondary networks in the DPU mode
 	// need to know what is the primary network for a namespace on the CNI side, which
 	// needs the NAD factory whenever the UDN feature is used.
-	if config.OVNKubernetesFeature.EnableMultiNetwork && (config.OVNKubernetesFeature.EnableNetworkSegmentation || config.IsModeDPU()) {
+	if config.OVNKubernetesFeature.EnableMultiNetwork && (config.OVNKubernetesFeature.EnableNetworkSegmentation || config.IsModeDPU() || util.IsRouteAdvertisementsEnabled()) {
 		wf.nadFactory = nadinformerfactory.NewSharedInformerFactory(ovnClientset.NetworkAttchDefClient, resyncInterval)
+		wf.nadFactory.InformerFor(&nadapi.NetworkAttachmentDefinition{}, func(c nadclient.Interface, resync time.Duration) cache.SharedIndexInformer {
+			return nadinformer.NewNetworkAttachmentDefinitionInformer(c, metav1.NamespaceAll, resync, nadIndexers())
+		})
 		wf.informers[NetworkAttachmentDefinitionType], err = newQueuedInformer(eventQueueSize,
 			NetworkAttachmentDefinitionType, wf.nadFactory.K8sCniCncfIo().V1().NetworkAttachmentDefinitions().Informer(),
 			wf.stopChan, minNumEventQueues)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to create NAD queued informer: %w", err)
 		}
 	}
 
@@ -1140,6 +1148,9 @@ func NewClusterManagerWatchFactory(ovnClientset *util.OVNClusterManagerClientset
 
 	if config.OVNKubernetesFeature.EnableMultiNetwork {
 		wf.nadFactory = nadinformerfactory.NewSharedInformerFactory(ovnClientset.NetworkAttchDefClient, resyncInterval)
+		wf.nadFactory.InformerFor(&nadapi.NetworkAttachmentDefinition{}, func(c nadclient.Interface, resync time.Duration) cache.SharedIndexInformer {
+			return nadinformer.NewNetworkAttachmentDefinitionInformer(c, metav1.NamespaceAll, resync, nadIndexers())
+		})
 		wf.informers[NetworkAttachmentDefinitionType], err = newQueuedInformer(eventQueueSize,
 			NetworkAttachmentDefinitionType,
 			wf.nadFactory.K8sCniCncfIo().V1().NetworkAttachmentDefinitions().Informer(),
@@ -2127,4 +2138,55 @@ func getEndpointSliceSelector() func(options *metav1.ListOptions) {
 		endpointSliceSelector = noHeadlessServiceSelector()
 	}
 	return endpointSliceSelector
+}
+
+// routeAdvertisementsNADIndex indexes NADs by their RouteAdvertisements references.
+const routeAdvertisementsNADIndex = "route-advertisements"
+
+// nadIndexers returns the indexes used by the NAD informers. The
+// RouteAdvertisements index is only registered when route advertisements are
+// enabled, since only the network controllers consume it in that case.
+func nadIndexers() cache.Indexers {
+	indexers := cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc}
+	if util.IsRouteAdvertisementsEnabled() {
+		indexers[routeAdvertisementsNADIndex] = nadRouteAdvertisementsIndex
+	}
+	return indexers
+}
+
+// nadRouteAdvertisementsIndex indexes each NAD under the RA names recorded in
+// its annotation. These annotations reflect selection resolved by the RA
+// controller, so consumers do not need to evaluate RA network selectors again.
+// The informer cache maintains the index as NADs change or are deleted.
+func nadRouteAdvertisementsIndex(obj interface{}) ([]string, error) {
+	nad := obj.(*nadapi.NetworkAttachmentDefinition)
+	annotation := nad.Annotations[types.OvnRouteAdvertisementsKey]
+	if annotation == "" {
+		return nil, nil
+	}
+	var names []string
+	if err := json.Unmarshal([]byte(annotation), &names); err != nil {
+		// Invalid annotations must not break informer cache updates. Network
+		// reconciliation reports the error and retries the network.
+		klog.Errorf("Failed to index route advertisements for NAD %s/%s: %v", nad.Namespace, nad.Name, err)
+		return nil, nil
+	}
+	return names, nil
+}
+
+// GetNADsForRouteAdvertisement returns the NADs referencing raName.
+// Returned NADs are read-only objects from the informer cache.
+func GetNADsForRouteAdvertisement(indexer cache.Indexer, raName string) ([]*nadapi.NetworkAttachmentDefinition, error) {
+	if !util.IsRouteAdvertisementsEnabled() {
+		return nil, fmt.Errorf("cannot look up NADs for route advertisement %q: route advertisements are disabled", raName)
+	}
+	objects, err := indexer.ByIndex(routeAdvertisementsNADIndex, raName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to look up NADs in index %q: %w", routeAdvertisementsNADIndex, err)
+	}
+	nads := make([]*nadapi.NetworkAttachmentDefinition, 0, len(objects))
+	for _, obj := range objects {
+		nads = append(nads, obj.(*nadapi.NetworkAttachmentDefinition))
+	}
+	return nads, nil
 }
