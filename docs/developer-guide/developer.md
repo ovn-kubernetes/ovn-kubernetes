@@ -32,6 +32,55 @@ forget to update the `OVN_SCHEMA_VERSION` in our `Makefile` which is used to dow
 If that version seems to be outdated, probably best to update that as well and re-generate the schema
 bindings.
 
+## Working with the local OVS database
+
+Node, CNI, and hybrid-overlay code use the typed `pkg/vswitchd` models and
+`pkg/libovsdb/ops` helpers to read and update the local OVS database. Pass the
+component's OVS client to these helpers. OpenFlow operations and daemon control
+commands still use `ovs-ofctl` and `ovs-appctl`.
+
+An OVSDB transaction commits configuration before `ovs-vswitchd` necessarily
+applies it. Use `TransactAndCheckAndWaitForVSwitchd` when the next step needs
+the resulting Linux device or OVS port. CNI ADD instead waits for the interface's
+`ovn-installed` readiness signal, which also covers OVN's flow installation.
+Keep waits bounded and honor request cancellation where supported.
+The wait-aware port deletion helper also waits for pending configuration when
+the port is already absent, so retrying a canceled deletion wait remains safe.
+
+CNI bandwidth changes are scoped to the current attachment. Repeating ADD with
+a zero bandwidth limit removes that attachment's limit while preserving both
+ingress and egress limits on other attachments in the sandbox. Cleanup checks
+port and sandbox ownership before changing OVS or the host link, including
+rollback after a rejected ADD.
+
+Representor ADD and DEL serialize ownership and Linux link changes with a
+per-interface file lock shared by the CNI processes and DPU controller. Lock
+files live in `.<socket-name>.ovn-kubernetes-locks/` beside the local OVS Unix
+socket, whose directory must be shared between these processes. Files remain
+in place after unlocking to avoid creating competing locks on different inodes;
+process exit releases the kernel lock. After acquiring it, read ownership from
+OVS directly because another client's monitor may still show the old sandbox.
+Release the lock before waiting for OVN flow installation. Ordinary veth
+attachments do not use these locks.
+
+Periodic failed-ofport cleanup only removes same-named, single-interface pod
+ports on `br-int` with sandbox, pod UID, and logical interface ownership metadata.
+Bonds, administrator-owned ports, and ports on other bridges remain for their
+owner to recover. The deletion transaction checks that the failed state and
+ownership have not changed since the snapshot.
+
+The unprivileged CNI shim creates a short-lived OVS client with monitors limited
+to the tables and columns needed by ADD or DEL. ADD shares its client across
+the default and primary user-defined network attachments; DPU-host requests
+do not connect to local OVS. Close the client when the request finishes.
+
+For unit tests, use `pkg/testing/libovsdb.NewOVSTestHarness` and seed related
+Bridge, Port, and Interface rows. Tests that wait for `ovs-vswitchd` can use
+`EmulateVSwitchdConfig`; call its returned stop function before cleaning up the
+harness. It waits for the emulator to exit, but does not create Linux devices
+or install flows. Use the existing netlink and OpenFlow test fixtures for those
+effects.
+
 ## Generating CRD yamls using codegen
 
 In order to generate the latest yaml files for a given CRD or to add a new CRD, once
