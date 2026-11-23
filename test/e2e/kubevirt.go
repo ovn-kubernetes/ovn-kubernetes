@@ -1205,7 +1205,7 @@ config:
 			return ips, nil
 		}
 
-		createIperfServerPods = func(nodes []corev1.Node, udnName string, role udnv1.NetworkRole, staticSubnets []string) ([]*corev1.Pod, error) {
+		createNetshootTestPods = func(nodes []corev1.Node, udnName string, role udnv1.NetworkRole, staticSubnets []string, script string) ([]*corev1.Pod, error) {
 			var pods []*corev1.Pod
 			for i, node := range nodes {
 				var nse *nadapi.NetworkSelectionElement
@@ -1219,12 +1219,13 @@ config:
 						IPRequest: staticIPs,
 					}
 				}
-				pod, err := createPod(fr, "testpod-"+sanitizeNodeName(node.Name), node.Name, namespace, []string{"bash", "-c"}, map[string]string{}, func(pod *corev1.Pod) {
+				podName := "testpod-" + sanitizeNodeName(node.Name) + "-" + e2eframework.RandomSuffix()
+				pod, err := createPod(fr, podName, node.Name, namespace, []string{"bash", "-c"}, map[string]string{}, func(pod *corev1.Pod) {
 					if nse != nil {
 						pod.Annotations = networkSelectionElements(*nse)
 					}
 					pod.Spec.Containers[0].Image = images.Netshoot()
-					pod.Spec.Containers[0].Args = []string{iperfServerScript + "\n sleep infinity"}
+					pod.Spec.Containers[0].Args = []string{script}
 				})
 				if err != nil {
 					return nil, err
@@ -1232,6 +1233,10 @@ config:
 				pods = append(pods, pod)
 			}
 			return pods, nil
+		}
+
+		createIperfServerPods = func(nodes []corev1.Node, udnName string, role udnv1.NetworkRole, staticSubnets []string) ([]*corev1.Pod, error) {
+			return createNetshootTestPods(nodes, udnName, role, staticSubnets, iperfServerScript+"\n sleep infinity")
 		}
 
 		waitForPodsCondition = func(pods []*corev1.Pod, conditionFn func(g Gomega, pod *corev1.Pod)) {
