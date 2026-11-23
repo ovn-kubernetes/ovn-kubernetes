@@ -715,7 +715,7 @@ func ConfigureOVS(ctx context.Context, ovsClient client.Client, namespace, podNa
 		return err
 	} else if exists {
 		if existingIfaceID != ifaceID {
-			return fmt.Errorf("OVS port %s was added for iface-id (%s), now readding it for (%s)", hostIfaceName, existingIfaceID, ifaceID)
+			return fmt.Errorf("OVS port %s was added for iface-id (%s), now re-adding it for (%s)", hostIfaceName, existingIfaceID, ifaceID)
 		}
 		if existingNADKey != ifInfo.NADKey {
 			return fmt.Errorf("OVS port %s was added for NAD (%s), expect (%s)", hostIfaceName, existingNADKey, ifInfo.NADKey)
