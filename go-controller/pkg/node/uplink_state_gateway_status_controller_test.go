@@ -15,7 +15,6 @@ import (
 	"github.com/onsi/gomega"
 	"github.com/vishvananda/netlink"
 
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -1165,8 +1164,8 @@ func TestUDNUplinkStateControllerFiltersReadinessUpdates(t *testing.T) {
 	)
 	network := uplinkGatewayNetInfo(t, "red", uplinkName)
 	gateway := &UserDefinedNetworkGateway{
-		NetInfo: network,
-		node:    &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: nodeName}},
+		NetInfo:  network,
+		nodeName: nodeName,
 	}
 
 	oldState := newUplinkStateFixture(uplinkName, nodeName, resolvedTrueCondition())
@@ -1252,7 +1251,7 @@ func TestUDNUplinkStateControllerRecovery(t *testing.T) {
 
 			udnGateway, err := NewUserDefinedNetworkGateway(
 				network,
-				&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: nodeName}},
+				nodeName,
 				emptyNodeInformer(),
 				nil,
 				nil,
