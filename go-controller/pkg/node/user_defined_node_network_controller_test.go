@@ -118,10 +118,8 @@ var _ = Describe("UserDefinedNodeNetworkController", func() {
 		cnnci := CommonNodeNetworkControllerInfo{name: "worker1", watchFactory: &factoryMock}
 		factoryMock.On("GetNode", "worker1").Return(nodeList[0], nil)
 		factoryMock.On("GetNodes").Return(nodeList, nil)
-		nodeInformer := coreinformermocks.NodeInformer{}
-		factoryMock.On("NodeCoreInformer").Return(&nodeInformer)
-		nodeLister := v1mocks.NodeLister{}
-		nodeInformer.On("Lister").Return(&nodeLister)
+		nodeInformer := nodeInformerWithNode(Default, nodeList[0])
+		factoryMock.On("NodeCoreInformer").Return(nodeInformer)
 		uplinkFactory := uplinkinformerfactory.NewSharedInformerFactory(
 			uplinkfake.NewSimpleClientset(),
 			time.Second,
