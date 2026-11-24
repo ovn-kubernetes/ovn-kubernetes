@@ -14,6 +14,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/feature"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/images"
@@ -1428,6 +1430,9 @@ func setupGatewayContainers(f *framework.Framework, providerCtx infraapi.Context
 			setupListenersOrDie(gwContainer, addressesv6.targetIPs[0])
 		}
 	}
+	if testIPv6 && network.Name() != "host" {
+		advertiseGatewayIPv6Bindings(f, node.Name, network, gwContainers)
+	}
 	if setupBFD {
 		for _, gwContainer := range gwContainers {
 			setupBFDOnExternalContainer(network, gwContainer, nodes.Items)
@@ -1435,6 +1440,85 @@ func setupGatewayContainers(f *framework.Framework, providerCtx infraapi.Context
 	}
 
 	return gwContainers, addressesv4, addressesv6
+}
+
+// advertiseGatewayIPv6Bindings replaces neighbors left by earlier containers
+// reusing these addresses. Check OVN itself, not the host kernel neighbor table.
+func advertiseGatewayIPv6Bindings(f *framework.Framework, nodeName string, network infraapi.Network, gateways []infraapi.ExternalContainer) {
+	ginkgo.By("Advertising external gateway global IPv6 addresses and waiting for OVN MAC bindings")
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	node, err := f.ClientSet.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
+	cancel()
+	framework.ExpectNoError(err, "failed to get source node %s", nodeName)
+	gatewayConfig, err := util.ParseNodeL3GatewayAnnotation(node)
+	framework.ExpectNoError(err, "failed to parse source node gateway configuration")
+	port := types.GWRouterToExtSwitchPrefix + types.GWRouterPrefix + nodeName
+	if gatewayConfig.EgressGWInterfaceID != "" {
+		port = types.EgressGWSwitchPrefix + port
+	}
+
+	ns := deploymentconfig.Get().OVNKubernetesNamespace()
+	ctx, cancel = context.WithTimeout(context.Background(), time.Minute)
+	pods, err := f.ClientSet.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{})
+	cancel()
+	framework.ExpectNoError(err, "failed to locate OVN database for source node %s", nodeName)
+	type database struct{ pod, container string }
+	var databases []database
+	for _, pod := range pods.Items {
+		if pod.Status.Phase != corev1.PodRunning {
+			continue
+		}
+		// Interconnect keeps the source gateway router in its node's database;
+		// centralized deployments put it in the dedicated database pods instead.
+		if !(pod.Labels["app"] == "ovnkube-node" && pod.Spec.NodeName == nodeName || pod.Labels["ovn-db-pod"] == "true") {
+			continue
+		}
+		db := database{pod: pod.Name}
+		for _, container := range pod.Spec.Containers {
+			if container.Name == "sbdb" || container.Name == "sb-ovsdb" {
+				db.container = container.Name
+				break
+			}
+		}
+		// In interconnect only query this node's database, even when all node
+		// pods also carry the ovn-db-pod label.
+		if pod.Labels["app"] == "ovnkube-node" && pod.Spec.NodeName != nodeName {
+			continue
+		}
+		databases = append(databases, db)
+	}
+	gomega.Expect(databases).NotTo(gomega.BeEmpty(), "no OVN database found for source node %s", nodeName)
+	for _, gateway := range gateways {
+		info, err := infraprovider.Get().GetExternalContainerNetworkInterface(gateway, network)
+		framework.ExpectNoError(err, "failed to inspect gateway %s", gateway.Name)
+		gomega.Expect(info.IPv6).NotTo(gomega.BeEmpty(), "missing global IPv6 address for gateway %s", gateway.Name)
+		gomega.Expect(info.MAC).NotTo(gomega.BeEmpty(), "missing MAC address for gateway %s", gateway.Name)
+		gomega.Eventually(func() error {
+			_, err := infraprovider.Get().ExecExternalContainerCommand(gateway, []string{"ndptool", "-t", "na", "-U", "-i", infraprovider.Get().ExternalContainerPrimaryInterfaceName(), "-T", info.IPv6, "send"})
+			if err != nil {
+				return fmt.Errorf("advertise %s on %s: %w", info.IPv6, gateway.Name, err)
+			}
+			var observed []string
+			for _, db := range databases {
+				args := []string{"exec", db.pod}
+				if db.container != "" {
+					args = append(args, "-c", db.container)
+				}
+				args = append(args, "--", "ovn-sbctl", "--timeout=5", "--bare", "--no-heading", "--columns=mac", "find", "MAC_Binding", "logical_port="+port, fmt.Sprintf("ip=%q", info.IPv6))
+				out, err := e2ekubectl.RunKubectl(ns, args...)
+				if err != nil {
+					observed = append(observed, fmt.Sprintf("%s: %v", db.pod, err))
+					continue
+				}
+				observed = append(observed, fmt.Sprintf("%s: %q", db.pod, strings.TrimSpace(out)))
+				if strings.EqualFold(strings.Trim(strings.TrimSpace(out), "\""), info.MAC) {
+					framework.Logf("OVN gateway IPv6 binding converged: node=%s ip=%s mac=%s database=%s", nodeName, info.IPv6, info.MAC, db.pod)
+					return nil
+				}
+			}
+			return fmt.Errorf("OVN gateway binding on %s for %s has not converged to %s: %v", nodeName, info.IPv6, info.MAC, observed)
+		}).WithTimeout(time.Minute).WithPolling(2 * time.Second).Should(gomega.Succeed())
+	}
 }
 
 func setupPolicyBasedGatewayPods(f *framework.Framework, nodes *corev1.NodeList, network infraapi.Network, pod1, pod2, ns string, cmd []string, addressesv4, addressesv6 gatewayTestIPs) []string {
