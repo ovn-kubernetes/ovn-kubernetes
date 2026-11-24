@@ -109,7 +109,7 @@ cd "$1"
 if [ "$2" = false ]; then touch failed; fi
 touch stop
 timeout 20 bash -c 'until [ -e stopped ]; do sleep 1; done'
-if [ "$2" = true ]; then rm -rf -- "$1"; fi
+if [ "$2" = true ]; then rm -f -- ./*.pcap*; fi
 `, "stop-migration-capture", dir, fmt.Sprint(passed)})
 			if err != nil {
 				framework.Logf("Stopping migration capture on %s: %v", pod.Spec.NodeName, err)

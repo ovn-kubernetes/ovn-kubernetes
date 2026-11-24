@@ -13,6 +13,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -291,6 +292,7 @@ var _ = Describe("Kubevirt Virtual Machines", feature.VirtualMachineSupport, fun
 		httpServerTestPods  = []*corev1.Pod{}
 		iperfServerTestPods = []*corev1.Pod{}
 		clientSet           kubernetes.Interface
+		peerProbeFailed     atomic.Bool
 		providerCtx         infraapi.Context
 
 		isDualStack = func() bool {
@@ -1342,7 +1344,7 @@ config:
 
 		JustAfterEach(func() {
 			if stopCapture != nil {
-				stopCapture(!CurrentSpecReport().Failed())
+				stopCapture(!CurrentSpecReport().Failed() && !peerProbeFailed.Load())
 				stopCapture = nil
 			}
 		})
@@ -1361,6 +1363,7 @@ config:
 				Skip("Post copy live migration explicitly skipped")
 			}
 			var err error
+			peerProbeFailed.Store(false)
 			stopCapture, err = d.MigrationCapture()
 			Expect(err).NotTo(HaveOccurred(), "start migration capture")
 

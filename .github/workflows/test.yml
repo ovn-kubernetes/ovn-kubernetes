@@ -814,9 +814,9 @@ jobs:
         elif [ "${{ matrix.target }}" == "external-gateway" ]; then
           make -C test control-plane WHAT="External Gateway"
         elif [ "${{ matrix.target }}" == "kv-live-migration" ]; then
-          # A fresh VM and namespace for each repetition. Keep the first failure.
-          KUBEVIRT_MIGRATION_DEBUG=true FLAKE_ATTEMPTS=1 E2E_REPEAT=9 TEST_TIMEOUT=110 \
-            make -C test control-plane WHAT="Kubevirt Virtual Machines with default pod network when live migration with pre-copy succeeds, should keep connectivity"
+          # Reproduce the same DHCP IPAM setup that preceded the failing migrations.
+          KUBEVIRT_MIGRATION_DEBUG=true FLAKE_ATTEMPTS=1 E2E_REPEAT=4 TEST_TIMEOUT=110 \
+            make -C test control-plane WHAT="Kubevirt Virtual Machines with default pod network when live migration with pre-copy succeeds, should keep connectivity|Localnet DHCP IPAM"
         elif [[ "${{ matrix.target }}" == network-segmentation* ]]; then
           make -C test control-plane WHAT="Network Segmentation"
           make -C test control-plane WHAT="ClusterNetworkConnect"
