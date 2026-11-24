@@ -249,7 +249,7 @@ var _ = ginkgo.Describe("External Gateway", feature.ExternalGateway, func() {
 				func(protocol string, addresses *gatewayTestIPs, gwPort, podPort int) {
 					ncCmd := func(sourcePort int, target string) []string {
 						if protocol == "tcp" {
-							return []string{"exec", srcPingPodName, "--", "bash", "-c", fmt.Sprintf("echo | nc -p %d -s %s -w 1 %s %d", sourcePort, addresses.srcPodIP, target, gwPort)}
+							return []string{"exec", srcPingPodName, "--", "bash", "-c", fmt.Sprintf("nc -d -p %d -s %s -w 1 %s %d", sourcePort, addresses.srcPodIP, target, gwPort)}
 						} else {
 							return []string{"exec", srcPingPodName, "--", "bash", "-c", fmt.Sprintf("echo | nc -p %d -s %s -w 1 -u %s %d", sourcePort, addresses.srcPodIP, target, gwPort)}
 						}
@@ -1361,14 +1361,15 @@ func setupGatewayContainers(f *framework.Framework, providerCtx infraapi.Context
 		framework.Fail("No ipv4 nor ipv6 addresses found in nodes and src pod")
 	}
 
-	// This sets up a listener that replies with the hostname, both on tcp and on udp
+	// This sets up listeners that reply with the hostname on TCP and UDP.
+	// Ncat keeps the TCP socket bound and runs hostname for each connection.
 	setupListenersOrDie := func(container infraapi.ExternalContainer, gwAddress string) {
 		_, err = infraprovider.Get().ExecExternalContainerCommand(container,
 			[]string{"bash", "-c", fmt.Sprintf("while true; do echo $(hostname) | nc -l -u -W 1 %s %d; done &", gwAddress, gwUDPPort)})
 		framework.ExpectNoError(err, "failed to setup UDP listener for %s on %s", gwAddress, container)
 
 		_, err = infraprovider.Get().ExecExternalContainerCommand(container,
-			[]string{"bash", "-c", fmt.Sprintf("while true; do echo $(hostname) | nc -l -N %s %d; done &", gwAddress, gwTCPPort)})
+			[]string{"bash", "-c", fmt.Sprintf("ncat --listen --keep-open --sh-exec hostname %s %d > /tmp/eg-tcp-hostname.log 2>&1 &", gwAddress, gwTCPPort)})
 		framework.ExpectNoError(err, "failed to setup TCP listener for %s on %s", gwAddress, container)
 	}
 
@@ -1782,7 +1783,7 @@ func hostNameForExternalContainer(container infraapi.ExternalContainer) string {
 func pokeHostnameViaNC(podName, namespace, protocol, target string, port int) string {
 	args := []string{"exec", podName, "--"}
 	if protocol == "tcp" {
-		args = append(args, "bash", "-c", fmt.Sprintf("echo | nc -w 1 -N %s %d", target, port))
+		args = append(args, "bash", "-c", fmt.Sprintf("nc -d -w 1 %s %d", target, port))
 	} else {
 		args = append(args, "bash", "-c", fmt.Sprintf("echo | nc -w 1 -u %s %d", target, port))
 	}
@@ -1824,7 +1825,7 @@ func pokeConntrackEntries(nodeName, podIP, protocol string, patterns []string) i
 // does not include but that external-gateway e2e needs.
 func prepareExternalGatewayContainer(container infraapi.ExternalContainer) {
 	_, err := infraprovider.Get().ExecExternalContainerCommand(container, []string{
-		"apk", "add", "--no-cache", "tcpdump", "iputils", "iproute2", "netcat-openbsd", "curl", "libndp",
+		"apk", "add", "--no-cache", "tcpdump", "iputils", "iproute2", "netcat-openbsd", "nmap-ncat", "curl", "libndp",
 	})
 	framework.ExpectNoError(err, "failed to install gateway tools on external gateway %s", container.Name)
 }
