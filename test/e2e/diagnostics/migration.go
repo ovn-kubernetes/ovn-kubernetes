@@ -50,7 +50,8 @@ kill -0 "${pids[0]}"
 declare -A captures=()
 while [ ! -e stop ]; do
   kill -0 "${pids[0]}"
-  interfaces=$(ovs-vsctl --timeout=5 --format=csv --no-headings --columns=name,external_ids list Interface)
+  # Bare data keeps OVS from quoting interface names that start with a digit.
+  interfaces=$(ovs-vsctl --timeout=5 --format=csv --data=bare --no-headings --columns=name,external_ids list Interface)
   while IFS=, read -r iface metadata; do
     case "$metadata" in
       *"iface-id=%[2]s_virt-launcher-"*|*"iface-id=%[2]s_testpod-"*) ;;
