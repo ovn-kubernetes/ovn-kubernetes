@@ -114,6 +114,86 @@ module.exports = async ({ github, context, core }) => {
     return allComments;
   }
 
+  /**
+   * Fetch and classify pending and failed check runs and commit statuses for a commit SHA.
+   * Keeps only the latest check run per name and ignores the area-merge check itself.
+   */
+  async function fetchCIStatus(ref) {
+    const allCheckRuns = [];
+    let checkPage = 1;
+    while (true) {
+      const { data } = await github.rest.checks.listForRef({
+        owner: context.repo.owner,
+        repo: context.repo.repo,
+        ref: ref,
+        per_page: 100,
+        page: checkPage,
+      });
+      allCheckRuns.push(...data.check_runs);
+      if (allCheckRuns.length >= data.total_count) break;
+      checkPage++;
+    }
+
+    // Deduplicate check runs by name, keeping only the most recent per name.
+    // GitHub returns all runs for a SHA including stale ones from earlier
+    // workflow invocations (e.g. cancelled runs before a close/reopen retry).
+    const latestByName = new Map();
+    for (const run of allCheckRuns) {
+      const existing = latestByName.get(run.name);
+      const runTime = new Date(run.started_at || run.created_at || 0).getTime();
+      const existingTime = existing ? new Date(existing.started_at || existing.created_at || 0).getTime() : 0;
+      if (!existing || runTime > existingTime) {
+        latestByName.set(run.name, run);
+      }
+    }
+    const checkRuns = Array.from(latestByName.values());
+
+    const { data: combinedStatus } = await github.rest.repos.getCombinedStatusForRef({
+      owner: context.repo.owner,
+      repo: context.repo.repo,
+      ref: ref,
+    });
+
+    const pendingChecks = [];
+    const failedChecks = [];
+
+    for (const run of checkRuns) {
+      if (run.name === 'area-merge') continue;
+      if (run.status !== 'completed') {
+        pendingChecks.push(run.name);
+      } else if (run.conclusion !== 'success' && run.conclusion !== 'neutral' && run.conclusion !== 'skipped') {
+        failedChecks.push(run.name);
+      }
+    }
+
+    // Gate on the aggregate state first — it covers ALL commit statuses
+    // regardless of pagination, so we never miss a failure or pending status.
+    // Then iterate the (possibly partial) statuses array for detailed names.
+    if (combinedStatus.state === 'failure') {
+      for (const status of combinedStatus.statuses) {
+        if (status.state === 'failure' || status.state === 'error') {
+          failedChecks.push(status.context);
+        }
+      }
+      if (failedChecks.length === 0) {
+        failedChecks.push('(commit status failure — details may be on a later page)');
+      }
+    } else if (combinedStatus.state === 'pending') {
+      for (const status of combinedStatus.statuses) {
+        if (status.state === 'pending') {
+          pendingChecks.push(status.context);
+        } else if (status.state === 'failure' || status.state === 'error') {
+          failedChecks.push(status.context);
+        }
+      }
+      if (pendingChecks.length === 0 && failedChecks.length === 0) {
+        pendingChecks.push('(commit status pending — details may be on a later page)');
+      }
+    }
+
+    return { pendingChecks, failedChecks };
+  }
+
   // --- Process each PR ---
   for (const prNumber of pullNumbers) {
     core.info(`Processing PR #${prNumber}`);
@@ -226,78 +306,7 @@ module.exports = async ({ github, context, core }) => {
 
     // Check CI status
     const ref = pr.head.sha;
-
-    const allCheckRuns = [];
-    let checkPage = 1;
-    while (true) {
-      const { data } = await github.rest.checks.listForRef({
-        owner: context.repo.owner,
-        repo: context.repo.repo,
-        ref: ref,
-        per_page: 100,
-        page: checkPage,
-      });
-      allCheckRuns.push(...data.check_runs);
-      if (allCheckRuns.length >= data.total_count) break;
-      checkPage++;
-    }
-
-    // Deduplicate check runs by name, keeping only the most recent per name.
-    // GitHub returns all runs for a SHA including stale ones from earlier
-    // workflow invocations (e.g. cancelled runs before a close/reopen retry).
-    const latestByName = new Map();
-    for (const run of allCheckRuns) {
-      const existing = latestByName.get(run.name);
-      const runTime = new Date(run.started_at || run.created_at || 0).getTime();
-      const existingTime = existing ? new Date(existing.started_at || existing.created_at || 0).getTime() : 0;
-      if (!existing || runTime > existingTime) {
-        latestByName.set(run.name, run);
-      }
-    }
-    const checkRuns = Array.from(latestByName.values());
-
-    const { data: combinedStatus } = await github.rest.repos.getCombinedStatusForRef({
-      owner: context.repo.owner,
-      repo: context.repo.repo,
-      ref: ref,
-    });
-
-    const pendingChecks = [];
-    const failedChecks = [];
-
-    for (const run of checkRuns) {
-      if (run.name === 'area-merge') continue;
-      if (run.status !== 'completed') {
-        pendingChecks.push(run.name);
-      } else if (run.conclusion !== 'success' && run.conclusion !== 'neutral' && run.conclusion !== 'skipped') {
-        failedChecks.push(run.name);
-      }
-    }
-
-    // Gate on the aggregate state first — it covers ALL commit statuses
-    // regardless of pagination, so we never miss a failure or pending status.
-    // Then iterate the (possibly partial) statuses array for detailed names.
-    if (combinedStatus.state === 'failure') {
-      for (const status of combinedStatus.statuses) {
-        if (status.state === 'failure' || status.state === 'error') {
-          failedChecks.push(status.context);
-        }
-      }
-      if (failedChecks.length === 0) {
-        failedChecks.push('(commit status failure — details may be on a later page)');
-      }
-    } else if (combinedStatus.state === 'pending') {
-      for (const status of combinedStatus.statuses) {
-        if (status.state === 'pending') {
-          pendingChecks.push(status.context);
-        } else if (status.state === 'failure' || status.state === 'error') {
-          failedChecks.push(status.context);
-        }
-      }
-      if (pendingChecks.length === 0 && failedChecks.length === 0) {
-        pendingChecks.push('(commit status pending — details may be on a later page)');
-      }
-    }
+    const { pendingChecks, failedChecks } = await fetchCIStatus(ref);
 
     if (failedChecks.length > 0) {
       core.info(`Failed checks: ${failedChecks.join(', ')}`);
