@@ -328,7 +328,7 @@ pushd e2e
 
 go mod download
 
-if [ "$ENABLE_EVPN" = true ] && [[ "${WHAT}" != "${KV_LIVE_MIGRATION_TESTS}"* ]]; then
+if [ "${E2E_REPEAT:-0}" -gt 0 ] || { [ "$ENABLE_EVPN" = true ] && [[ "${WHAT}" != "${KV_LIVE_MIGRATION_TESTS}"* ]]; }; then
   # EVPN tests are parallel-safe (unique per-test resource names, randomized
   # subnets). Use the ginkgo CLI so that -procs=3 spawns 3 coordinated worker
   # processes — one per DescribeTable entry.  go test cannot drive Ginkgo
@@ -336,8 +336,14 @@ if [ "$ENABLE_EVPN" = true ] && [[ "${WHAT}" != "${KV_LIVE_MIGRATION_TESTS}"* ]]
   # fan out the worker processes. Run the CLI from this module so its version
   # always matches the ginkgo library the suite is compiled with, independent
   # of the Kubernetes test tarball that provides /usr/local/bin/ginkgo.
+  procs=3
+  if [ "${E2E_REPEAT:-0}" -gt 0 ]; then
+    # Each migration attempt needs a separate VM and namespace.
+    procs=1
+  fi
   go tool ginkgo run \
-        -procs=3 \
+        -procs="$procs" \
+        --repeat="${E2E_REPEAT:-0}" \
         -v \
         --focus="${FOCUS:-.}" \
         --fail-on-empty \

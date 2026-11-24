@@ -63,6 +63,21 @@ import (
 	kvmigrationsv1alpha1 "kubevirt.io/api/migrations/v1alpha1"
 )
 
+// Read the peer's network namespace with the node's tools because the
+// HTTP container may not ship iproute2.
+func logMigrationPeerNeighbors(pod *corev1.Pod) {
+	output, err := infraprovider.Get().ExecK8NodeCommand(pod.Spec.NodeName, []string{"bash", "-c", `set -eu
+sandbox=$(crictl pods --namespace "$1" --name "^$2$" -s Ready -q)
+test -n "$sandbox"
+pid=$(crictl inspectp -o go-template --template '{{.info.pid}}' "$sandbox")
+test "$pid" -gt 1
+nsenter -t "$pid" -n ip route show
+nsenter -t "$pid" -n ip -4 neigh show
+nsenter -t "$pid" -n ip -6 neigh show
+`, "migration-peer-neighbors", pod.Namespace, pod.Name})
+	e2eframework.Logf("Peer routes and neighbors for %s on %s: %v\n%s", pod.Name, pod.Spec.NodeName, err, output)
+}
+
 func newControllerRuntimeClient() (crclient.Client, error) {
 	config, err := clientcmd.BuildConfigFromFlags("", os.Getenv("KUBECONFIG"))
 	if err != nil {
@@ -1336,7 +1351,9 @@ config:
 			if td.mode == kubevirtv1.MigrationPostCopy && os.Getenv("KUBEVIRT_SKIP_MIGRATE_POST_COPY") == "true" {
 				Skip("Post copy live migration explicitly skipped")
 			}
-			var err error
+			stopCapture, err := d.MigrationCapture()
+			Expect(err).NotTo(HaveOccurred(), "start migration capture")
+			defer func() { stopCapture(!CurrentSpecReport().Failed()) }()
 
 			d.ConntrackDumpingDaemonSet()
 			d.OVSFlowsDumpingDaemonSet(deploymentconfig.Get().ExternalBridgeName())
