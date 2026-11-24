@@ -347,3 +347,27 @@ test('workflow completion rechecks that the approver is an area maintainer for t
   assert.equal(f.merge.mock.callCount(), 0);
   assert.match(f.comments.at(-1).body, /not listed as an Area Maintainer/);
 });
+
+test('automatic retries report a set of failed checks once, explicit commands always get a reply', async t => {
+  const f = fixture(t, { waiting: true });
+  const posted = f.github.rest.issues.createComment.mock;
+  f.checks[0].conclusion = 'failure';
+  f.checks.push({ name: 'unit', status: 'completed', conclusion: 'failure' });
+  await f.run('workflow_run');
+  assert.match(f.comments.at(-1).body, /CI checks have failed:\n- `e2e`\n- `unit`\n/);
+  assert.match(f.comments.at(-1).body, /will merge automatically when all checks pass/);
+
+  // The next workflow to finish sees the same failures, listed in another order.
+  f.checks.reverse();
+  await f.run('workflow_run');
+  assert.equal(posted.callCount(), 1);
+
+  // A different set of failures is reported again.
+  f.checks.find(check => check.name === 'unit').conclusion = 'success';
+  await f.run('workflow_run');
+  assert.equal(posted.callCount(), 2);
+
+  await f.run('issue_comment');
+  assert.equal(posted.callCount(), 3);
+  assert.equal(f.merge.mock.callCount(), 0);
+});

@@ -427,7 +427,7 @@ module.exports = async ({ github, context, core }) => {
         c.body.includes(shaMarker)
       );
       if (!alreadyWaiting) {
-        await github.rest.issues.createComment({
+        const { data: waitingComment } = await github.rest.issues.createComment({
           owner: context.repo.owner,
           repo: context.repo.repo,
           issue_number: prNumber,
@@ -436,6 +436,7 @@ module.exports = async ({ github, context, core }) => {
             `Pending checks:\n` +
             pendingChecks.map(c => `- \`${c}\``).join('\n'),
         });
+        allComments.push(waitingComment);
 
         // The last completion retry may have skipped this PR before the marker
         // was visible. Recheck once after publishing it, using the approved SHA.
@@ -446,13 +447,29 @@ module.exports = async ({ github, context, core }) => {
 
     if (failedChecks.length > 0) {
       core.info(`Failed checks: ${failedChecks.join(', ')}`);
+      // Encode normalized names to avoid delimiter collisions and HTML comment terminators.
+      const failureKey = Buffer.from(JSON.stringify([...failedChecks].sort())).toString('base64url');
+      const failureMarker = `<!-- area-merge-failed-sha:${ref}:${failureKey} -->`;
+      if (!allComments) allComments = await fetchAllComments(prNumber);
+      if (context.eventName !== 'issue_comment' && allComments.some(c =>
+        c.user.login === botLogin && c.body.includes(failureMarker)
+      )) {
+        continue;
+      }
+      const alreadyWaiting = allComments.some(c =>
+        c.user.login === botLogin && c.body.includes(`<!-- area-merge-sha:${ref} -->`)
+      );
+      const guidance = alreadyWaiting
+        ? `Please fix or rerun the failed checks. This approved SHA will merge automatically when all checks pass. ` +
+          `If you push new commits, run \`/area-maintainer-approved\` again after review.`
+        : `Please fix the failures and run \`/area-maintainer-approved\` again.`;
       await github.rest.issues.createComment({
         owner: context.repo.owner,
         repo: context.repo.repo,
         issue_number: prNumber,
-        body: `Cannot merge via \`/area-maintainer-approved\`: the following CI checks have failed:\n` +
+        body: `${failureMarker}\nCannot merge via \`/area-maintainer-approved\`: the following CI checks have failed:\n` +
           failedChecks.map(c => `- \`${c}\``).join('\n') +
-          `\n\nPlease fix the failures and run \`/area-maintainer-approved\` again.`,
+          `\n\n${guidance}`,
       });
       continue;
     }

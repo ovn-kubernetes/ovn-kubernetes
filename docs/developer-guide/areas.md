@@ -89,6 +89,14 @@ a workflow completion, it looks up open PRs by source owner and branch, then
 verifies the source repository, branch, and head SHA before applying the
 same approval and CI checks.
 
+When CI fails, the bot reports the failed checks. Automatic retries suppress
+duplicate failure notifications for the same head SHA and set of failed
+checks; explicit `/area-maintainer-approved` commands still receive a
+response. If a waiting marker already exists for that SHA, rerunning the
+failed checks successfully allows a later completion event to trigger a merge
+without another approval. If there is no waiting marker, fix the failures
+and obtain another `/area-maintainer-approved` request.
+
 ```mermaid
 flowchart TD
     Comment["/area-maintainer-approved<br/>(human issue_comment)"] --> OpenCheck{"PR open?"}
@@ -107,7 +115,9 @@ flowchart TD
     HasWait -->|Yes| WaitNext["Wait for next<br/>CI completion retry"]
     HasWait -->|No| PostWait["Post waiting comment with<br/>SHA marker and recheck CI once"]
     PostWait --> CIState
-    CIState -->|"Any failed"| PostFail["Post failure comment"]
+    CIState -->|"Any failed"| FailDedup{"Retry with identical<br/>SHA + failure marker<br/>already posted?"}
+    FailDedup -->|Yes| SkipDup["Skip duplicate failure comment"]
+    FailDedup -->|No| PostFail["Post failure comment<br/>(rerunning failed checks can still<br/>auto-merge if waiting marker exists)"]
     CIState -->|"All passed"| Merge["Merge PR pinned to approved SHA"]
     Merge -->|Success| CommentMerged["Comment PR merged"]
     Merge -->|Error| CheckMerged{"PR already merged<br/>at approved SHA?"}
