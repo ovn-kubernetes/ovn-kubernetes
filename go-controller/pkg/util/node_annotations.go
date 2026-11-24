@@ -6,6 +6,7 @@ package util
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"net"
@@ -13,6 +14,7 @@ import (
 	"strconv"
 
 	"github.com/gaissmai/cidrtree"
+	jsonpatch "gopkg.in/evanphx/json-patch.v4"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -30,9 +32,10 @@ import (
 // relist-and-retry when patching node annotations via JSON Patch.
 //
 // JSON Patch "test" failures from the apiserver are surfaced as Invalid rather
-// than Conflict, so this retry path needs to handle both.
+// than Conflict. The client-go fake returns the original JSON Patch error, so
+// handle that form as well.
 func IsNodeAnnotationPatchRetryable(err error) bool {
-	return apierrors.IsConflict(err) || apierrors.IsInvalid(err)
+	return apierrors.IsConflict(err) || apierrors.IsInvalid(err) || errors.Is(err, jsonpatch.ErrTestFailed)
 }
 
 // This handles the annotations used by the node to pass information about its local

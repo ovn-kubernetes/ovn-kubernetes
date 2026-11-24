@@ -22,13 +22,16 @@ import (
 	"github.com/onsi/gomega"
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
+	jsonpatch "gopkg.in/evanphx/json-patch.v4"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8sruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes/fake"
+	ktesting "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/cache"
 	utilnet "k8s.io/utils/net"
 	"sigs.k8s.io/knftables"
@@ -405,6 +408,35 @@ func runSubControllers(testNS ns.NetNS, c *Controller, wg *sync.WaitGroup, stopC
 		gomega.Expect(err).ToNot(gomega.HaveOccurred())
 	}()
 }
+
+var _ = ginkgo.Describe("EgressIP annotation updates", func() {
+	ginkgo.It("retries a raw JSON Patch test failure", func() {
+		c, _, err := initController(nil, nil, nil, nodeConfig{
+			linkConfigs: []linkConfig{{
+				linkName: dummyLink1Name,
+				address:  []address{{egressIP1IPV6Compressed + "/128", true}},
+			}},
+		}, false, true, true)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+		patchAttempts := 0
+		kubeClient := c.kube.(*ovnkube.Kube).KClient.(*fake.Clientset)
+		kubeClient.Fake.PrependReactor("patch", "nodes", func(ktesting.Action) (bool, k8sruntime.Object, error) {
+			patchAttempts++
+			if patchAttempts == 1 {
+				return true, nil, fmt.Errorf("testing annotation value failed: %w", jsonpatch.ErrTestFailed)
+			}
+			return false, nil, nil
+		})
+
+		gomega.Expect(c.deleteIPFromAnnotation(egressIP1IPV6Compressed)).To(gomega.Succeed())
+		gomega.Expect(patchAttempts).To(gomega.Equal(2))
+		gomega.Eventually(func() (int, error) {
+			ips, err := c.getAnnotation()
+			return ips.Len(), err
+		}).Should(gomega.BeZero())
+	})
+})
 
 // FIXME(mk) - Within GH VM, if I need to create a new NetNs. I see the following error:
 // "failed to create new network namespace: mount --make-rshared /run/user/1001/netns failed: "operation not permitted""
