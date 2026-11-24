@@ -72,6 +72,12 @@ for (const [outcome, setup, merges, reply] of [
     f => { f.checks[0].conclusion = 'failure'; }, 0, /CI checks have failed:\n- `e2e`\n/],
   ['is blocked by a failed commit status',
     f => setCommitStatus(f, 'failure'), 0, /CI checks have failed:\n- `external-ci`\n/],
+  ['merges when check runs passed and there are no commit statuses',
+    () => {}, 1, /^PR merged by area maintainer @maintainer/],
+  ['waits when CI has not reported anything yet',
+    f => { f.checks.length = 0; }, 0, /^<!-- area-merge-sha:approved-sha -->.*- `\(no CI results reported yet\)`$/s],
+  ['waits when the only check run is the bot\'s own',
+    f => { f.checks[0].name = 'area-merge'; }, 0, /^<!-- area-merge-sha:approved-sha -->.*- `\(no CI results reported yet\)`$/s],
 ]) {
   test(`approval ${outcome}`, async t => {
     const f = fixture(t);

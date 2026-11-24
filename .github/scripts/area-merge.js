@@ -169,7 +169,10 @@ module.exports = async ({ github, context, core }) => {
     // Gate on the aggregate state first — it covers ALL commit statuses
     // regardless of pagination, so we never miss a failure or pending status.
     // Then iterate the (possibly partial) statuses array for detailed names.
-    if (combinedStatus.state === 'failure') {
+    // GitHub folds individual "error" statuses into the aggregate "failure" state,
+    // and returns state "pending" with total_count 0 when no commit statuses exist.
+    const totalStatuses = combinedStatus.total_count ?? combinedStatus.statuses.length;
+    if (combinedStatus.state === 'failure' || combinedStatus.state === 'error') {
       for (const status of combinedStatus.statuses) {
         if (status.state === 'failure' || status.state === 'error') {
           failedChecks.push(status.context);
@@ -178,7 +181,7 @@ module.exports = async ({ github, context, core }) => {
       if (failedChecks.length === 0) {
         failedChecks.push('(commit status failure — details may be on a later page)');
       }
-    } else if (combinedStatus.state === 'pending') {
+    } else if (combinedStatus.state === 'pending' && totalStatuses > 0) {
       for (const status of combinedStatus.statuses) {
         if (status.state === 'pending') {
           pendingChecks.push(status.context);
@@ -189,6 +192,13 @@ module.exports = async ({ github, context, core }) => {
       if (pendingChecks.length === 0 && failedChecks.length === 0) {
         pendingChecks.push('(commit status pending — details may be on a later page)');
       }
+    }
+
+    // An empty combined status is only ignorable when check runs vouch for the
+    // SHA. With neither, CI has not started (e.g. just after a push, or fork
+    // workflows awaiting approval), so wait rather than merge untested code.
+    if (totalStatuses === 0 && !checkRuns.some(run => run.name !== 'area-merge')) {
+      pendingChecks.push('(no CI results reported yet)');
     }
 
     return { pendingChecks, failedChecks };
