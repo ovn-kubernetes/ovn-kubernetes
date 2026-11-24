@@ -21,6 +21,8 @@ function fixture(t) {
   const workflowRuns = [];
   // GitHub returns state "pending" with total_count 0 when a commit has no legacy statuses.
   const status = { state: 'pending', total_count: 0, statuses: [] };
+  // The CI completion event for the approved head.
+  const source = { head_sha: pr.head.sha, pull_requests: [{ number: pr.number }] };
   const github = {
     rest: {
       actions: {
@@ -56,7 +58,7 @@ function fixture(t) {
     context: {
       eventName,
       repo: { owner: 'ovn-kubernetes', repo: 'ovn-kubernetes' },
-      payload: { comment: command, issue: { number: pr.number } },
+      payload: { comment: command, issue: { number: pr.number }, check_suite: source },
     },
   });
   return { pr, command, comments, checks, workflowRuns, status, github, core, merge: github.rest.pulls.merge, run };
@@ -161,3 +163,64 @@ for (const [outcome, setup, merges, reply] of [
     assert.match(f.comments.at(-1).body, reply);
   });
 }
+
+/** Run callbacks just before and just after the bot's waiting comment becomes visible. */
+function aroundWaitingComment(t, f, { before = () => {}, after = () => {} }) {
+  const createComment = f.github.rest.issues.createComment;
+  t.mock.method(f.github.rest.issues, 'createComment', async params => {
+    const isWaitingComment = params.body.startsWith('<!-- area-merge-sha:');
+    if (isWaitingComment) await before();
+    const result = await createComment(params);
+    if (isWaitingComment) await after();
+    return result;
+  });
+}
+
+test('approval merges when CI completes just before the waiting marker is published', async t => {
+  const f = fixture(t);
+  f.checks[0].status = 'in_progress';
+  aroundWaitingComment(t, f, {
+    // The last completion event finds no marker yet and leaves the PR alone.
+    before: async () => {
+      f.checks[0].status = 'completed';
+      await f.run('check_suite');
+      assert.equal(f.merge.mock.callCount(), 0);
+    },
+  });
+
+  await f.run('issue_comment');
+  assert.equal(f.merge.mock.callCount(), 1);
+  assert.equal(f.merge.mock.calls[0].arguments[0].sha, 'approved-sha');
+});
+
+test('approval tolerates a completion merging just after the waiting marker is published', async t => {
+  const f = fixture(t);
+  f.checks[0].status = 'in_progress';
+  // GitHub rejects a second merge of the same PR.
+  f.merge.mock.mockImplementation(async () => {
+    if (f.pr.merged) throw new Error('Pull Request is not mergeable');
+    Object.assign(f.pr, { state: 'closed', merged: true });
+    return { data: { merged: true } };
+  });
+  aroundWaitingComment(t, f, {
+    after: async () => {
+      f.checks[0].status = 'completed';
+      await f.run('check_suite');
+      assert.equal(f.merge.mock.callCount(), 1);
+    },
+  });
+
+  await f.run('issue_comment');
+  assert.equal(f.merge.mock.callCount(), 2);
+  assert.match(f.comments.at(-1).body, /^PR merged by area maintainer @maintainer/);
+});
+
+test('a merge rejected for any other reason is still reported', async t => {
+  const f = fixture(t);
+  const setFailed = t.mock.method(f.core, 'setFailed', () => {});
+  f.merge.mock.mockImplementation(async () => { throw new Error('merge rejected'); });
+
+  await f.run('issue_comment');
+  assert.equal(setFailed.mock.callCount(), 1);
+  assert.match(f.comments.at(-1).body, /^Failed to merge this PR: `merge rejected`/);
+});

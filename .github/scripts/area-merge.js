@@ -365,24 +365,9 @@ module.exports = async ({ github, context, core }) => {
 
     // Check CI status
     const ref = pr.head.sha;
-    const { pendingChecks, failedChecks } = await fetchCIStatus(ref);
+    let { pendingChecks, failedChecks } = await fetchCIStatus(ref);
 
-    if (failedChecks.length > 0) {
-      core.info(`Failed checks: ${failedChecks.join(', ')}`);
-      await github.rest.issues.createComment({
-        owner: context.repo.owner,
-        repo: context.repo.repo,
-        issue_number: prNumber,
-        body: `Cannot merge via \`/area-maintainer-approved\`: the following CI checks have failed:\n` +
-          failedChecks.map(c => `- \`${c}\``).join('\n') +
-          `\n\nPlease fix the failures and run \`/area-maintainer-approved\` again.`,
-      });
-      continue;
-    }
-
-    if (pendingChecks.length > 0) {
-      core.info(`Pending checks: ${pendingChecks.join(', ')}`);
-
+    if (pendingChecks.length > 0 && failedChecks.length === 0) {
       const shaMarker = `<!-- area-merge-sha:${ref} -->`;
       if (!allComments) allComments = await fetchAllComments(prNumber);
       const alreadyWaiting = allComments.some(c =>
@@ -399,7 +384,29 @@ module.exports = async ({ github, context, core }) => {
             `Pending checks:\n` +
             pendingChecks.map(c => `- \`${c}\``).join('\n'),
         });
+
+        // The last completion retry may have skipped this PR before the marker
+        // was visible. Recheck once after publishing it, using the approved SHA.
+        core.info(`Rechecking CI after publishing waiting marker for SHA ${ref}`);
+        ({ pendingChecks, failedChecks } = await fetchCIStatus(ref));
       }
+    }
+
+    if (failedChecks.length > 0) {
+      core.info(`Failed checks: ${failedChecks.join(', ')}`);
+      await github.rest.issues.createComment({
+        owner: context.repo.owner,
+        repo: context.repo.repo,
+        issue_number: prNumber,
+        body: `Cannot merge via \`/area-maintainer-approved\`: the following CI checks have failed:\n` +
+          failedChecks.map(c => `- \`${c}\``).join('\n') +
+          `\n\nPlease fix the failures and run \`/area-maintainer-approved\` again.`,
+      });
+      continue;
+    }
+
+    if (pendingChecks.length > 0) {
+      core.info(`Pending checks: ${pendingChecks.join(', ')}`);
       continue;
     }
 
@@ -424,6 +431,21 @@ module.exports = async ({ github, context, core }) => {
 
       core.info(`Successfully merged PR #${prNumber}`);
     } catch (e) {
+      // An approval and a completion retry can merge concurrently. Only
+      // suppress the error if the approved head is confirmed merged.
+      try {
+        const { data: latest } = await github.rest.pulls.get({
+          owner: context.repo.owner,
+          repo: context.repo.repo,
+          pull_number: prNumber,
+        });
+        if (latest.merged && latest.head.sha === ref) {
+          core.info(`PR #${prNumber} is already merged at SHA ${ref}`);
+          continue;
+        }
+      } catch (refreshError) {
+        core.info(`Could not confirm merge state for PR #${prNumber}: ${refreshError.message}`);
+      }
       core.setFailed(`Failed to merge PR #${prNumber}: ${e.message}`);
       await github.rest.issues.createComment({
         owner: context.repo.owner,
