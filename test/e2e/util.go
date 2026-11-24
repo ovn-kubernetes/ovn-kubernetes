@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"math/rand"
 	"net"
 	"net/netip"
@@ -1132,6 +1133,55 @@ func newPrivelegedTestFramework(basename string) *framework.Framework {
 		debug.DumpAllNamespaceInfo(context.TODO(), f.ClientSet, namespace)
 	}
 	return f
+}
+
+// createUnmanagedNamespace creates a namespace the way f.CreateNamespace does:
+// through TestContext.CreateTestingNS, which downstream test runners such as
+// the OpenShift tests extension override, and labelled with the pod security
+// levels configured on f - privileged for every wrappedTestFramework. Unlike
+// f.CreateNamespace it does not hand the namespace to the framework, whose
+// teardown deletes it after every spec: the caller owns its deletion. It is
+// meant for suites that set f.SkipNamespaceCreation because they must control
+// when their namespaces go away. The clientset is passed in rather than read
+// from f, whose ClientSet the framework clears during per-spec teardown.
+func createUnmanagedNamespace(ctx context.Context, cs clientset.Interface, f *framework.Framework, baseName string, labels map[string]string) (*v1.Namespace, error) {
+	nsLabels := make(map[string]string, len(labels)+3)
+	maps.Copy(nsLabels, labels)
+	// Same levels as framework.(*Framework).CreateNamespace sets.
+	nsLabels[admissionapi.EnforceLevelLabel] = string(podSecurityLevelOrRestricted(f.NamespacePodSecurityEnforceLevel, f.NamespacePodSecurityLevel))
+	nsLabels[admissionapi.WarnLevelLabel] = string(podSecurityLevelOrRestricted(f.NamespacePodSecurityWarnLevel, f.NamespacePodSecurityLevel))
+	nsLabels[admissionapi.AuditLevelLabel] = string(podSecurityLevelOrRestricted(f.NamespacePodSecurityAuditLevel, f.NamespacePodSecurityLevel))
+
+	createTestingNS := framework.TestContext.CreateTestingNS
+	if createTestingNS == nil {
+		createTestingNS = framework.CreateTestingNS
+	}
+	ns, err := createTestingNS(ctx, baseName, cs, nsLabels)
+	if err != nil && ns != nil {
+		// Reason: CreateTestingNS returns the namespace along with the error when
+		// it was created but its default service account never showed up. The
+		// caller only registers deletion on success, so remove it here. Not
+		// derived from ctx, which may be the one that was cancelled.
+		delCtx, cancel := context.WithTimeout(context.Background(), framework.SingleCallTimeout)
+		defer cancel()
+		if delErr := cs.CoreV1().Namespaces().Delete(delCtx, ns.Name, metav1.DeleteOptions{}); delErr != nil && !apierrors.IsNotFound(delErr) {
+			// Keep err in the chain so callers still see the creation failure.
+			return nil, errors.Join(err, fmt.Errorf("failed to delete namespace %s after its creation failed: %w", ns.Name, delErr))
+		}
+		return nil, err
+	}
+	return ns, err
+}
+
+// podSecurityLevelOrRestricted returns the first non-empty level, or
+// restricted, mirroring how the e2e framework resolves namespace levels.
+func podSecurityLevelOrRestricted(levels ...admissionapi.Level) admissionapi.Level {
+	for _, level := range levels {
+		if level != "" {
+			return level
+		}
+	}
+	return admissionapi.LevelRestricted
 }
 
 // countACLLogs connects to <targetNodeName> (ovn-control-plane, ovn-worker or ovn-worker2 in kind environments) via the docker exec
