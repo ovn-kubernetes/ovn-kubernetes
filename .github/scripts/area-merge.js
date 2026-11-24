@@ -7,6 +7,10 @@
 
 const fs = require('fs');
 
+/**
+ * Handle /area-maintainer-approved comments and CI completion retry events,
+ * verifying CODEOWNERS scope and CI status before merging the approved head SHA.
+ */
 module.exports = async ({ github, context, core }) => {
   // Comments created by this workflow are posted under the GitHub App
   // identity (e.g. "ovn-kubernetes-merge-bot[bot]"), NOT "github-actions[bot]".
@@ -18,6 +22,7 @@ module.exports = async ({ github, context, core }) => {
   // --- Determine which PRs to process and who triggered ---
   let pullNumbers = [];
   let commenter = null;
+  let retrySha = null;
 
   if (context.eventName === 'issue_comment') {
     // Defense in depth (the workflow `if` also enforces this): only accept
@@ -32,10 +37,48 @@ module.exports = async ({ github, context, core }) => {
     }
     pullNumbers.push(context.payload.issue.number);
     commenter = comment.user.login.toLowerCase();
-  } else if (context.eventName === 'check_suite') {
-    const suite = context.payload.check_suite;
-    for (const pr of (suite.pull_requests || [])) {
+  } else if (context.eventName === 'check_suite' || context.eventName === 'workflow_run') {
+    const source = context.payload[context.eventName];
+    if (context.eventName === 'workflow_run' && source.event !== 'pull_request') {
+      core.info('Ignoring workflow run not triggered by a pull request');
+      return;
+    }
+    retrySha = source.head_sha;
+    core.info(`Retry from ${context.eventName} ${source.id} for SHA ${retrySha}`);
+    for (const pr of (source.pull_requests || [])) {
       pullNumbers.push(pr.number);
+    }
+    // Fork PRs can have an empty pull_requests array in both event payloads.
+    // Use the triggering suite/run SHA, not context.sha (the default branch).
+    if (pullNumbers.length === 0 && retrySha) {
+      const associatedPRs = await github.paginate(github.rest.repos.listPullRequestsAssociatedWithCommit, {
+        owner: context.repo.owner,
+        repo: context.repo.repo,
+        commit_sha: retrySha,
+        per_page: 100,
+      });
+      // A PR may contain this commit but have a newer head. It cannot consume
+      // this completion event and must not suppress source-branch discovery.
+      pullNumbers = associatedPRs.filter(pr =>
+        pr.state === 'open' && pr.head.sha === retrySha
+      ).map(pr => pr.number);
+    }
+    // The commit association API can also return no results for an open fork
+    // PR. Workflow runs retain the source repository and branch in that case.
+    if (pullNumbers.length === 0 && context.eventName === 'workflow_run' && retrySha &&
+        source.head_repository?.owner?.login && source.head_branch) {
+      const candidates = await github.paginate(github.rest.pulls.list, {
+        owner: context.repo.owner,
+        repo: context.repo.repo,
+        state: 'open',
+        head: `${source.head_repository.owner.login}:${source.head_branch}`,
+        per_page: 100,
+      });
+      // The head query is owner:branch, so also verify the repository identity.
+      pullNumbers = candidates.filter(pr =>
+        pr.head.repo?.id === source.head_repository.id &&
+        pr.head.ref === source.head_branch && pr.head.sha === retrySha
+      ).map(pr => pr.number);
     }
   }
 
@@ -116,7 +159,7 @@ module.exports = async ({ github, context, core }) => {
 
   /**
    * Fetch and classify pending and failed check runs and commit statuses for a commit SHA.
-   * Keeps only the latest check run of each job and ignores the area-merge check itself.
+   * Ignores merge, label, and review helpers, then keeps the latest check run of each job.
    */
   async function fetchCIStatus(ref) {
     // Read the workflow runs first: a run that is completed here has already
@@ -150,8 +193,14 @@ module.exports = async ({ github, context, core }) => {
     // one passing must not hide the other failing. Check runs outside the
     // listed workflow runs, such as other Apps', are compared per check suite.
     const workflowBySuite = new Map(workflowRuns.map(run => [run.check_suite_id, run.workflow_id]));
+    const helperCheckNames = new Set(['labeler', 'approval-labeler', 'review']);
     const latestByJob = new Map();
     for (const run of allCheckRuns) {
+      // These helpers do not test the change or trigger completion retries.
+      if (run.name === 'area-merge' ||
+          (run.app?.slug === 'github-actions' && helperCheckNames.has(run.name))) {
+        continue;
+      }
       const suite = run.check_suite?.id;
       const source = workflowBySuite.has(suite) ? `workflow ${workflowBySuite.get(suite)}` : `suite ${suite}`;
       const job = `${source}/${run.name}`;
@@ -177,7 +226,6 @@ module.exports = async ({ github, context, core }) => {
     const pendingSuites = new Set();
     const failedSuites = new Set();
     for (const run of checkRuns) {
-      if (run.name === 'area-merge') continue;
       if (run.status !== 'completed') {
         pendingChecks.push(run.name);
         pendingSuites.add(run.check_suite?.id);
@@ -239,10 +287,9 @@ module.exports = async ({ github, context, core }) => {
       }
     }
 
-    // An empty combined status is only ignorable when check runs vouch for the
-    // SHA. With neither, CI has not started (e.g. just after a push, or fork
-    // workflows awaiting approval), so wait rather than merge untested code.
-    if (totalStatuses === 0 && !checkRuns.some(run => run.name !== 'area-merge')) {
+    // Helpers do not count as CI results. With no CI check runs or commit
+    // statuses, wait for CI to start (e.g. fork workflows awaiting approval).
+    if (totalStatuses === 0 && checkRuns.length === 0) {
       pendingChecks.push('(no CI results reported yet)');
     }
 
@@ -268,6 +315,11 @@ module.exports = async ({ github, context, core }) => {
       continue;
     }
 
+    if (context.eventName !== 'issue_comment' && pr.head.sha !== retrySha) {
+      core.info(`PR #${prNumber} head ${pr.head.sha} does not match retry SHA ${retrySha}, skipping`);
+      continue;
+    }
+
     // Prevent PR authors from merging their own PRs
     const prAuthor = pr.user.login.toLowerCase();
     if (commenter && commenter === prAuthor) {
@@ -282,9 +334,9 @@ module.exports = async ({ github, context, core }) => {
       continue;
     }
 
-    // For check_suite retries, find who previously ran /area-maintainer-approved
     let requester = commenter;
     let allComments = null;
+    // For CI completion retries, find who previously ran /area-maintainer-approved
     if (!requester) {
       allComments = await fetchAllComments(prNumber);
       const mergeComment = [...allComments]
@@ -302,10 +354,10 @@ module.exports = async ({ github, context, core }) => {
       continue;
     }
 
-    // For check_suite, verify the bot posted a "waiting" comment for the current head SHA.
+    // For CI completion retries, require a bot "waiting" comment for the current head SHA.
     // If new commits were pushed after approval, the SHA won't match and we skip
     // to prevent merging code the area maintainer never reviewed.
-    if (context.eventName === 'check_suite') {
+    if (context.eventName !== 'issue_comment') {
       if (!allComments) allComments = await fetchAllComments(prNumber);
       const waitingMarker = `<!-- area-merge-sha:${pr.head.sha} -->`;
       const isWaiting = allComments.some(c =>

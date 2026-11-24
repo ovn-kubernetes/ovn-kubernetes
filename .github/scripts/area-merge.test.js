@@ -7,32 +7,51 @@ const botLogin = process.env.BOT_LOGIN || 'ovn-kubernetes-merge-bot[bot]';
 
 /**
  * Mock GitHub for an open PR whose head commit "approved-sha" an area
- * maintainer has approved with /area-maintainer-approved. Tests change the
- * returned state to describe a scenario, then deliver an event with run().
+ * maintainer has approved with /area-maintainer-approved. With `waiting`, the
+ * bot has already answered with its waiting marker for that head. Tests change
+ * the returned state to describe a scenario, then deliver an event with run().
  */
-function fixture(t) {
+function fixture(t, { waiting = false } = {}) {
   t.mock.method(fs, 'readFileSync', () =>
     '# Test area (Area Maintainer: @maintainer)\n/test/e2e/ @maintainer\n');
-  const pr = { number: 6981, state: 'open', user: { login: 'author' }, head: { sha: 'approved-sha' } };
+  const headRepository = { id: 1234, owner: { login: 'author' } };
+  const pr = {
+    number: 6981, state: 'open', user: { login: 'author' },
+    head: { sha: 'approved-sha', ref: 'test-branch', repo: headRepository },
+  };
   const command = { user: { login: 'maintainer', type: 'User' }, body: '/area-maintainer-approved' };
   const comments = [command];
+  if (waiting) {
+    comments.push({ user: { login: botLogin, type: 'Bot' }, body: '<!-- area-merge-sha:approved-sha -->' });
+  }
   const checks = [{ name: 'e2e', status: 'completed', conclusion: 'success' }];
   // The GitHub Actions workflow runs of the repository; each owns one check suite.
   const workflowRuns = [];
   // GitHub returns state "pending" with total_count 0 when a commit has no legacy statuses.
   const status = { state: 'pending', total_count: 0, statuses: [] };
   // The CI completion event for the approved head.
-  const source = { head_sha: pr.head.sha, pull_requests: [{ number: pr.number }] };
+  const source = {
+    head_sha: pr.head.sha, pull_requests: [{ number: pr.number }],
+    event: 'pull_request', head_repository: headRepository, head_branch: pr.head.ref,
+  };
+  // Commit associations can include PRs whose heads have since advanced.
+  const associatedSha = pr.head.sha;
+  const associatedPRs = [pr];
+  const branchPRs = [pr];
   const github = {
     rest: {
       actions: {
         listWorkflowRunsForRepo() {},
       },
       repos: {
+        listPullRequestsAssociatedWithCommit() {},
         getCombinedStatusForRef: async () => ({ data: status }),
       },
       pulls: {
-        get: async () => ({ data: pr }),
+        list() {},
+        get: async ({ pull_number }) => ({
+          data: [pr, ...associatedPRs, ...branchPRs].find(p => p.number === pull_number),
+        }),
         listFiles: async () => ({ data: [{ filename: 'test/e2e/kubevirt.go' }] }),
         merge: t.mock.fn(async () => ({ data: { merged: true } })),
       },
@@ -48,7 +67,16 @@ function fixture(t) {
         listForRef: async () => ({ data: { check_runs: checks, total_count: checks.length } }),
       },
     },
-    paginate: async (endpoint, query) => workflowRuns.filter(run => run.head_sha === query.head_sha),
+    paginate: async (endpoint, query) => {
+      if (endpoint === github.rest.actions.listWorkflowRunsForRepo) {
+        return workflowRuns.filter(run => run.head_sha === query.head_sha);
+      }
+      // Associations are tied to the queried commit, not the PRs' current heads.
+      if (endpoint === github.rest.repos.listPullRequestsAssociatedWithCommit) {
+        return query.commit_sha === associatedSha ? associatedPRs : [];
+      }
+      return branchPRs.filter(p => `${p.head.repo.owner.login}:${p.head.ref}` === query.head);
+    },
   };
   // A core.setFailed call fails the test unless the test replaces it.
   const core = { info() {}, setFailed: message => assert.fail(message) };
@@ -58,10 +86,16 @@ function fixture(t) {
     context: {
       eventName,
       repo: { owner: 'ovn-kubernetes', repo: 'ovn-kubernetes' },
-      payload: { comment: command, issue: { number: pr.number }, check_suite: source },
+      // Like a real delivery, the payload carries only the triggering event.
+      payload: eventName === 'issue_comment'
+        ? { comment: command, issue: { number: pr.number } }
+        : { [eventName]: source },
     },
   });
-  return { pr, command, comments, checks, workflowRuns, status, github, core, merge: github.rest.pulls.merge, run };
+  return {
+    pr, command, comments, checks, workflowRuns, status, source, associatedPRs, branchPRs, github, core,
+    merge: github.rest.pulls.merge, run,
+  };
 }
 
 /** Report one legacy commit status in the given state, as a non-Actions CI system would. */
@@ -97,6 +131,13 @@ function setBuildChecks(f, ...runs) {
       started_at: `2026-11-25T10:0${suite}:00Z`,
     });
   });
+}
+
+/** Check runs published by the repository's label and review workflows. */
+function helperChecks(status, conclusion) {
+  return ['labeler', 'approval-labeler', 'review'].map(name => ({
+    name, app: { slug: 'github-actions' }, status, conclusion,
+  }));
 }
 
 // What an approval does with the CI results reported for the approved head:
@@ -154,6 +195,15 @@ for (const [outcome, setup, merges, reply] of [
     addWorkflowRun(f, { check_suite_id: 8, conclusion: 'success', run_started_at: '2026-11-25T11:00:00Z' });
     addWorkflowRun(f, { conclusion: 'startup_failure' });
   }, 1, /^PR merged by area maintainer @maintainer/],
+  ['waits when only helper checks have reported',
+    f => { f.checks.splice(0, 1, ...helperChecks('completed', 'success')); },
+    0, /^<!-- area-merge-sha:approved-sha -->.*- `\(no CI results reported yet\)`$/s],
+  ['is blocked by another App\'s check even when a same-named helper is newer', f => {
+    f.checks.push(
+      { name: 'review', app: { slug: 'external-ci' }, status: 'completed', conclusion: 'failure', started_at: '2026-11-25T10:00:00Z' },
+      { name: 'review', app: { slug: 'github-actions' }, status: 'completed', conclusion: 'success', started_at: '2026-11-25T10:01:00Z' },
+    );
+  }, 0, /CI checks have failed:\n- `review`\n/],
 ]) {
   test(`approval ${outcome}`, async t => {
     const f = fixture(t);
@@ -161,6 +211,26 @@ for (const [outcome, setup, merges, reply] of [
     await f.run('issue_comment');
     assert.equal(f.merge.mock.callCount(), merges);
     assert.match(f.comments.at(-1).body, reply);
+  });
+}
+
+for (const [outcome, status, conclusion] of [
+  ['pending', 'in_progress', null],
+  ['failed', 'completed', 'failure'],
+]) {
+  test(`last CI completion merges while helper checks are ${outcome}`, async t => {
+    const f = fixture(t);
+    f.checks[0].status = 'in_progress';
+    f.checks.push(...helperChecks(status, conclusion));
+
+    await f.run('issue_comment');
+    assert.equal(f.merge.mock.callCount(), 0);
+    assert.match(f.comments.at(-1).body, /^<!-- area-merge-sha:approved-sha -->/);
+
+    f.checks[0].status = 'completed';
+    await f.run('workflow_run');
+    assert.equal(f.merge.mock.callCount(), 1);
+    assert.equal(f.merge.mock.calls[0].arguments[0].sha, 'approved-sha');
   });
 }
 
@@ -223,4 +293,57 @@ test('a merge rejected for any other reason is still reported', async t => {
   await f.run('issue_comment');
   assert.equal(setFailed.mock.callCount(), 1);
   assert.match(f.comments.at(-1).body, /^Failed to merge this PR: `merge rejected`/);
+});
+
+// Completion events do not list fork PRs, and GitHub's commit lookup can miss them too.
+for (const [lookup, setup] of [
+  ['head SHA', f => { f.branchPRs.length = 0; }],
+  ['source branch', f => { f.associatedPRs.length = 0; }],
+  ['source branch despite stale commit associations', f => {
+    f.associatedPRs.splice(0, 1, {
+      ...f.pr,
+      number: f.pr.number + 1,
+      head: { ...f.pr.head, sha: 'newer-sha' },
+    });
+  }],
+]) {
+  test(`fork approval waits for CI, then a workflow completion finds the PR by ${lookup} and merges it`, async t => {
+    const f = fixture(t);
+    f.source.pull_requests = [];
+    setup(f);
+    f.checks[0].status = 'in_progress';
+    await f.run('issue_comment');
+    assert.equal(f.merge.mock.callCount(), 0);
+    assert.match(f.comments.at(-1).body, /^<!-- area-merge-sha:approved-sha -->/);
+
+    f.checks[0].status = 'completed';
+    await f.run('workflow_run');
+    assert.equal(f.merge.mock.callCount(), 1);
+    assert.equal(f.merge.mock.calls[0].arguments[0].pull_number, f.pr.number);
+    assert.equal(f.merge.mock.calls[0].arguments[0].sha, 'approved-sha');
+  });
+}
+
+// A completion only finishes an approval that the bot recorded for the PR's current head.
+for (const [reason, setup] of [
+  ['there is no waiting marker', f => { f.comments.pop(); }],
+  ['the waiting marker is for an older head', f => { f.comments[1].body = '<!-- area-merge-sha:old-sha -->'; }],
+  ['a human posted the waiting marker', f => { f.comments[1].user = f.command.user; }],
+  ['the completed run is for an older head', f => { f.source.head_sha = 'old-sha'; }],
+]) {
+  test(`workflow completion does not merge when ${reason}`, async t => {
+    const f = fixture(t, { waiting: true });
+    setup(f);
+    await f.run('workflow_run');
+    assert.equal(f.merge.mock.callCount(), 0);
+    assert.equal(f.github.rest.issues.createComment.mock.callCount(), 0);
+  });
+}
+
+test('workflow completion rechecks that the approver is an area maintainer for the changed files', async t => {
+  const f = fixture(t, { waiting: true });
+  f.command.user.login = 'other-reviewer';
+  await f.run('workflow_run');
+  assert.equal(f.merge.mock.callCount(), 0);
+  assert.match(f.comments.at(-1).body, /not listed as an Area Maintainer/);
 });

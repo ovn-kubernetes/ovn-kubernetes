@@ -45,6 +45,76 @@ The workflow generates a short-lived installation token via
 [`actions/create-github-app-token`](https://github.com/actions/create-github-app-token)
 at the start of each run. No long-lived access tokens are used during workflow execution.
 
+### Waiting for CI and automatic retries
+
+If an authorized `/area-maintainer-approved` request finds pending CI checks
+and no failures, the bot posts a waiting comment containing a marker for the
+PR's current head commit SHA. A head commit with no check runs and no commit
+statuses is also treated as pending, because its CI has not started yet. So
+is a `pull_request` workflow run that has not completed or that awaits
+maintainer approval, even before its jobs report checks; one that completed
+without passing counts as failed. The bot retries when it receives either:
+
+* A `check_suite: completed` event. GitHub Actions-created check suites do not
+  trigger this workflow event.
+* A `workflow_run: completed` event for `ovn-ci`, `DPU Offload`,
+  `performance-test`, `Test Docs Build`, `License Header Check`, or `Script tests`,
+  provided the completed workflow was triggered by `pull_request`.
+
+A commit status that changes after these events does not trigger a retry. If
+the bot is still waiting on a commit status once the listed workflows have
+finished, issue `/area-maintainer-approved` again when that status passes.
+
+The CI gate ignores the merge bot's own check and the GitHub Actions
+`labeler`, `approval-labeler`, and `review` helper jobs. These jobs maintain
+labels or forward review events; their completions do not trigger merge
+retries. Their results also do not count as CI having started. When a
+workflow ran more than once for the commit, for example after the PR was
+closed and reopened, only the latest result of each of its jobs counts.
+Jobs with the same name in different workflows, such as `Build-PR` in
+`ovn-ci` and `performance-test`, are evaluated separately.
+
+Each retry rechecks the PR's current head, the bot-authored waiting marker,
+the requester's area authorization, and all CI results before attempting a
+merge pinned to that SHA. Completion events for older commits are ignored.
+**After pushing new commits, obtain a new `/area-maintainer-approved` request
+after review**; the old waiting marker does not authorize the new head.
+Completion retries for the same SHA are queued and processed one at a time;
+a later retry skips a PR that has already merged.
+
+Fork PRs are supported even when the completion event's `pull_requests` list
+is empty. The bot first looks up open PRs associated with the completed
+commit whose current head still matches it. If no matching PR is found for
+a workflow completion, it looks up open PRs by source owner and branch, then
+verifies the source repository, branch, and head SHA before applying the
+same approval and CI checks.
+
+```mermaid
+flowchart TD
+    Comment["/area-maintainer-approved<br/>(human issue_comment)"] --> OpenCheck{"PR open?"}
+    Retry["CI completion event<br/>(check_suite or pull_request workflow_run)<br/>serialized per head SHA"] --> Discovery["Resolve open PRs:<br/>1. event pull_requests<br/>2. commit-associated PRs<br/>3. workflow_run source owner/branch<br/>(verify repo ID, branch, head SHA)"]
+    Discovery --> OpenCheck
+    OpenCheck -->|No| SkipClosed["Skip (closed or already merged)"]
+    OpenCheck -->|Yes| RetryPath{"Completion retry?"}
+    RetryPath -->|No| Auth["Verify requester is not PR author<br/>and owns all changed files in CODEOWNERS"]
+    RetryPath -->|Yes| HeadMarker{"PR head matches retry SHA,<br/>non-author requester found, and<br/>bot waiting marker exists?"}
+    HeadMarker -->|No| SkipStale["Skip (stale SHA or<br/>needs fresh approval)"]
+    HeadMarker -->|Yes| Auth
+    Auth -->|Rejected| CommentRejected["Comment self-approval or<br/>unauthorized files"]
+    Auth -->|Authorized| FetchCI["Evaluate CI for approved SHA<br/>(check runs + commit statuses)"]
+    FetchCI --> CIState{"CI status?"}
+    CIState -->|"Pending only"| HasWait{"Waiting marker<br/>already posted?"}
+    HasWait -->|Yes| WaitNext["Wait for next<br/>CI completion retry"]
+    HasWait -->|No| PostWait["Post waiting comment with<br/>SHA marker and recheck CI once"]
+    PostWait --> CIState
+    CIState -->|"Any failed"| PostFail["Post failure comment"]
+    CIState -->|"All passed"| Merge["Merge PR pinned to approved SHA"]
+    Merge -->|Success| CommentMerged["Comment PR merged"]
+    Merge -->|Error| CheckMerged{"PR already merged<br/>at approved SHA?"}
+    CheckMerged -->|Yes| SkipDupMerge["Skip (merged concurrently)"]
+    CheckMerged -->|No| FailMerge["Report merge failure"]
+```
+
 ## Current Areas
 
 ### Virtualization
