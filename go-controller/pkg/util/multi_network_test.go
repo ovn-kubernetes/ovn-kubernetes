@@ -1989,6 +1989,20 @@ func TestSubnetOverlapCheck(t *testing.T) {
 			`,
 		},
 		{
+			desc: "excluded subnets matching the trailing join subnets should not panic",
+			inputNetAttachDefConfigSpec: `
+                {
+                    "name": "tenantred",
+                    "type": "ovn-k8s-cni-overlay",
+                    "topology": "layer2",
+                    "subnets": "10.200.0.0/16,fd00:200::/48",
+                    "excludeSubnets": "10.200.1.0/24,fd00:200:0:1::/64",
+                    "joinSubnet": "10.200.1.0/24,fd00:200:0:1::/64",
+                    "netAttachDefName": "ns1/nad1"
+                }
+			`,
+		},
+		{
 			desc: "return error when the network is not ovnk",
 			inputNetAttachDefConfigSpec: `
                 {
