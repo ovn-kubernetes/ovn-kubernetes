@@ -1316,6 +1316,8 @@ config:
 	})
 
 	Context("with default pod network", func() {
+		var stopCapture func(bool)
+
 		BeforeEach(func() {
 			ns, err := fr.CreateNamespace(context.TODO(), fr.BaseName, map[string]string{
 				"e2e-framework": fr.BaseName,
@@ -1338,6 +1340,13 @@ config:
 			prepareHTTPServerPods(map[string]string{}, checkPodHasIPAtStatus)
 		})
 
+		JustAfterEach(func() {
+			if stopCapture != nil {
+				stopCapture(!CurrentSpecReport().Failed())
+				stopCapture = nil
+			}
+		})
+
 		AfterEach(func() {
 			for _, node := range selectedNodes {
 				e2enode.RemoveLabelOffNode(fr.ClientSet, node.Name, namespace)
@@ -1351,9 +1360,9 @@ config:
 			if td.mode == kubevirtv1.MigrationPostCopy && os.Getenv("KUBEVIRT_SKIP_MIGRATE_POST_COPY") == "true" {
 				Skip("Post copy live migration explicitly skipped")
 			}
-			stopCapture, err := d.MigrationCapture()
+			var err error
+			stopCapture, err = d.MigrationCapture()
 			Expect(err).NotTo(HaveOccurred(), "start migration capture")
-			defer func() { stopCapture(!CurrentSpecReport().Failed()) }()
 
 			d.ConntrackDumpingDaemonSet()
 			d.OVSFlowsDumpingDaemonSet(deploymentconfig.Get().ExternalBridgeName())
