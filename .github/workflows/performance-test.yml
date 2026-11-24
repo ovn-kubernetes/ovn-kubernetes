@@ -206,7 +206,15 @@ jobs:
         }
         sudo mv -f /etc/docker/daemon.$$ /etc/docker/daemon.json
         sudo systemctl start docker docker.socket
-        docker system info
+        docker system info || {
+          rc=$?
+          echo 'Effective group ID:'
+          id -g || true
+          echo 'Process group IDs (including supplementary groups):'
+          id -G || true
+          stat -Lc 'Docker socket: uid=%u gid=%g mode=%a' /var/run/docker.sock || true
+          exit "$rc"
+        }
 
     - name: Disable ufw
       run: |
