@@ -3264,13 +3264,9 @@ func generateEgressIPPatches(mark int, statusItems []egressipv1.EgressIPStatusIt
 func generateMarkPatchOp(mark int) jsonPatchOperation {
 	return jsonPatchOperation{
 		Operation: "add",
-		Path:      "/metadata/annotations",
-		Value:     createAnnotWithMark(mark),
+		Path:      "/metadata/annotations/k8s.ovn.org~1egressip-mark",
+		Value:     fmt.Sprintf("%d", mark),
 	}
-}
-
-func createAnnotWithMark(mark int) map[string]string {
-	return map[string]string{util.EgressIPMarkAnnotation: fmt.Sprintf("%d", mark)}
 }
 
 func generateStatusPatchOp(statusItems []egressipv1.EgressIPStatusItem) jsonPatchOperation {
