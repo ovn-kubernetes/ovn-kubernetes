@@ -92,6 +92,8 @@ var _ = ginkgo.Describe("External Gateway", feature.ExternalGateway, func() {
 		podUDPPort          = 90
 		singleTargetRetries = 50 // enough attempts to avoid hashing to the same gateway
 		bfdTimeout          = 4 * time.Second
+		// The one-shot nc listeners are restarted after every connection.
+		ncListenerRestartDelay = 100 * time.Millisecond
 	)
 
 	var _ = ginkgo.Context("With Admin Policy Based External Route CRs", func() {
@@ -962,6 +964,9 @@ var _ = ginkgo.Describe("External Gateway", feature.ExternalGateway, func() {
 
 							ginkgo.By("Checking hostname multiple times")
 							for i := 0; i < 20; i++ {
+								if i > 0 {
+									time.Sleep(ncListenerRestartDelay)
+								}
 								hostname := pokeHostnameViaNC(srcPingPodName, f.Namespace.Name, protocol, gwIP, gwPort)
 								gomega.Expect(expectedHostName).To(gomega.Equal(hostname), "Hostname returned by nc not as expected")
 							}
@@ -1179,6 +1184,9 @@ var _ = ginkgo.Describe("External Gateway", feature.ExternalGateway, func() {
 
 					ginkgo.By("Checking hostname multiple times")
 					for i := 0; i < 20; i++ {
+						if i > 0 {
+							time.Sleep(ncListenerRestartDelay)
+						}
 						hostname := pokeHostnameViaNC(srcPodName, f.Namespace.Name, protocol, gwIP, gwPort)
 						gomega.Expect(expectedHostName).To(gomega.Equal(hostname), "Hostname returned by nc not as expected")
 					}
