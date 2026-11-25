@@ -296,6 +296,8 @@ module.exports = async ({ github, context, core }) => {
     // Gate on the aggregate state first — it covers ALL commit statuses
     // regardless of pagination, so we never miss a failure or pending status.
     // Then iterate the (possibly partial) statuses array for detailed names.
+    // GitHub reports state "pending" with total_count 0 for a commit that has
+    // no commit statuses at all, only check runs: nothing is pending then.
     if (combinedStatus.state === 'failure') {
       for (const status of combinedStatus.statuses) {
         if (status.state === 'failure' || status.state === 'error') {
@@ -305,7 +307,7 @@ module.exports = async ({ github, context, core }) => {
       if (failedChecks.length === 0) {
         failedChecks.push('(commit status failure — details may be on a later page)');
       }
-    } else if (combinedStatus.state === 'pending') {
+    } else if (combinedStatus.state === 'pending' && combinedStatus.total_count > 0) {
       for (const status of combinedStatus.statuses) {
         if (status.state === 'pending') {
           pendingChecks.push(status.context);
@@ -316,6 +318,17 @@ module.exports = async ({ github, context, core }) => {
       if (pendingChecks.length === 0 && failedChecks.length === 0) {
         pendingChecks.push('(commit status pending — details may be on a later page)');
       }
+    }
+
+    // With no commit statuses, wait until CI has reported a check run (e.g.
+    // right after a push) rather than merge untested code. The bot's own
+    // check, the label and review helper jobs, and checks of other Apps such
+    // as CodeRabbit or DCO can all exist before CI has started.
+    const helperChecks = new Set(['area-merge', 'labeler', 'approval-labeler', 'review']);
+    const ciReported = checkRuns.some(run =>
+      run.app?.slug === 'github-actions' && !helperChecks.has(run.name));
+    if (combinedStatus.total_count === 0 && !ciReported) {
+      pendingChecks.push('(no CI results reported yet)');
     }
 
     if (failedChecks.length > 0) {
