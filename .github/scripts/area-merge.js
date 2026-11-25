@@ -133,6 +133,7 @@ module.exports = async ({ github, context, core }) => {
   }
 
   // --- Process each PR ---
+  let rechecked = false;
   for (const prNumber of pullNumbers) {
     core.info(`Processing PR #${prNumber}`);
 
@@ -349,6 +350,13 @@ module.exports = async ({ github, context, core }) => {
             `Pending checks:\n` +
             pendingChecks.map(c => `- \`${c}\``).join('\n'),
         });
+        // CI may have completed while this comment was not visible yet; the
+        // completion retry then skipped the PR and nothing else will merge
+        // it. Process the PR once more now that the comment exists.
+        if (!rechecked) {
+          rechecked = true;
+          pullNumbers.push(prNumber);
+        }
       }
       continue;
     }
