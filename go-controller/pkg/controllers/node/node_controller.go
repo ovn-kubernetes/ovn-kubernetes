@@ -230,7 +230,20 @@ func (c *NodeController) reconcileNode(key string) error {
 	// specific networks, rather than retrying all later.
 	if netName == "" {
 		handlerKeys := c.handlers.GetKeys()
+		// Look up the current node once. Each handler can then scope its
+		// dispatch decision to networks that actually changed. This avoids a
+		// fan out to every registered network on every node event.
+		newNode, err := c.nodeLister.Get(nodeName)
+		if err != nil && !apierrors.IsNotFound(err) {
+			return err
+		}
 		for _, networkName := range handlerKeys {
+			// A node delete has no new node to diff against. Fall back to
+			// dispatching every network. Each handler filters out networks
+			// it was never active on.
+			if newNode != nil && !c.networkNeedsReconcile(networkName, c.getCachedNode(networkName, nodeName), newNode) {
+				continue
+			}
 			c.ReconcileNetwork(nodeName, networkName)
 		}
 		return nil
@@ -317,6 +330,27 @@ func (c *NodeController) reconcileNode(key string) error {
 
 		return c.reconcileUpdate(handler, oldNode, newNode, netName, oldState, newState)
 	})
+}
+
+// networkNeedsReconcile returns true when a network's dispatch should run for
+// a node update. oldNode is the controller's last cached node for the
+// network. It is nil when the network has no cached state from before.
+// A network with no cached state always needs reconciliation. The check
+// covers the active status for the network. It also covers the per-network
+// subnet, tunnel ID, and gateway annotations, since those are the values a
+// handler's ReconcileNode acts on.
+func (c *NodeController) networkNeedsReconcile(netName string, oldNode, newNode *corev1.Node) bool {
+	if oldNode == nil {
+		return true
+	}
+	if c.nodeHasNetwork(netName, newNode.Name) != c.networkManager.NodeHasNetwork(newNode.Name, netName) {
+		return true
+	}
+	oldState := c.annotationCache.updateNodeAnnotationState(oldNode, false)
+	newState := c.annotationCache.updateNodeAnnotationState(newNode, false)
+	return NodeSubnetAnnotationChangedForNetworkWithState(oldState, newState, netName) ||
+		TunnelIDAnnotationChangedForNetworkWithState(oldState, newState, netName) ||
+		GatewayAnnotationChangedForNetworkWithState(oldState, newState, netName)
 }
 
 // reconcileUpdate reconciles per-network node changes.

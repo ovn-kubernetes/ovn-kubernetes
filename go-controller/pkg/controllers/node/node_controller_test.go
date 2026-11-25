@@ -6,6 +6,7 @@ package node
 import (
 	"errors"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -452,6 +453,70 @@ func TestReconcileNodeRemoteNodeBecomesInactiveDeletes(t *testing.T) {
 	}
 	if c.nodeNeedsDeleteReconciliation(handler.netName, node.Name) {
 		t.Fatal("expected delete reconciliation marker to be cleared")
+	}
+}
+
+func TestReconcileNodeUnscopedKeyOnlyReconcilesChangedNetwork(t *testing.T) {
+	handlerA := &fakeNodeHandler{netName: "net-a"}
+	handlerB := &fakeNodeHandler{netName: "net-b"}
+	handlers := syncmap.NewSyncMap[NodeHandler]()
+	handlers.Store(handlerA.netName, handlerA)
+	handlers.Store(handlerB.netName, handlerB)
+
+	oldNode := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "node-a",
+			Annotations: map[string]string{
+				"k8s.ovn.org/node-subnets": `{"net-a":"10.1.0.0/24","net-b":"10.2.0.0/24"}`,
+			},
+		},
+	}
+	// Only net-a's subnet entry changes.
+	newNode := oldNode.DeepCopy()
+	newNode.Annotations["k8s.ovn.org/node-subnets"] = `{"net-a":"10.1.1.0/24","net-b":"10.2.0.0/24"}`
+
+	c := &NodeController{
+		networkManager:     networkmanager.Default().Interface(),
+		handlers:           handlers,
+		nodeReconciliation: map[string]map[string]bool{},
+		nodeActive: map[string]map[string]struct{}{
+			handlerA.netName: {"node-a": {}},
+			handlerB.netName: {"node-a": {}},
+		},
+		nodeCache: map[string]map[string]*corev1.Node{
+			handlerA.netName: {"node-a": oldNode.DeepCopy()},
+			handlerB.netName: {"node-a": oldNode.DeepCopy()},
+		},
+		annotationCache: NewNodeAnnotationCache(),
+	}
+	c.nodeLister = newNodeLister(t, newNode)
+	c.nodeController = controller.NewController("topology-test-node-controller", &controller.ControllerConfig[corev1.Node]{
+		Reconcile:   c.reconcileNode,
+		Threadiness: 1,
+		MaxAttempts: 1,
+	})
+	if err := controller.Start(c.nodeController); err != nil {
+		t.Fatalf("failed to start node controller: %v", err)
+	}
+	defer controller.Stop(c.nodeController)
+
+	// Feed an unscoped node key, the same key shape delivered for a remote
+	// node event through the shared queue.
+	c.nodeController.Reconcile(scopedNodeQueueKey(newNode.Name, ""))
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if handlerA.reconcileCalls == 1 && handlerB.reconcileCalls == 0 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	if handlerA.reconcileCalls != 1 {
+		t.Fatalf("expected net-a handler to run once, got %d", handlerA.reconcileCalls)
+	}
+	if handlerB.reconcileCalls != 0 {
+		t.Fatalf("expected net-b handler to not run, got %d", handlerB.reconcileCalls)
 	}
 }
 
