@@ -56,7 +56,6 @@ var ovnUUIDPattern = regexp.MustCompile(`(?i)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}
 var _ = ginkgo.Describe("BGP: advertised Layer2 CUDN creation race", feature.RouteAdvertisements, func() {
 	const (
 		cudnLabel       = "bgp-recreate-race"
-		raName          = "bgp-recreate-race-ra"
 		subnetIPv4      = "108.108.0.0/16"
 		subnetIPv6      = "2001:db8:108:108::/64"
 		raceNetexecPort = "8080"
@@ -97,14 +96,17 @@ var _ = ginkgo.Describe("BGP: advertised Layer2 CUDN creation race", feature.Rou
 		gomega.Expect(advertisedSubnets).NotTo(gomega.BeEmpty(), "cluster reports no supported IP families")
 
 		ginkgo.By("creating RouteAdvertisements before the selected network exists")
+		// MustPassRepeatedly runs cleanup and the next attempt back-to-back. Give
+		// every attempt its own RA identity and selector value so delayed delete
+		// events from the preceding attempt cannot withdraw this attempt's state.
 		ra := &rav1.RouteAdvertisements{
-			ObjectMeta: metav1.ObjectMeta{Name: raName},
+			ObjectMeta: metav1.ObjectMeta{GenerateName: "bgp-recreate-race-ra-"},
 			Spec: rav1.RouteAdvertisementsSpec{
 				NetworkSelectors: apitypes.NetworkSelectors{
 					apitypes.NetworkSelector{
 						NetworkSelectionType: apitypes.ClusterUserDefinedNetworks,
 						ClusterUserDefinedNetworkSelector: &apitypes.ClusterUserDefinedNetworkSelector{
-							NetworkSelector: metav1.LabelSelector{MatchLabels: map[string]string{cudnLabel: ""}},
+							NetworkSelector: metav1.LabelSelector{MatchLabels: map[string]string{cudnLabel: f.Namespace.Name}},
 						},
 					},
 				},
@@ -113,14 +115,14 @@ var _ = ginkgo.Describe("BGP: advertised Layer2 CUDN creation race", feature.Rou
 				Advertisements:           []rav1.AdvertisementType{rav1.PodNetwork},
 			},
 		}
-		_, err = raClient.K8sV1().RouteAdvertisements().Create(ctx, ra, metav1.CreateOptions{})
+		ra, err = raClient.K8sV1().RouteAdvertisements().Create(ctx, ra, metav1.CreateOptions{})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		ginkgo.DeferCleanup(func(cleanupCtx context.Context) error {
-			err := raClient.K8sV1().RouteAdvertisements().Delete(cleanupCtx, raName, metav1.DeleteOptions{})
+			err := raClient.K8sV1().RouteAdvertisements().Delete(cleanupCtx, ra.Name, metav1.DeleteOptions{})
 			if err == nil || apierrors.IsNotFound(err) {
 				return nil
 			}
-			return fmt.Errorf("delete RouteAdvertisements %s: %w", raName, err)
+			return fmt.Errorf("delete RouteAdvertisements %s: %w", ra.Name, err)
 		})
 
 		ginkgo.By("waiting five seconds before creating the selected CUDN, matching the reproducer")
@@ -134,7 +136,7 @@ var _ = ginkgo.Describe("BGP: advertised Layer2 CUDN creation race", feature.Rou
 		cudn := &udnv1.ClusterUserDefinedNetwork{
 			ObjectMeta: metav1.ObjectMeta{
 				GenerateName: "bgr-",
-				Labels:       map[string]string{cudnLabel: ""},
+				Labels:       map[string]string{cudnLabel: f.Namespace.Name},
 			},
 			Spec: udnv1.ClusterUserDefinedNetworkSpec{
 				NamespaceSelector: metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{
@@ -166,16 +168,16 @@ var _ = ginkgo.Describe("BGP: advertised Layer2 CUDN creation race", feature.Rou
 		gomega.Eventually(ctx, clusterUserDefinedNetworkReadyFunc(ctx, f.DynamicClient, cUDN.Name), 2*time.Minute, time.Second).
 			Should(gomega.Succeed(), "CUDN %s did not become ready", cUDN.Name)
 		gomega.Eventually(func() error {
-			current, err := raClient.K8sV1().RouteAdvertisements().Get(ctx, raName, metav1.GetOptions{})
+			current, err := raClient.K8sV1().RouteAdvertisements().Get(ctx, ra.Name, metav1.GetOptions{})
 			if err != nil {
 				return err
 			}
 			condition := meta.FindStatusCondition(current.Status.Conditions, "Accepted")
 			if condition == nil {
-				return fmt.Errorf("RouteAdvertisements %s has no Accepted condition", raName)
+				return fmt.Errorf("RouteAdvertisements %s has no Accepted condition", ra.Name)
 			}
 			if condition.Status != metav1.ConditionTrue || condition.Reason != "Accepted" {
-				return fmt.Errorf("RouteAdvertisements %s Accepted condition is %+v", raName, *condition)
+				return fmt.Errorf("RouteAdvertisements %s Accepted condition is %+v", ra.Name, *condition)
 			}
 			return nil
 		}, 2*time.Minute, time.Second).Should(gomega.Succeed())
