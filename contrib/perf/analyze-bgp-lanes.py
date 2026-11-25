@@ -43,10 +43,11 @@ RA_QUEUE = "clustermanager routeadvertisements controller"
 WORKQUEUE_BUCKETS = [0.001 * 2**k for k in range(20)]
 RECONCILE_BUCKETS = [0.005 * 2**k for k in range(14)]
 
-# Reconcile workers per lane, as set by ra-threadiness in the performance-test
-# workflow matrix. Lanes not listed run the binary default of 1. Only lanes
-# with the same worker count share a scaling fit.
-WORKERS = {"bgp-ra-density-threads": 4}
+# Reconcile workers per lane. The RouteAdvertisements controller runs four and
+# no lane changes that, so every lane gets the default. Only lanes with the
+# same worker count share a scaling fit.
+WORKERS = {}
+DEFAULT_WORKERS = 4
 
 # Lanes that recreate RouteAdvertisements while the queue drains. Their items
 # arrive over time rather than in one burst, so the burst queueing model does
@@ -123,7 +124,7 @@ def collect(lane_dir):
     """Everything one lane contributes, keyed so the report can stay dumb."""
     h = hook(lane_dir)
     lane = {"name": pathlib.Path(lane_dir).name, "hook": h}
-    lane["workers"] = WORKERS.get(lane["name"], 1)
+    lane["workers"] = WORKERS.get(lane["name"], DEFAULT_WORKERS)
 
     if h:
         nodes = h.get("frrNodeStates") or []
@@ -359,6 +360,8 @@ def model_table(lanes):
                 f"Across the {len(fit)} fitted lanes: work/write {min(pw):.1f} to "
                 f"{max(pw):.1f} ms ({spread(pw):.1f}%), wait/total work {min(qf):.3f} to "
                 f"{max(qf):.3f} ({spread(qf):.1f}%)."]
+    else:
+        out += ["", "Fewer than two single-worker lanes ran, so nothing is fitted."]
     return out
 
 
@@ -369,7 +372,6 @@ def axes_table(lanes):
         ("node count", "bgp-ra-density", "bgp-ra-density-wide", "6 to 12 nodes at 20 RAs"),
         ("RA count", "bgp-ra-density-wide", "bgp-ra-density-deep", "20 to 40 RAs at 12 nodes"),
         ("churn", "bgp-ra-density-deep", "bgp-ra-churn", "same shape, a tenth of RAs recreated 5x"),
-        ("threadiness", "bgp-ra-density-deep", "bgp-ra-density-threads", "1 to 4 reconcile workers"),
     ]
     out = ["## Axis isolation", "",
            "Each row compares two lanes differing in exactly one variable, on means.", "",
@@ -450,7 +452,7 @@ def main():
 
     # report in ladder order where the names are known, others after
     order = ["bgp-ra-density", "bgp-ra-density-wide", "bgp-ra-density-deep",
-             "bgp-ra-churn", "bgp-ra-density-threads"]
+             "bgp-ra-churn"]
     dirs.sort(key=lambda d: (order.index(d.name) if d.name in order else len(order), d.name))
 
     lanes = [collect(d) for d in dirs]

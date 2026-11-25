@@ -33,8 +33,8 @@
 - query: sum(ovnkube_clustermanager_workqueue_depth) by (name) > 0
   metricName: ovnkubeWorkqueueDepth
 
-# queue duration high while work duration is moderate means the single worker
-# is starved rather than the reconcile being expensive
+# queue duration high while work duration is moderate means the workers are
+# starved rather than the reconcile being expensive
 - query: histogram_quantile(0.99, sum(rate(ovnkube_clustermanager_workqueue_queue_duration_seconds_bucket[2m])) by (name, le)) > 0
   metricName: ovnkubeWorkqueueQueueDuration99th
 

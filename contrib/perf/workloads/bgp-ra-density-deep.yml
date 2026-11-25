@@ -9,7 +9,7 @@
 #
 # The two factors are not interchangeable. Node count grows the work inside one
 # reconcile, because the controller writes one FRRConfiguration per node. RA
-# count grows how many reconciles have to queue behind the single worker. The
+# count grows how many reconciles have to queue behind the workers. The
 # 6-node lane measured a 16s queue wait against a 1s work duration, so at 40
 # RAs the wait should roughly double if the serialisation is the whole story.
 #

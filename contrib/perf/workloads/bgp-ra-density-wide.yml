@@ -16,7 +16,7 @@
 # node axis is the one that predicts them.
 #
 # Two points let the slope be fitted rather than guessed. If reconcile duration
-# doubles from 6 to 12 nodes the cost is linear in nodes and the single worker
+# doubles from 6 to 12 nodes the cost is linear in nodes and serialisation
 # is the whole story; if it grows faster, the per-node loops in
 # generateFRRConfigurations are superlinear, which is bottleneck hypothesis 2
 # and currently untested on its own axis.
