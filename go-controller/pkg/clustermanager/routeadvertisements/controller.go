@@ -1583,7 +1583,8 @@ func (c *Controller) generateFRRConfiguration(
 	selectedNetworks *selectedNetworks,
 	covered sets.Set[string],
 ) (*frrtypes.FRRConfiguration, error) {
-	source := template.source
+	// The source lives in the informer cache and is reused for every node, so copy it before appending.
+	source := template.source.DeepCopy()
 	nodeName := node.Name
 	var routers []frrtypes.Router
 	var renderedNetworks []string
