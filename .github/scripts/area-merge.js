@@ -32,10 +32,28 @@ module.exports = async ({ github, context, core }) => {
     }
     pullNumbers.push(context.payload.issue.number);
     commenter = comment.user.login.toLowerCase();
-  } else if (context.eventName === 'check_suite') {
-    const suite = context.payload.check_suite;
-    for (const pr of (suite.pull_requests || [])) {
+  } else if (context.eventName === 'check_suite' || context.eventName === 'workflow_run') {
+    const source = context.payload[context.eventName];
+    for (const pr of (source.pull_requests || [])) {
       pullNumbers.push(pr.number);
+    }
+    // A workflow run for a fork PR lists no pull requests. Find the open PR
+    // from the run's source branch and require it to still be at the SHA
+    // that was tested.
+    if (pullNumbers.length === 0 && context.eventName === 'workflow_run' &&
+        source.head_repository?.owner?.login && source.head_branch) {
+      const candidates = await github.paginate(github.rest.pulls.list, {
+        owner: context.repo.owner,
+        repo: context.repo.repo,
+        state: 'open',
+        head: `${source.head_repository.owner.login}:${source.head_branch}`,
+        per_page: 100,
+      });
+      // The head query is owner:branch, so also verify the repository identity.
+      pullNumbers = candidates.filter(pr =>
+        pr.head.repo?.id === source.head_repository.id &&
+        pr.head.ref === source.head_branch && pr.head.sha === source.head_sha
+      ).map(pr => pr.number);
     }
   }
 
@@ -143,7 +161,7 @@ module.exports = async ({ github, context, core }) => {
       continue;
     }
 
-    // For check_suite retries, find who previously ran /area-maintainer-approved
+    // For CI completion retries, find who previously ran /area-maintainer-approved
     let requester = commenter;
     let allComments = null;
     if (!requester) {
@@ -163,10 +181,10 @@ module.exports = async ({ github, context, core }) => {
       continue;
     }
 
-    // For check_suite, verify the bot posted a "waiting" comment for the current head SHA.
+    // For CI completion retries, verify the bot posted a "waiting" comment for the current head SHA.
     // If new commits were pushed after approval, the SHA won't match and we skip
     // to prevent merging code the area maintainer never reviewed.
-    if (context.eventName === 'check_suite') {
+    if (context.eventName !== 'issue_comment') {
       if (!allComments) allComments = await fetchAllComments(prNumber);
       const waitingMarker = `<!-- area-merge-sha:${pr.head.sha} -->`;
       const isWaiting = allComments.some(c =>

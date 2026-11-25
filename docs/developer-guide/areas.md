@@ -45,6 +45,13 @@ The workflow generates a short-lived installation token via
 [`actions/create-github-app-token`](https://github.com/actions/create-github-app-token)
 at the start of each run. No long-lived access tokens are used during workflow execution.
 
+If CI is still running when `/area-maintainer-approved` is issued, the bot
+posts a waiting comment for the PR's current head commit and merges once CI
+passes. It rechecks when the `ovn-ci` workflow completes for that commit,
+including after a retest and for PRs from forks, so no second approval is
+needed. After new commits are pushed, a new `/area-maintainer-approved` is
+required.
+
 ## Current Areas
 
 ### Virtualization
