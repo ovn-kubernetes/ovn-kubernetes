@@ -179,7 +179,12 @@ func (oc *DefaultNetworkController) ensureLocalZonePod(ctx context.Context, oldP
 // It returns nil on success and error on failure; failure indicates the pod set up should be retried later.
 func (oc *DefaultNetworkController) ensureRemoteZonePod(_ context.Context, _, pod *corev1.Pod) error {
 	if kubevirt.IsPodLiveMigratable(pod) {
-		return kubevirt.EnsureRemoteZonePodAddressesToNodeRoute(oc.watchFactory, oc.nbClient, pod)
+		if err := kubevirt.EnsureRemoteZonePodAddressesToNodeRoute(oc.watchFactory, oc.nbClient, pod); err != nil {
+			return err
+		}
+		if config.IPv4Mode {
+			return kubevirt.RefreshIPv4NeighborsOnSubnetOwner(oc.watchFactory, oc.lsManager, pod)
+		}
 	}
 	return nil
 }
@@ -221,6 +226,12 @@ func (oc *DefaultNetworkController) removeLocalZonePod(_ context.Context, pod *c
 	if err := oc.deleteLogicalPort(pod, portInfo); err != nil {
 		return fmt.Errorf("deleteLogicalPort failed for pod %s: %w",
 			getPodNamespacedName(pod), err)
+	}
+
+	if config.IPv4Mode && kubevirt.IsPodLiveMigratable(pod) {
+		if err := kubevirt.RefreshIPv4NeighborsAfterSourceRemoval(oc.watchFactory, oc.nbClient, pod); err != nil {
+			return err
+		}
 	}
 
 	if err := oc.deletePodNetworkPolicyMembership(pod); err != nil {
