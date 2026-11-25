@@ -13,8 +13,9 @@ import (
 	"github.com/google/cel-go/common/types"
 )
 
-// Exercise the deployed exclusion as well as the validator: a spoofed self-pod
-// label must not prevent protected metadata from reaching admission at all.
+// Exercise the deployed exclusion as well as the validator: only identity pods,
+// recognized by their service account, skip admission, and never for
+// ovnkube-node callers or when protected metadata is involved.
 func TestPodWebhookSelfExclusion(t *testing.T) {
 	template, err := os.ReadFile(filepath.Join(crdDir(), "..", "charts", "ovnkube-identity", "templates", "webhook.yaml"))
 	if err != nil {
@@ -41,7 +42,7 @@ func TestPodWebhookSelfExclusion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create CEL program for pod webhook match condition: %v", err)
 	}
-	pod := func(labels, annotations map[string]string) map[string]any {
+	pod := func(serviceAccount string, labels, annotations map[string]string) map[string]any {
 		metadata := map[string]any{}
 		if labels != nil {
 			metadata["labels"] = labels
@@ -49,11 +50,21 @@ func TestPodWebhookSelfExclusion(t *testing.T) {
 		if annotations != nil {
 			metadata["annotations"] = annotations
 		}
-		return map[string]any{"metadata": metadata}
+		spec := map[string]any{}
+		if serviceAccount != "" {
+			spec["serviceAccountName"] = serviceAccount
+		}
+		return map[string]any{"metadata": metadata, "spec": spec}
 	}
-	evaluate := func(t *testing.T, current, old any, invoke bool) {
+	const (
+		self     = "ovnkube-identity"
+		kubelet  = "system:node:node1"
+		ovnkNode = "system:ovn-node:node1"
+	)
+	evaluateAs := func(t *testing.T, username string, current, old any, invoke bool) {
 		t.Helper()
-		result, _, err := program.Eval(map[string]any{"request": map[string]any{"namespace": "ovn-kubernetes"}, "object": current, "oldObject": old})
+		request := map[string]any{"namespace": "ovn-kubernetes", "userInfo": map[string]any{"username": username}}
+		result, _, err := program.Eval(map[string]any{"request": request, "object": current, "oldObject": old})
 		if err != nil {
 			t.Fatalf("evaluate pod webhook match condition: %v", err)
 		}
@@ -61,15 +72,24 @@ func TestPodWebhookSelfExclusion(t *testing.T) {
 			t.Fatalf("invoke = %v, want %v", result, invoke)
 		}
 	}
-	self := map[string]string{"name": "ovnkube-identity"}
-	t.Run("bootstrap self pod", func(t *testing.T) { evaluate(t, pod(self, nil), nil, false) })
-	t.Run("ordinary pod", func(t *testing.T) { evaluate(t, pod(nil, nil), nil, true) })
+	evaluate := func(t *testing.T, current, old any, invoke bool) {
+		t.Helper()
+		evaluateAs(t, kubelet, current, old, invoke)
+	}
+	t.Run("bootstrap self pod", func(t *testing.T) { evaluate(t, pod(self, nil, nil), nil, false) })
+	t.Run("ordinary pod", func(t *testing.T) { evaluate(t, pod("", nil, nil), nil, true) })
+	t.Run("spoofed self pod label", func(t *testing.T) {
+		evaluate(t, pod("other", map[string]string{"name": self}, nil), nil, true)
+	})
+	t.Run("ovnkube-node caller on self pod", func(t *testing.T) {
+		evaluateAs(t, ovnkNode, pod(self, nil, nil), pod(self, nil, nil), true)
+	})
 	for _, key := range []string{"k8s.ovn.org/pod-networks", "k8s.ovn.org/dpu.connection-details", "k8s.ovn.org/dpu.connection-status"} {
 		t.Run(key, func(t *testing.T) {
-			annotated := pod(self, map[string]string{key: ""})
+			annotated := pod(self, nil, map[string]string{key: ""})
 			evaluate(t, annotated, nil, true)
 			evaluate(t, annotated, annotated, true)
-			evaluate(t, pod(self, nil), annotated, true)
+			evaluate(t, pod(self, nil, nil), annotated, true)
 		})
 	}
 }

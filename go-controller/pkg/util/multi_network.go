@@ -1884,11 +1884,9 @@ func SubnetOverlapCheck(netconf *ovncnitypes.NetConf) (*net.IPNet, *net.IPNet, e
 		allSubnets.Append(config.ConfigSubnetTransit, subnet)
 	}
 	if ni.ExcludeSubnets() != nil {
-		for i, configSubnet := range allSubnets.Subnets {
-			if IsContainedInAnyCIDR(configSubnet.Subnet, ni.ExcludeSubnets()...) {
-				allSubnets.Subnets = append(allSubnets.Subnets[:i], allSubnets.Subnets[i+1:]...)
-			}
-		}
+		allSubnets.Subnets = slices.DeleteFunc(allSubnets.Subnets, func(configSubnet config.ConfigSubnet) bool {
+			return IsContainedInAnyCIDR(configSubnet.Subnet, ni.ExcludeSubnets()...)
+		})
 	}
 	subnet1, subnet2, err := allSubnets.CheckForOverlaps()
 	if err != nil {
