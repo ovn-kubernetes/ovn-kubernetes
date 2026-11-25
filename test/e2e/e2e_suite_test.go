@@ -97,7 +97,18 @@ func TestMain(m *testing.M) {
 		deploymentconfig.Get().AddRequiredImage(api.Netshoot)
 	}
 
-	os.Exit(m.Run())
+	code := m.Run()
+	// Release anything a provider held for the whole suite, such as a runner's
+	// connection to a remote host. Close is discovered by type assertion rather
+	// than declared on api.Provider, so that adding it breaks no out-of-tree
+	// provider. A failure here must not change the result the tests produced, so
+	// it is reported and the test exit code is preserved.
+	if closer, ok := infraprovider.Get().(interface{ Close() error }); ok {
+		if err := closer.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "infra provider close: %v\n", err)
+		}
+	}
+	os.Exit(code)
 }
 
 func TestE2E(t *testing.T) {

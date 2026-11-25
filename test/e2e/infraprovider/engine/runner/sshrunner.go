@@ -62,6 +62,20 @@ func (s *sshRunner) Run(command string, args ...string) (string, error) {
 	return result.stdout, nil
 }
 
+// Close drops the cached SSH connection. The runner reuses one client for every
+// command, so without this the connection outlives the suite that created it.
+// Clearing the field leaves the runner usable: a later Run dials again.
+func (s *sshRunner) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.client == nil {
+		return nil
+	}
+	err := s.client.Close()
+	s.client = nil
+	return err
+}
+
 // getSSHClient returns the cached SSH client to the remote IP, creating it if needed.
 // If the existing connection is broken, it will be recreated.
 func (s *sshRunner) getSSHClient() (*ssh.Client, error) {

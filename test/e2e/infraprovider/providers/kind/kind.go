@@ -30,6 +30,7 @@ import (
 
 type kind struct {
 	engine *container.Engine
+	runner api.Runner
 }
 
 func New() api.Provider {
@@ -38,11 +39,26 @@ func New() api.Provider {
 	}
 	ce := getContainerRuntime()
 	cmdRunner := runner.NewDirectRunner()
-	return &kind{engine: container.NewEngine(ce.String(), cmdRunner)}
+	return &kind{
+		engine: container.NewEngine(ce.String(), cmdRunner),
+		runner: cmdRunner,
+	}
 }
 
 func (k *kind) Name() string {
 	return "kind"
+}
+
+// Close releases whatever the runner holds open between commands. It is
+// deliberately not a method on api.Provider: that interface has out-of-tree
+// implementations, and a method added to it breaks every one of them. TestMain
+// discovers this one by type assertion instead, so a provider -- or a runner --
+// without a Close is simply left alone.
+func (k *kind) Close() error {
+	if closer, ok := k.runner.(interface{ Close() error }); ok {
+		return closer.Close()
+	}
+	return nil
 }
 
 func (k *kind) PrimaryNetwork() (api.Network, error) {
