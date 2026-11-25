@@ -96,8 +96,9 @@ against the registered metric before reading an empty file as zero.
 
 `contrib/perf/analyze-bgp-lanes.py` turns the artifacts of one run into a
 markdown report: convergence per lane, shape and outcome, workqueue figures,
-reconcile work by operation, the scaling fit across the single-worker lanes,
-and one row per adjacent pair isolating a variable. Lanes are compared on mean
+reconcile work by operation, the scaling fit of work per write across the
+single-worker lanes other than churn, and one row per adjacent pair isolating a
+variable. Lanes are compared on mean
 wait, work and reconcile durations, taken from the histograms' `_sum` and
 `_count`. Their 99th percentiles are shown only as the bucket they fall in: the
 buckets double in width, so a quantile interpolated inside one locates the

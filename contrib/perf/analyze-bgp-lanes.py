@@ -48,6 +48,11 @@ RECONCILE_BUCKETS = [0.005 * 2**k for k in range(14)]
 # with the same worker count share a scaling fit.
 WORKERS = {"bgp-ra-density-threads": 4}
 
+# Lanes that recreate RouteAdvertisements while the queue drains. Their items
+# arrive over time rather than in one burst, so the burst queueing model does
+# not describe their wait and they are left out of the fit.
+CHURN = {"bgp-ra-churn"}
+
 
 def load(lane_dir, name):
     hits = list(pathlib.Path(lane_dir).rglob(f"metrics/{name}.json"))
@@ -179,6 +184,18 @@ def collect(lane_dir):
         ops[op] = max(ops[op], d["value"])
     lane["ops"] = dict(ops)
 
+    # Reason: a reconcile is not a unit of work. The controller reconciles an
+    # RA again once the informer sees its NAD annotation, and that pass writes
+    # nothing, so the mean per reconcile halves while the cost per write does
+    # not move. Total work divided by real writes is the stable quantity.
+    lane["writes"] = sum(ops.get(op, 0) for op in ("create", "update", "delete"))
+    if lane["reconciles"] and lane["reconcile_mean"] is not None:
+        lane["total_work"] = lane["reconciles"] * lane["reconcile_mean"]
+    else:
+        lane["total_work"] = None
+    lane["work_per_write"] = (lane["total_work"] / lane["writes"]
+                              if lane["total_work"] and lane["writes"] else None)
+
     lane.update(
         ovndb=peak(load(lane_dir, "ovnDBSizeBytes")),
         txn_rate=peak(load(lane_dir, "libovsdbTxnRate")),
@@ -271,7 +288,9 @@ def work_table(lanes):
     out = ["## Reconcile work", "",
            "`unchanged` writes are configurations regenerated, compared, found identical and "
            "thrown away. They are the cost of reconciling a RouteAdvertisements that did not "
-           "need it.", "",
+           "need it. The controller reconciles each RouteAdvertisements once more after the "
+           "informer sees its NAD annotation, so even a create-only lane records one "
+           "`unchanged` per configuration from that pass.", "",
            "| Lane | create | unchanged | update | delete | Wasted share |",
            "|---|---|---|---|---|---|"]
     for l in lanes:
@@ -299,44 +318,46 @@ def support_table(lanes):
 
 
 def model_table(lanes):
-    """Work should scale with nodes alone, wait with RAs x work.
+    """Work should scale with writes alone, wait with the total work queued.
 
     Only valid at a fixed worker count, so only single-worker lanes are fitted:
     a lane running more reconcile workers is compared in the axis table.
     """
     out = ["## Scaling model", "",
-           "Work is one apiserver write per node, so work per node should be constant. Wait "
-           "is each item queueing behind the others through the workers, so wait divided by "
-           "RAs x work should be constant too. Fitted on the single-worker lanes' means.", ""]
-    usable = [l for l in lanes if l.get("wait_mean") and l.get("work_mean")
-              and l.get("nodes") and l.get("ras")]
+           "A reconcile's cost is its apiserver writes, one per node for an RA that needs "
+           "them, so total work divided by writes should be constant. Total work is "
+           "reconciles x reconcile mean, which also counts passes that write nothing. When "
+           "every item is queued at once and drained by one worker, an item waits on average "
+           "for half the work ahead of it, so wait divided by total work should sit near 0.5. "
+           "Fitted on the single-worker lanes that are not churn lanes: churn queues its "
+           "items over time rather than in one burst.", ""]
+    usable = [l for l in lanes if l.get("wait_mean") and l.get("work_per_write")]
     if not usable:
         return out + ["No lane recorded the mean queries. The p99s only locate a bucket, "
                       "so they are not fitted."]
 
-    def per_node(l):
-        return l["work_mean"] / l["nodes"]
-
     def queue_factor(l):
-        return l["wait_mean"] / (l["ras"] * l["work_mean"])
+        return l["wait_mean"] / l["total_work"]
 
-    out += ["| Lane | Workers | Nodes | RAs | Work mean / node | Wait / (RAs x work) |",
-            "|---|---|---|---|---|---|"]
+    out += ["| Lane | Workers | Nodes | RAs | Reconciles | Writes | Total work "
+            "| Work / write | Wait / total work |",
+            "|---|---|---|---|---|---|---|---|---|"]
     for l in usable:
         out.append(f"| `{l['name']}` | {l['workers']} | {l['nodes']} | {l['ras']} "
-                   f"| {per_node(l):.4f} s | {queue_factor(l):.3f} |")
+                   f"| {l['reconciles']:.0f} | {l['writes']:.0f} | {l['total_work']:.1f} s "
+                   f"| {l['work_per_write'] * 1000:.1f} ms | {queue_factor(l):.3f} |")
 
-    fit = [l for l in usable if l["workers"] == 1]
+    fit = [l for l in usable if l["workers"] == 1 and l["name"] not in CHURN]
 
     def spread(vals):
         return (max(vals) - min(vals)) / (sum(vals) / len(vals)) * 100
 
     if len(fit) >= 2:
-        pn = [per_node(l) for l in fit]
+        pw = [l["work_per_write"] * 1000 for l in fit]
         qf = [queue_factor(l) for l in fit]
         out += ["",
-                f"Across the {len(fit)} single-worker lanes: work/node {min(pn):.4f} to "
-                f"{max(pn):.4f} s ({spread(pn):.1f}%), wait/(RAs x work) {min(qf):.3f} to "
+                f"Across the {len(fit)} fitted lanes: work/write {min(pw):.1f} to "
+                f"{max(pw):.1f} ms ({spread(pw):.1f}%), wait/total work {min(qf):.3f} to "
                 f"{max(qf):.3f} ({spread(qf):.1f}%)."]
     return out
 
@@ -352,8 +373,9 @@ def axes_table(lanes):
     ]
     out = ["## Axis isolation", "",
            "Each row compares two lanes differing in exactly one variable, on means.", "",
-           "| Variable | From | To | Wait mean | Work mean | Reconciles | What changed |",
-           "|---|---|---|---|---|---|---|"]
+           "| Variable | From | To | Wait mean | Work / write | Total work | Reconciles "
+           "| What changed |",
+           "|---|---|---|---|---|---|---|---|"]
     for label, a, b, note in pairs:
         la, lb = by.get(a), by.get(b)
         if not la or not lb:
@@ -362,8 +384,8 @@ def axes_table(lanes):
         def rr(key):
             return f"{lb[key] / la[key]:.2f}x" if la.get(key) and lb.get(key) else "n/a"
 
-        out.append(f"| {label} | `{a}` | `{b}` | {rr('wait_mean')} | {rr('work_mean')} "
-                   f"| {rr('reconciles')} | {note} |")
+        out.append(f"| {label} | `{a}` | `{b}` | {rr('wait_mean')} | {rr('work_per_write')} "
+                   f"| {rr('total_work')} | {rr('reconciles')} | {note} |")
     return out
 
 
