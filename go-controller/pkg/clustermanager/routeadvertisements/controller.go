@@ -196,7 +196,7 @@ func NewController(
 	raConfig := &controllerutil.ControllerConfig[ratypes.RouteAdvertisements]{
 		RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
 		Reconcile:      c.reconcile,
-		Threadiness:    1,
+		Threadiness:    4,
 		Informer:       wf.RouteAdvertisementsInformer().Informer(),
 		Lister:         wf.RouteAdvertisementsInformer().Lister().List,
 		ObjNeedsUpdate: c.raNeedsUpdate,
@@ -1583,7 +1583,8 @@ func (c *Controller) generateFRRConfiguration(
 	selectedNetworks *selectedNetworks,
 	covered sets.Set[string],
 ) (*frrtypes.FRRConfiguration, error) {
-	source := template.source
+	// The source lives in the informer cache and is reused for every node, so copy it before appending.
+	source := template.source.DeepCopy()
 	nodeName := node.Name
 	var routers []frrtypes.Router
 	var renderedNetworks []string
