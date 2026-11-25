@@ -390,12 +390,10 @@ var _ = Describe("Network Segmentation: MAC binding mirroring with ARP/NDP flood
 	feature.NetworkSegmentation, func() {
 
 		f := wrappedTestFramework("noflood-macbinding")
-		// Namespaces are created by hand in BeforeEach: the UDN ones need the
-		// primary-UDN label.
-		f.SkipNamespaceCreation = true
 
 		// The container is nested so that the framework's own BeforeEach -
-		// which populates f.ClientSet - runs before ours.
+		// which populates f.ClientSet and creates f.Namespace - runs before
+		// ours.
 		//
 		// Every spec builds its own fixture in BeforeEach and starts the traffic
 		// it asserts on, so each one can run on its own, selected by name, and
@@ -543,16 +541,12 @@ var _ = Describe("Network Segmentation: MAC binding mirroring with ARP/NDP flood
 				return name
 			}
 
+			// createNamespace creates a namespace the way the framework creates
+			// its own. The framework deletes the namespace after every spec; the CUDN
+			// cleanups below wait for that deletion before deleting their network.
 			createNamespace := func(labels map[string]string) *v1.Namespace {
-				ns, err := cs.CoreV1().Namespaces().Create(context.TODO(), &v1.Namespace{
-					ObjectMeta: metav1.ObjectMeta{GenerateName: f.BaseName + "-", Labels: labels},
-				}, metav1.CreateOptions{})
+				ns, err := f.CreateNamespace(context.TODO(), f.BaseName, labels)
 				Expect(err).NotTo(HaveOccurred(), "must create namespace")
-				DeferCleanup(func() {
-					// Wait, so the pod pings have stopped before the external
-					// containers are deleted and their IPs reused by the next spec.
-					deleteNamespaceAndWait(ns.Name)
-				})
 				return ns
 			}
 
@@ -631,12 +625,15 @@ var _ = Describe("Network Segmentation: MAC binding mirroring with ARP/NDP flood
 				for i := range otherNodes {
 					purgeDynamicMACBindings(ovnkPodOnNode(otherNodes[i].Name), extIPs)
 				}
-				By("creating the CDN namespace and its client pod")
-				cdnNs := createNamespace(map[string]string{"e2e-framework": f.BaseName})
-				// The framework skipped namespace creation; give it one anyway so
-				// its per-spec hooks have something to work with.
-				f.Namespace = cdnNs
-				cdnNamespace = cdnNs.Name
+				By("using the framework's own namespace for the CDN and creating its client pod")
+				cdnNamespace = f.Namespace.Name
+				// The framework deletes its namespaces after every spec without
+				// waiting for them to go away; wait here so the CDN pod - and any
+				// ping it still runs - is gone before the external containers are
+				// deleted and their IPs reused by the next spec.
+				DeferCleanup(func() {
+					deleteNamespaceAndWait(cdnNamespace)
+				})
 				createPod(cdnNamespace, cdnPodName)
 
 				By("creating three primary CUDNs, one layer3 and two layer2")
@@ -681,6 +678,16 @@ var _ = Describe("Network Segmentation: MAC binding mirroring with ARP/NDP flood
 
 				cdnStaticIPs = staticMACBindingIPsOn(defaultGatewayRouterExtPortName(trafficNode.Name))
 				framework.Logf("CDN gateway router static bindings at rest: %v", cdnStaticIPs)
+
+				// Safety net for the specs that leave their pings running on
+				// purpose and for the failure paths: no ping may outlive its spec,
+				// or it could keep learning into the next spec's external
+				// containers, which may reuse the same IPs. Registered last so it
+				// runs before every other cleanup of the spec.
+				DeferCleanup(func() {
+					stopBackgroundPings(cdnNamespace, cdnPodName)
+					stopBackgroundPings(udnNamespace, udnPodName)
+				})
 			})
 
 			It("has no MAC bindings for the external containers before any traffic", func() {
