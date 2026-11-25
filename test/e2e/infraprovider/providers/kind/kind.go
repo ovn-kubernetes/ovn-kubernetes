@@ -4,33 +4,31 @@
 package kind
 
 import (
-	"context"
-	"fmt"
 	"os"
 	"os/exec"
 	"strings"
 	"time"
 
 	"github.com/onsi/ginkgo/v2"
-	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/allocators"
-	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
 	deploymentconfigapi "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig/api"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/api"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/engine/container"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/engine/runner"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/engine/testcontext"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/providers/base"
 
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/kubernetes/test/e2e/framework"
 )
 
 type kind struct {
+	base.Provider
 	engine *container.Engine
 }
+
+// Kind CI runs the node shutdown/startup spec only while kind implements this.
+var _ api.NodeInfrastructure = &kind{}
 
 func New() api.Provider {
 	if !infraprovider.IsKind() {
@@ -38,7 +36,8 @@ func New() api.Provider {
 	}
 	ce := getContainerRuntime()
 	cmdRunner := runner.NewDirectRunner()
-	return &kind{engine: container.NewEngine(ce.String(), cmdRunner)}
+	engine := container.NewEngine(ce.String(), cmdRunner)
+	return &kind{Provider: base.Provider{ExternalContainerProvider: engine}, engine: engine}
 }
 
 func (k *kind) Name() string {
@@ -49,51 +48,12 @@ func (k *kind) PrimaryNetwork() (api.Network, error) {
 	return k.GetNetwork("kind")
 }
 
-func (k *kind) GetNetwork(name string) (api.Network, error) {
-	return k.engine.GetNetwork(name)
-}
-
-func (k *kind) GetDefaultTimeoutContext() *framework.TimeoutContext {
-	return framework.NewTimeoutContext()
-}
-
-func (k *kind) GetK8HostPort(f *framework.Framework, cleanup api.ContextCleanUp) uint16 {
-	// Cap below 10250 (kubelet default) and the ephemeral range (ip_local_port_range).
-	port, err := allocators.AllocateHostPort(f, cleanup, 1024, 10249)
-	framework.ExpectNoError(err)
-	return port
-}
-
 func (k *kind) GetK8NodeNetworkInterface(container string, network api.Network) (api.NetworkInterface, error) {
 	return k.engine.GetNetworkInterface(container, network.Name())
 }
 
 func (k *kind) ExecK8NodeCommand(nodeName string, cmd []string) (string, error) {
 	return k.engine.ExecContainerCommand(nodeName, cmd)
-}
-
-func (k *kind) ExecExternalContainerCommand(container api.ExternalContainer, cmd []string) (string, error) {
-	return k.engine.ExecExternalContainerCommand(container, cmd)
-}
-
-func (k *kind) ExternalContainerPrimaryInterfaceName() string {
-	return k.engine.ExternalContainerPrimaryInterfaceName()
-}
-
-func (k *kind) GetExternalContainerLogs(container api.ExternalContainer) (string, error) {
-	return k.engine.GetExternalContainerLogs(container)
-}
-
-func (k *kind) GetExternalContainerNetworkInterface(container api.ExternalContainer, network api.Network) (api.NetworkInterface, error) {
-	return k.engine.GetExternalContainerNetworkInterface(container, network)
-}
-
-func (k *kind) GetExternalContainerPort() uint16 {
-	return k.engine.GetExternalContainerPort()
-}
-
-func (k *kind) ListNetworks() ([]string, error) {
-	return k.engine.ListNetworks()
 }
 
 func (k *kind) PreloadImages(imgs []deploymentconfigapi.ImageConfig) {
@@ -151,10 +111,6 @@ func kindClusterName() string {
 	return ""
 }
 
-func (k *kind) InfrastructureNetworkExclusions() (ipv4, ipv6 sets.Set[string]) {
-	return nil, nil
-}
-
 func (k *kind) ShutdownNode(nodeName string) error {
 	return k.engine.StopContainer(nodeName)
 }
@@ -166,126 +122,9 @@ func (k *kind) StartNode(nodeName string) error {
 func (k *kind) NewTestContext() api.Context {
 	context := &testcontext.TestContext{}
 	ginkgo.DeferCleanup(context.CleanUp)
-	ck := &contextKind{
-		TestContext: context,
-		engine:      k.engine.WithTestContext(context),
+	return &base.Context{
+		TestContext:                      context,
+		ExternalContainerContextProvider: k.engine.WithTestContext(context),
+		Provider:                         k,
 	}
-	return ck
-}
-
-type contextKind struct {
-	*testcontext.TestContext
-	engine *container.Engine
-}
-
-func (c *contextKind) CreateExternalContainer(container api.ExternalContainer) (api.ExternalContainer, error) {
-	return c.engine.CreateExternalContainer(container)
-}
-
-func (c *contextKind) DeleteExternalContainer(container api.ExternalContainer) error {
-	return c.engine.DeleteExternalContainer(container)
-}
-
-func (c *contextKind) CreateNetwork(name string, subnets ...string) (api.Network, error) {
-	return c.engine.CreateNetwork(name, subnets...)
-}
-
-func (c *contextKind) AttachNetwork(network api.Network, container string) (api.NetworkInterface, error) {
-	return c.engine.AttachNetwork(network, container)
-}
-
-func (c *contextKind) DetachNetwork(network api.Network, container string) error {
-	return c.engine.DetachNetwork(network, container)
-}
-
-func (c *contextKind) DeleteNetwork(network api.Network) error {
-	return c.engine.DeleteNetwork(network)
-}
-
-func (c *contextKind) SetupUnderlay(f *framework.Framework, underlay api.Underlay) error {
-	if underlay.LogicalNetworkName == "" {
-		return fmt.Errorf("underlay logical network name must be set")
-	}
-
-	if underlay.PhysicalNetworkName == "" {
-		underlay.PhysicalNetworkName = "underlay"
-	}
-
-	if underlay.BridgeName == "" {
-		underlay.BridgeName = secondaryBridge
-	}
-
-	c.AddCleanUpFn(func() error {
-		// Find the OVS pods again to cover cases that restart the PODs
-		ovsPods, err := findOVSPods(f)
-		if err != nil {
-			return fmt.Errorf("failed finding OVS pods during kind underlay tear down: %w", err)
-		}
-		for _, ovsPod := range ovsPods {
-			if underlay.BridgeName != deploymentconfig.Get().ExternalBridgeName() {
-				if err := removeOVSBridge(ovsPod.Namespace, ovsPod.Name, underlay.BridgeName); err != nil {
-					return fmt.Errorf("failed to remove OVS bridge %s for pod %s/%s during cleanup: %w", underlay.BridgeName, ovsPod.Namespace, ovsPod.Name, err)
-				}
-			}
-			if err := configureBridgeMappings(
-				ovsPod.Namespace,
-				ovsPod.Name,
-				defaultNetworkBridgeMapping(),
-			); err != nil {
-				return fmt.Errorf("failed to restore default bridge mappings for pod %s/%s during cleanup: %w", ovsPod.Namespace, ovsPod.Name, err)
-			}
-		}
-		return nil
-	})
-
-	ovsPods, err := findOVSPods(f)
-	if err != nil {
-		return fmt.Errorf("failed finding OVS pods during kind underlay setup: %w", err)
-	}
-	for _, ovsPod := range ovsPods {
-		if underlay.BridgeName != deploymentconfig.Get().ExternalBridgeName() {
-			underlayInterface, err := c.engine.GetNetworkInterface(ovsPod.Spec.NodeName, underlay.PhysicalNetworkName)
-			if err != nil {
-				return fmt.Errorf("failed to get underlay interface for network %s on node %s: %w", underlay.PhysicalNetworkName, ovsPod.Spec.NodeName, err)
-			}
-			if err := ensureOVSBridge(ovsPod.Namespace, ovsPod.Name, underlay.BridgeName); err != nil {
-				return fmt.Errorf("failed to add OVS bridge %s for pod %s/%s: %w", underlay.BridgeName, ovsPod.Namespace, ovsPod.Name, err)
-			}
-
-			if err := ovsAttachPortToBridge(ovsPod.Namespace, ovsPod.Name, underlay.BridgeName, underlayInterface.InfName); err != nil {
-				return fmt.Errorf("failed to attach port %s to bridge %s for pod %s/%s: %w", underlayInterface.InfName, underlay.BridgeName, ovsPod.Namespace, ovsPod.Name, err)
-			}
-			if underlay.VlanID > 0 {
-				if err := ovsEnableVLANAccessPort(ovsPod.Namespace, ovsPod.Name, underlay.BridgeName, underlayInterface.InfName, underlay.VlanID); err != nil {
-					return fmt.Errorf("failed to enable VLAN %d on port %s for bridge %s for pod %s/%s: %w", underlay.VlanID, underlayInterface.InfName, underlay.BridgeName, ovsPod.Namespace, ovsPod.Name, err)
-				}
-			}
-		}
-		if err := configureBridgeMappings(
-			ovsPod.Namespace,
-			ovsPod.Name,
-			defaultNetworkBridgeMapping(),
-			bridgeMapping(underlay.LogicalNetworkName, underlay.BridgeName),
-		); err != nil {
-			return fmt.Errorf("failed to configure bridge mappings for pod %s/%s for logical network %s to bridge %s: %w", ovsPod.Namespace, ovsPod.Name, underlay.LogicalNetworkName, underlay.BridgeName, err)
-		}
-	}
-
-	return nil
-}
-
-func findOVSPods(f *framework.Framework) ([]corev1.Pod, error) {
-	const ovsKubeNodeLabel = "app=ovnkube-node"
-	ovsPodList, err := f.ClientSet.CoreV1().Pods(deploymentconfig.Get().OVNKubernetesNamespace()).List(
-		context.Background(),
-		metav1.ListOptions{LabelSelector: ovsKubeNodeLabel},
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list OVS pods with label %q at namespace %q: %w", ovsKubeNodeLabel, deploymentconfig.Get().OVNKubernetesNamespace(), err)
-	}
-
-	if len(ovsPodList.Items) == 0 {
-		return nil, fmt.Errorf("no pods with label %q in namespace %q", ovsKubeNodeLabel, deploymentconfig.Get().OVNKubernetesNamespace())
-	}
-	return ovsPodList.Items, nil
 }
