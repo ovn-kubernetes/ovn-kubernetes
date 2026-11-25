@@ -22,6 +22,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/testing"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -30,6 +31,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/clustermanager/userdefinednetwork/template"
 	ovncnitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	controllerutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
 	ratypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
 	apitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"
 	udnv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
@@ -205,6 +207,21 @@ var _ = Describe("User Defined Network Controller", func() {
 		Entry("UDN with a failed status update", false, true),
 		Entry("CUDN with a failed status update", true, true),
 	)
+
+	It("does not requeue a primary CUDN for an unlabelled namespace", func() {
+		cudn := testLayer3PrimaryClusterUDN("empty-selector")
+		cudn.Spec.NamespaceSelector = metav1.LabelSelector{}
+		ns := invalidTestNamespace("unlabelled")
+		c := newTestController(noopRenderNadStub(), cudn, ns)
+		c.namespaceTracker[cudn.Name] = sets.New[string]()
+		controllerutil.Stop(c.cudnController)
+		fakeCUDNController := &controllerutil.FakeController{}
+		c.cudnController = fakeCUDNController
+		DeferCleanup(c.Shutdown)
+
+		Expect(c.ReconcileNamespace(ns.Name)).To(Succeed(), "reconciling an unlabelled namespace must not return an error")
+		Expect(fakeCUDNController.Reconciles).To(BeEmpty(), "an empty-selector primary CUDN must not be requeued for an unlabelled namespace")
+	})
 
 	Context("manager", func() {
 		var c *Controller

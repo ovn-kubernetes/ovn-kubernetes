@@ -650,6 +650,13 @@ func (c *Controller) ReconcileNamespace(key string) error {
 			if err != nil {
 				return fmt.Errorf("failed to get CUDN %q from cache: %w", cudnName, err)
 			}
+			if utiludn.IsPrimaryNetwork(&cudn.Spec.Network) &&
+				len(cudn.Spec.NamespaceSelector.MatchLabels) == 0 &&
+				len(cudn.Spec.NamespaceSelector.MatchExpressions) == 0 {
+				if _, ok := namespaceLabels[ovntypes.RequiredUDNNamespaceLabel]; !ok {
+					continue
+				}
+			}
 			cudnSelector, err := metav1.LabelSelectorAsSelector(&cudn.Spec.NamespaceSelector)
 			if err != nil {
 				return fmt.Errorf("failed to convert CUDN namespace selector: %w", err)
