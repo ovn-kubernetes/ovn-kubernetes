@@ -119,6 +119,15 @@ module.exports = async ({ github, context, core }) => {
    * Keeps only the latest check run of each job and ignores the area-merge check itself.
    */
   async function fetchCIStatus(ref) {
+    // Read the workflow runs first: a run that is completed here has already
+    // published all the check runs read below.
+    const workflowRuns = await github.paginate(github.rest.actions.listWorkflowRunsForRepo, {
+      owner: context.repo.owner,
+      repo: context.repo.repo,
+      head_sha: ref,
+      per_page: 100,
+    });
+
     const allCheckRuns = [];
     let checkPage = 1;
     while (true) {
@@ -140,12 +149,6 @@ module.exports = async ({ github, context, core }) => {
     // and name: ovn-ci and performance-test both have a Build-PR job, and
     // one passing must not hide the other failing. Check runs outside the
     // listed workflow runs, such as other Apps', are compared per check suite.
-    const workflowRuns = await github.paginate(github.rest.actions.listWorkflowRunsForRepo, {
-      owner: context.repo.owner,
-      repo: context.repo.repo,
-      head_sha: ref,
-      per_page: 100,
-    });
     const workflowBySuite = new Map(workflowRuns.map(run => [run.check_suite_id, run.workflow_id]));
     const latestByJob = new Map();
     for (const run of allCheckRuns) {
@@ -170,12 +173,41 @@ module.exports = async ({ github, context, core }) => {
     const pendingChecks = [];
     const failedChecks = [];
 
+    const passed = conclusion => ['success', 'neutral', 'skipped'].includes(conclusion);
+    const pendingSuites = new Set();
+    const failedSuites = new Set();
     for (const run of checkRuns) {
       if (run.name === 'area-merge') continue;
       if (run.status !== 'completed') {
         pendingChecks.push(run.name);
-      } else if (run.conclusion !== 'success' && run.conclusion !== 'neutral' && run.conclusion !== 'skipped') {
+        pendingSuites.add(run.check_suite?.id);
+      } else if (!passed(run.conclusion)) {
         failedChecks.push(run.name);
+        failedSuites.add(run.check_suite?.id);
+      }
+    }
+
+    // A workflow run can be queued, between two jobs, or fail before it
+    // creates a job, and then none of its check runs shows that. Use the
+    // run's own state in those cases rather than merge on the checks seen so
+    // far. PR CI runs on pull_request; runs for other events on this SHA only
+    // maintain labels or forward reviews. Only the latest run of a workflow
+    // counts, so a rerun supersedes one that was cancelled or failed. A rerun
+    // keeps the ID of its run, so compare when the latest attempts started.
+    const startedAt = run => new Date(run.run_started_at).getTime();
+    const latestRuns = new Map();
+    for (const run of workflowRuns) {
+      const existing = latestRuns.get(run.workflow_id);
+      if (run.event === 'pull_request' && (!existing || startedAt(run) > startedAt(existing))) {
+        latestRuns.set(run.workflow_id, run);
+      }
+    }
+    for (const run of latestRuns.values()) {
+      // A fork's run that awaits maintainer approval has not tested anything yet.
+      if (run.status !== 'completed' || run.conclusion === 'action_required') {
+        if (!pendingSuites.has(run.check_suite_id)) pendingChecks.push(`${run.name} (workflow)`);
+      } else if (!passed(run.conclusion) && !failedSuites.has(run.check_suite_id)) {
+        failedChecks.push(`${run.name} (workflow)`);
       }
     }
 

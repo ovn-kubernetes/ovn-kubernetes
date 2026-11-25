@@ -68,6 +68,19 @@ function setCommitStatus(f, state) {
 }
 
 /**
+ * Report a run of the ovn-ci workflow for the approved head, created and
+ * started after the runs reported before it. Its check runs belong to check
+ * suite 9.
+ */
+function addWorkflowRun(f, run) {
+  const id = f.workflowRuns.length + 1;
+  f.workflowRuns.push({
+    id, run_started_at: `2026-11-25T10:1${id}:00Z`, head_sha: f.pr.head.sha, check_suite_id: 9, workflow_id: 10,
+    name: 'ovn-ci', event: 'pull_request', status: 'completed', ...run,
+  });
+}
+
+/**
  * Report two Build-PR check runs, given as [workflow, conclusion] with the
  * older one first. Each belongs to its own workflow run; ovn-ci and
  * performance-test both have a job of that name.
@@ -76,7 +89,7 @@ function setBuildChecks(f, ...runs) {
   const workflowIds = { 'ovn-ci': 10, 'performance-test': 20 };
   runs.forEach(([workflow, conclusion], index) => {
     const suite = index + 1;
-    f.workflowRuns.push({ head_sha: f.pr.head.sha, check_suite_id: suite, workflow_id: workflowIds[workflow] });
+    addWorkflowRun(f, { check_suite_id: suite, workflow_id: workflowIds[workflow], name: workflow, conclusion });
     f.checks.push({
       name: 'Build-PR', check_suite: { id: suite }, status: 'completed', conclusion,
       started_at: `2026-11-25T10:0${suite}:00Z`,
@@ -110,6 +123,35 @@ for (const [outcome, setup, merges, reply] of [
   ['reports a job name once when the job failed in two workflows',
     f => setBuildChecks(f, ['ovn-ci', 'failure'], ['performance-test', 'failure']),
     0, /CI checks have failed:\n- `Build-PR`\n\n/],
+  ['waits for a queued workflow that has not reported any check yet',
+    f => addWorkflowRun(f, { status: 'queued' }),
+    0, /^<!-- area-merge-sha:approved-sha -->.*- `ovn-ci \(workflow\)`$/s],
+  ['lists only the pending check of a workflow that is still running', f => {
+    Object.assign(f.checks[0], { status: 'in_progress', check_suite: { id: 9 } });
+    addWorkflowRun(f, { status: 'in_progress' });
+  }, 0, /Pending checks:\n- `e2e`$/],
+  ['merges while a workflow run for another event has not completed',
+    f => addWorkflowRun(f, { name: 'Pull Request Labeler', event: 'pull_request_target', status: 'in_progress' }),
+    1, /^PR merged by area maintainer @maintainer/],
+  ['waits for a fork workflow that awaits maintainer approval',
+    f => addWorkflowRun(f, { conclusion: 'action_required' }),
+    0, /^<!-- area-merge-sha:approved-sha -->.*- `ovn-ci \(workflow\)`$/s],
+  ['is blocked by a workflow that failed before it created a job',
+    f => addWorkflowRun(f, { conclusion: 'startup_failure' }),
+    0, /CI checks have failed:\n- `ovn-ci \(workflow\)`\n/],
+  ['lists only the failed check of a workflow that failed', f => {
+    Object.assign(f.checks[0], { conclusion: 'failure', check_suite: { id: 9 } });
+    addWorkflowRun(f, { conclusion: 'failure' });
+  }, 0, /CI checks have failed:\n- `e2e`\n\n/],
+  ['merges when a rerun of a workflow that failed without a job passed', f => {
+    addWorkflowRun(f, { check_suite_id: 8, conclusion: 'startup_failure' });
+    addWorkflowRun(f, { conclusion: 'success' });
+  }, 1, /^PR merged by area maintainer @maintainer/],
+  // A rerun keeps the ID of its run, so the passing run here has the lower ID.
+  ['merges when an older run of a workflow was rerun and passed after a newer one failed', f => {
+    addWorkflowRun(f, { check_suite_id: 8, conclusion: 'success', run_started_at: '2026-11-25T11:00:00Z' });
+    addWorkflowRun(f, { conclusion: 'startup_failure' });
+  }, 1, /^PR merged by area maintainer @maintainer/],
 ]) {
   test(`approval ${outcome}`, async t => {
     const f = fixture(t);
