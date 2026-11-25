@@ -11,11 +11,14 @@ Usage:
 
 import argparse
 import os
+import re
 import sys
 import zipfile
 from pathlib import Path
 
 import requests
+
+SAFE_ARTIFACT_NAME = re.compile(r'[A-Za-z0-9][A-Za-z0-9_-]*')
 
 
 def get_github_token() -> str:
@@ -147,6 +150,12 @@ def main():
         artifact_id = artifact['id']
 
         print(f"Processing: {artifact_name}", file=sys.stderr)
+
+        # The name comes from the workflow run. It is used as a path below and
+        # as a directory name in later shell steps, so only accept plain names.
+        if not SAFE_ARTIFACT_NAME.fullmatch(artifact_name):
+            print(f"  Skipping artifact with unsafe name: {artifact_name!r}", file=sys.stderr)
+            continue
 
         zip_path = args.output_dir / f"{artifact_name}.zip"
 
