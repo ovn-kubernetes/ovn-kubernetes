@@ -417,7 +417,7 @@ jobs:
         path: /tmp/${{ matrix.perf-test }}/pprof-data
 
     - name: Upload performance test data
-      if: ${{ matrix.perf-test == 'kubelet-density-cni' || matrix.perf-test == 'udn-density-l2-noPods' || matrix.perf-test == 'cudn-density-l2-noPods' || matrix.perf-test == 'udn-density-l2-pods' || matrix.perf-test == 'cudn-density-l2-pods-netpol' || matrix.perf-test == 'udn-density-l2-pods-netpol' || matrix.perf-test == 'udn-density-l3-pods-netpol' || matrix.perf-test == 'bgp-ra-density' || matrix.perf-test == 'bgp-ra-density-wide' || matrix.perf-test == 'bgp-ra-density-deep' || matrix.perf-test == 'bgp-ra-churn' }}
+      if: ${{ always() && (matrix.perf-test == 'kubelet-density-cni' || matrix.perf-test == 'udn-density-l2-noPods' || matrix.perf-test == 'cudn-density-l2-noPods' || matrix.perf-test == 'udn-density-l2-pods' || matrix.perf-test == 'cudn-density-l2-pods-netpol' || matrix.perf-test == 'udn-density-l2-pods-netpol' || matrix.perf-test == 'udn-density-l3-pods-netpol' || matrix.perf-test == 'bgp-ra-density' || matrix.perf-test == 'bgp-ra-density-wide' || matrix.perf-test == 'bgp-ra-density-deep' || matrix.perf-test == 'bgp-ra-churn') }}
       uses: actions/upload-artifact@v7
       with:
         name: ${{ matrix.perf-test }}-performance-test-data-${{ github.run_id }}
