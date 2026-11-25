@@ -116,7 +116,7 @@ module.exports = async ({ github, context, core }) => {
 
   /**
    * Fetch and classify pending and failed check runs and commit statuses for a commit SHA.
-   * Keeps only the latest check run per name and ignores the area-merge check itself.
+   * Keeps only the latest check run of each job and ignores the area-merge check itself.
    */
   async function fetchCIStatus(ref) {
     const allCheckRuns = [];
@@ -134,19 +134,32 @@ module.exports = async ({ github, context, core }) => {
       checkPage++;
     }
 
-    // Deduplicate check runs by name, keeping only the most recent per name.
-    // GitHub returns all runs for a SHA including stale ones from earlier
-    // workflow invocations (e.g. cancelled runs before a close/reopen retry).
-    const latestByName = new Map();
+    // GitHub returns all check runs for a SHA, including stale ones from an
+    // earlier run of the same workflow (e.g. cancelled before a close/reopen
+    // retry). Keep the most recent run of each job, identified by workflow
+    // and name: ovn-ci and performance-test both have a Build-PR job, and
+    // one passing must not hide the other failing. Check runs outside the
+    // listed workflow runs, such as other Apps', are compared per check suite.
+    const workflowRuns = await github.paginate(github.rest.actions.listWorkflowRunsForRepo, {
+      owner: context.repo.owner,
+      repo: context.repo.repo,
+      head_sha: ref,
+      per_page: 100,
+    });
+    const workflowBySuite = new Map(workflowRuns.map(run => [run.check_suite_id, run.workflow_id]));
+    const latestByJob = new Map();
     for (const run of allCheckRuns) {
-      const existing = latestByName.get(run.name);
+      const suite = run.check_suite?.id;
+      const source = workflowBySuite.has(suite) ? `workflow ${workflowBySuite.get(suite)}` : `suite ${suite}`;
+      const job = `${source}/${run.name}`;
+      const existing = latestByJob.get(job);
       const runTime = new Date(run.started_at || run.created_at || 0).getTime();
       const existingTime = existing ? new Date(existing.started_at || existing.created_at || 0).getTime() : 0;
       if (!existing || runTime > existingTime) {
-        latestByName.set(run.name, run);
+        latestByJob.set(job, run);
       }
     }
-    const checkRuns = Array.from(latestByName.values());
+    const checkRuns = Array.from(latestByJob.values());
 
     const { data: combinedStatus } = await github.rest.repos.getCombinedStatusForRef({
       owner: context.repo.owner,
@@ -201,7 +214,11 @@ module.exports = async ({ github, context, core }) => {
       pendingChecks.push('(no CI results reported yet)');
     }
 
-    return { pendingChecks, failedChecks };
+    // Jobs of different workflows can share a name; report each name once.
+    return {
+      pendingChecks: [...new Set(pendingChecks)],
+      failedChecks: [...new Set(failedChecks)],
+    };
   }
 
   // --- Process each PR ---
