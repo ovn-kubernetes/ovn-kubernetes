@@ -14,12 +14,14 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	k8sruntime "k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
+	egressfirewallv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1"
 	uplinkv1alpha1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1"
 )
 
@@ -37,6 +39,8 @@ func TestCRDIntegration(t *testing.T) {
 
 var _ = BeforeSuite(func() {
 	scheme := k8sruntime.NewScheme()
+	utilruntime.Must(apiextensionsv1.AddToScheme(scheme))
+	utilruntime.Must(egressfirewallv1.AddToScheme(scheme))
 	utilruntime.Must(uplinkv1alpha1.AddToScheme(scheme))
 
 	testEnv = &envtest.Environment{
