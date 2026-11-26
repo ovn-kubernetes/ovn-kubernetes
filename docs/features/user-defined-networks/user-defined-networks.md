@@ -149,8 +149,8 @@ NetworkAttachmentDefinitions. Configure networks through the UDN/CUDN API or
 NAD network configuration; do not assign these allocation annotations manually.
 
 An admission policy permits only cluster manager to add, change, or remove
-`k8s.ovn.org/network-id` and `k8s.ovn.org/tunnel-keys`, including during NAD
-creation. When restoring a NAD from saved YAML, omit these annotations and let
+`k8s.ovn.org/network-name`, `k8s.ovn.org/network-id` and
+`k8s.ovn.org/tunnel-keys`, including during NAD creation. When restoring a NAD from saved YAML, omit these annotations and let
 cluster manager regenerate them.
 Unchanged annotations, including legacy invalid values, do not block unrelated
 updates.
@@ -158,6 +158,59 @@ updates.
 Cluster manager preserves allocated tunnel keys across restarts and NAD
 configuration changes. A failed annotation update does not release the
 network's existing tunnel keys.
+
+## Manually created NetworkAttachmentDefinitions
+
+OVN-Kubernetes identifies a network by the `name` in the NAD's CNI
+configuration, not by the NAD object. NADs that carry the same network name
+are attachments to the same network. The controllers generate these names for
+user defined networks:
+
+| Resource | Network name |
+|----------|--------------|
+| `UserDefinedNetwork` | `<namespace>_<name>` |
+| `ClusterUserDefinedNetwork` | `cluster_udn_<name>` |
+
+A NAD written by hand can use any network name. Without a restriction, a user
+who can create NADs in their own namespace could name one after another
+tenant's network and attach pods to it, or conflict with that network's
+configuration. When user defined networks are enabled, manually created NADs
+therefore have to be kept out of these names.
+
+The `ovn-kubernetes-admission-webhook-nad` webhook enforces this on creation
+and on updates of NADs with `"type": "ovn-k8s-cni-overlay"`:
+
+| Network name in the NAD | Result |
+|-------------------------|--------|
+| Starts with `cluster_udn_` | Rejected, create a `ClusterUserDefinedNetwork` instead |
+| `<namespace>_<name>` with a namespace other than the NAD's own | Rejected |
+| `<namespace>_<name>` with the NAD's own namespace | Allowed |
+| No `_` in the name | Allowed |
+
+Cluster manager is exempt, as it creates the NADs for user defined networks.
+NADs of other CNI plugins are not checked. An update that leaves `spec.config`
+unchanged is always allowed, so labels and annotations of an existing NAD can
+still be edited.
+
+The webhook is served by `ovnkube-identity` and is installed when both Helm
+values are set:
+
+```yaml
+global:
+  enableOvnKubeIdentity: true
+  secureNADNames: true   # default
+```
+
+Keep `secureNADNames` enabled on clusters where users other than cluster
+administrators can create NADs. Things to be aware of:
+
+- The webhook uses `failurePolicy: Fail`. While `ovnkube-identity` is
+  unavailable, OVN-Kubernetes NADs cannot be created or have their
+  configuration changed.
+- Deployments without `ovnkube-identity`, such as DPU deployments, are not
+  protected. Restrict who can create NADs with RBAC there.
+- Only admission requests are checked. NADs that already use a reserved name
+  are not removed, but their configuration can no longer be changed.
 
 ## Performance/Scale Optimizations for UDN
 

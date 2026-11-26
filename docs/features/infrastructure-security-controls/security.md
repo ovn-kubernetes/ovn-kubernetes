@@ -44,6 +44,22 @@ either the old or new pod contains a protected annotation.
 The checks apply to admission requests; they do not retroactively validate
 annotations on existing pods.
 
+## Reserved network names
+
+OVN-Kubernetes identifies a network by the name in a
+NetworkAttachmentDefinition's CNI configuration. The names generated for
+`UserDefinedNetwork` and `ClusterUserDefinedNetwork` resources are reserved:
+the NAD admission webhook rejects manually created OVN-Kubernetes NADs that
+use the name of a cluster network or of a network in another namespace. An
+admission policy also permits only cluster manager to write the
+`k8s.ovn.org/network-name`, `k8s.ovn.org/network-id` and
+`k8s.ovn.org/tunnel-keys` NAD annotations.
+
+The webhook requires `ovnkube-identity` and the `global.secureNADNames` Helm
+value, which is enabled by default. See
+[Manually created NetworkAttachmentDefinitions](../user-defined-networks/user-defined-networks.md#manually-created-networkattachmentdefinitions)
+for the rules and limitations.
+
 ## Per-node security
 
 [Node identity](node-identity.md) gives each `ovnkube-node` a distinct client

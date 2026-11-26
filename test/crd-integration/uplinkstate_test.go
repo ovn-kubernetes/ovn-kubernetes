@@ -149,7 +149,10 @@ var _ = Describe("UplinkState ownership admission", func() {
 		Expect(err).NotTo(HaveOccurred())
 		_, document, found := strings.Cut(string(template), "name: ovn-kubernetes-admission-webhook-uplinkstate\n")
 		Expect(found).To(BeTrue())
-		document = "apiVersion: admissionregistration.k8s.io/v1\nkind: ValidatingWebhookConfiguration\nmetadata:\n  name: ovn-kubernetes-admission-webhook-uplinkstate\n" + strings.TrimSuffix(document, "{{- end }}\n")
+		// The configuration ends at the next template directive, whether that
+		// closes the file or opens another webhook configuration.
+		document, _, _ = strings.Cut(document, "\n{{-")
+		document = "apiVersion: admissionregistration.k8s.io/v1\nkind: ValidatingWebhookConfiguration\nmetadata:\n  name: ovn-kubernetes-admission-webhook-uplinkstate\n" + document + "\n"
 		document = strings.ReplaceAll(document, "{{ $ca.Cert | b64enc | quote }}", "''")
 		webhook := &admissionregistrationv1.ValidatingWebhookConfiguration{}
 		Expect(yaml.Unmarshal([]byte(document), webhook)).To(Succeed())

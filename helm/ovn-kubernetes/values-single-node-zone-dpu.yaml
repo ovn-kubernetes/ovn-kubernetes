@@ -41,6 +41,8 @@ global:
   v6TransitSubnet: "fd97::/64"
   # -- Whether or not enable ovnkube identity webhook
   enableOvnKubeIdentity: false
+  # -- Reject hand-written ovn-kubernetes NetworkAttachmentDefinitions whose network name is reserved for a ClusterUserDefinedNetwork or for a UserDefinedNetwork of another namespace. Requires the ovnkube identity webhook
+  secureNADNames: true
   # -- Whether or not to enable hybrid overlay functionality
   enableHybridOverlay: ""
   # -- Users other than ovnkube-cluster-manager allowed to write the hybrid overlay node subnet annotation
