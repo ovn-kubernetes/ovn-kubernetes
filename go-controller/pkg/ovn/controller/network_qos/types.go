@@ -269,7 +269,7 @@ func (c *Classifier) ToQosMatchString(ipv4Enabled, ipv6Enabled bool) string {
 			match = addressSetToMatchString(dest.DestAddrSet, trafficDirDest, ipv4Enabled, ipv6Enabled)
 		} else if dest.IpBlock != nil && dest.IpBlock.CIDR != "" {
 			ipVersion := "ip4"
-			if cidr := string(dest.IpBlock.CIDR); utilnet.IsIPv6CIDRString(cidr) {
+			if cidr := string(dest.IpBlock.CIDR); utilnet.IsIPv6CIDRString(cidr) || utilnet.IsIPv6String(cidr) {
 				ipVersion = "ip6"
 			}
 			if len(dest.IpBlock.Except) == 0 {
