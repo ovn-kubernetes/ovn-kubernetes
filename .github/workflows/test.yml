@@ -603,8 +603,11 @@ jobs:
   e2e:
     name: e2e
     runs-on: ubuntu-24.04
-    # 30 mins for kind, 180 mins for control-plane tests, 10 minutes for all other steps
-    timeout-minutes: 220
+    # 30 mins for kind, 180 mins for control-plane tests, 10 minutes for all other steps.
+    # The no-flood lane (disable-udn-arp-ndp-flood) runs serially, including
+    # the Serial specs, with one fixture per spec, and needs proportionally
+    # more: see its TEST_TIMEOUT and the Run Tests step timeout below.
+    timeout-minutes: ${{ matrix.disable-udn-arp-ndp-flood == 'true' && 300 || 220 }}
     strategy:
       fail-fast: false
       matrix:
@@ -691,6 +694,16 @@ jobs:
       ENABLE_MULTI_NET: "${{ matrix.target == 'multi-homing' || matrix.target == 'kv-live-migration' || startsWith(matrix.target, 'network-segmentation') || matrix.target == 'tools' || matrix.target == 'traffic-flow-test-only' || matrix.routeadvertisements != '' }}"
       ENABLE_NETWORK_SEGMENTATION: "${{ startsWith(matrix.target, 'network-segmentation') || matrix.network-segmentation == 'enable-network-segmentation' }}"
       DISABLE_UDN_ARP_NDP_FLOOD: "${{ matrix.disable-udn-arp-ndp-flood }}"
+      # The no-flood lane runs serially, including the Serial specs, with one
+      # fixture per spec; measured ~178 minutes of tests before the uplink
+      # suite also went per-spec, which added a full uplink setup and teardown
+      # to every spec. 240 minutes of ginkgo cap (the script derives 245 for go
+      # test) leaves room for the second ClusterNetworkConnect invocation of
+      # the lane. Set for that lane alone and empty elsewhere: the kind-based
+      # launchers take a duration ("120m") where the control-plane launcher
+      # takes minutes, so an explicit value for the other lanes would break
+      # one or the other. The scripts treat empty as unset.
+      TEST_TIMEOUT: ${{ matrix.disable-udn-arp-ndp-flood == 'true' && 240 || '' }}
       PLATFORM_IPV4_SUPPORT: "${{ matrix.ipfamily == 'ipv4' || matrix.ipfamily == 'dualstack' }}"
       PLATFORM_IPV6_SUPPORT: "${{ matrix.ipfamily == 'ipv6' || matrix.ipfamily == 'dualstack' }}"
       KIND_LOCAL_REGISTRY: "${{ matrix.local-kind-registry == 'true' }}"
@@ -863,7 +876,9 @@ jobs:
       # set 3 hours for control-plane tests as these might take a while
       # give 10m extra to give ginkgo chance to timeout before github so that we
       # get its output
-      timeout-minutes: ${{ startsWith(matrix.target, 'bgp') && 190 || matrix.target == 'evpn' && 190 || matrix.target == 'control-plane' && 190 || matrix.target == 'external-gateway' && 190 || startsWith(matrix.target, 'network-segmentation') && 190 || 130 }}
+      # the no-flood lane runs serially, including the Serial specs, with one
+      # fixture per spec: it gets 260 to match its raised TEST_TIMEOUT
+      timeout-minutes: ${{ matrix.disable-udn-arp-ndp-flood == 'true' && 260 || startsWith(matrix.target, 'bgp') && 190 || matrix.target == 'evpn' && 190 || matrix.target == 'control-plane' && 190 || matrix.target == 'external-gateway' && 190 || startsWith(matrix.target, 'network-segmentation') && 190 || 130 }}
       run: |
         if [ "${{ matrix.target }}" == "multi-homing" ]; then
           make -C test control-plane WHAT="Multi Homing"

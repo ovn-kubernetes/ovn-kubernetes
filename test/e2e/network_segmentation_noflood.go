@@ -1196,11 +1196,12 @@ func macBindingPortNames(m map[string]string) []string {
 // MAC_Binding rows onto the other CUDNs of the uplink (the followers), which is
 // the only way a follower can reach an external host.
 //
-// All the specs below are Ordered and share one uplink, three CUDNs and two
-// external containers. Background pings started in one spec deliberately keep
-// running into the next ones: they keep the bindings refreshed for the
-// stability spec and are only stopped, with a survivor check, by the final
-// age-out spec.
+// Every spec below builds its own fixture - uplink, CUDNs, external
+// containers - and starts the traffic it asserts on, so each one can run on
+// its own, selected by name, and in any order. The pings a spec starts are
+// stopped by the deferred teardown, with a survivor check, so none outlives
+// its spec and reaches the next spec's external containers, which may reuse
+// the same IPs.
 
 const (
 	// How long the bindings are held under sustained traffic. Longer than the
@@ -1313,13 +1314,13 @@ var _ = Describe("Network Segmentation: MAC binding mirroring for multiple UDNs 
 	feature.NetworkSegmentation, feature.Uplink, func() {
 
 		f := wrappedTestFramework("noflood-uplink")
-		// Namespaces are created by hand: the framework would otherwise delete
-		// them after the first spec of the ordered container.
+		// The suite has no use for the framework's own default-network
+		// namespace: every pod lives in a member namespace, created through
+		// f.CreateNamespace in addMember, which the framework deletes after
+		// every spec all the same.
 		f.SkipNamespaceCreation = true
 
-		// Nested so the framework's BeforeEach, which populates f.ClientSet,
-		// runs before BeforeAll.
-		Context("", Ordered, func() {
+		Context("", Serial, func() {
 
 			var (
 				cs          kubernetes.Interface
@@ -1400,6 +1401,16 @@ var _ = Describe("Network Segmentation: MAC binding mirroring for multiple UDNs 
 				if pings.Has(key) {
 					return
 				}
+				// One deferred stop per started ping, not per pod: duplicates are
+				// idempotent - the first kills the pings, the rest count zero
+				// survivors. A pod already gone with its member's namespace
+				// counts as stopped.
+				DeferCleanup(func() {
+					if _, err := cs.CoreV1().Pods(m.namespace).Get(context.TODO(), m.podName, metav1.GetOptions{}); apierrors.IsNotFound(err) {
+						return
+					}
+					stopBackgroundPings(m.namespace, m.podName)
+				})
 				startBackgroundPing(m.namespace, m.podName, ip, noFloodPingPidFileForIP(ip))
 				pings.Insert(key)
 			}
@@ -1426,6 +1437,23 @@ var _ = Describe("Network Segmentation: MAC binding mirroring for multiple UDNs 
 					}
 				}
 				return noFloodUplinkCUDN{}, fmt.Errorf("steering target %q is not the patch port of a member CUDN", patch)
+			}
+
+			// startGroupTraffic starts the sustained pings the specs assert on -
+			// container A pinged from the source CUDN's pod, container B from a
+			// follower's - and does not return until both are bound on every
+			// member, the state the specs below build their assertions on.
+			startGroupTraffic := func() {
+				for _, ip := range extAIPs {
+					ensureBackgroundPing(source, ip)
+				}
+				for _, ip := range extBIPs {
+					ensureBackgroundPing(followers()[0], ip)
+				}
+				Eventually(func(g Gomega) {
+					expectContainerBoundEverywhere(g, extAIPs, extAMAC)
+					expectContainerBoundEverywhere(g, extBIPs, extBMAC)
+				}, 90*time.Second, 2*time.Second).Should(Succeed())
 			}
 
 			createExternalContainer := func(name string) (infraapi.ExternalContainer, string, []string) {
@@ -1466,22 +1494,32 @@ var _ = Describe("Network Segmentation: MAC binding mirroring for multiple UDNs 
 			// addMember creates a primary layer3 CUDN bound to the uplink, its
 			// namespace and a client pod on the traffic node, and tracks it.
 			addMember := func(ctx context.Context, name string) noFloodUplinkCUDN {
-				ns, err := cs.CoreV1().Namespaces().Create(ctx, &v1.Namespace{
-					ObjectMeta: metav1.ObjectMeta{
-						GenerateName: name + "-",
-						Labels: map[string]string{
-							"e2e-framework":           f.BaseName,
-							RequiredUDNNamespaceLabel: "",
-						},
-					},
-				}, metav1.CreateOptions{})
+				// f.CreateNamespace gives the namespace the framework's pod
+				// security labels - privileged for wrappedTestFramework, which
+				// the client pods need - and hands it to the framework, which
+				// deletes it after every spec.
+				ns, err := f.CreateNamespace(ctx, f.BaseName, map[string]string{
+					"e2e-framework":           f.BaseName,
+					RequiredUDNNamespaceLabel: "",
+				})
 				framework.ExpectNoError(err, "must create namespace for CUDN %s", name)
-				ictx.AddCleanUpFn(func() error {
-					err := cs.CoreV1().Namespaces().Delete(context.Background(), ns.Name, metav1.DeleteOptions{})
-					if apierrors.IsNotFound(err) {
-						return nil
-					}
-					return err
+				// The member's removal is registered as soon as the namespace
+				// exists, before the allocation, CUDN and pod setup - each of
+				// those can fail after creating its resource, and their cleanup
+				// must not be skipped. It is idempotent, so it also no-ops for a
+				// member that removeMember already removed (the deletes tolerate
+				// NotFound), and retries a removal that failed halfway. The order
+				// matters: live pods using the NAD and the active network
+				// controller can hold the CUDN's finalization, and the member
+				// pods must be gone before the infra cleanups dismantle the
+				// bridge and the external network. Registered here, after the
+				// infra context, so LIFO runs it before those; waiting also hands
+				// the framework an already-drained namespace to delete.
+				DeferCleanup(func() {
+					deleteNamespaceAndWait(ns.Name)
+					_, err := e2ekubectl.RunKubectl("", "delete", "clusteruserdefinednetwork", name,
+						"--ignore-not-found=true", "--wait", "--timeout=120s")
+					framework.ExpectNoError(err, "must delete CUDN %s", name)
 				})
 				alloc, err := allocators.AllocateBGP(f, ictx)
 				framework.ExpectNoError(err)
@@ -1518,7 +1556,7 @@ var _ = Describe("Network Segmentation: MAC binding mirroring for multiple UDNs 
 				}
 			}
 
-			BeforeAll(func(ctx SpecContext) {
+			BeforeEach(func(ctx SpecContext) {
 				cs = f.ClientSet
 				if !deploymentconfig.Get().IsConfigurationEnabled(deploymentconfigapi.UDNARPNDPFloodDisabled) {
 					Skip("requires ovnkube-node to run with --disable-udn-arp-ndp-flood (DISABLE_UDN_ARP_NDP_FLOOD=true)")
@@ -1531,15 +1569,19 @@ var _ = Describe("Network Segmentation: MAC binding mirroring for multiple UDNs 
 				}
 				ipFamilySet = sets.New(getSupportedIPFamiliesSlice(cs)...)
 
+				// Start from scratch, not from the previous spec.
+				members, source, pings = nil, noFloodUplinkCUDN{}, sets.New[string]()
+
 				By("selecting the node that will carry all the test traffic")
 				allNodes, err := cs.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 				framework.ExpectNoError(err)
 				schedulable, err := e2enode.GetReadySchedulableNodes(ctx, cs)
 				framework.ExpectNoError(err)
 				Expect(len(schedulable.Items)).To(BeNumerically(">=", 2), "uplink tests need at least 2 schedulable nodes")
-				// The sibling default-group suite pins its traffic to the first
-				// schedulable node and restarts ovnkube-node there; take the
-				// last one so the two can run in parallel.
+				// Take the last schedulable node, away from the one the sibling
+				// default-group suite pins its traffic to and restarts ovnkube-node
+				// on, so this suite's zone databases are not the ones reconverging
+				// after those restarts.
 				trafficNode = schedulable.Items[len(schedulable.Items)-1]
 				ovnkPods, err := cs.CoreV1().Pods(deploymentconfig.Get().OVNKubernetesNamespace()).List(ctx, metav1.ListOptions{
 					LabelSelector: "app=ovnkube-node",
@@ -1550,12 +1592,11 @@ var _ = Describe("Network Segmentation: MAC binding mirroring for multiple UDNs 
 				ovnkPod = &ovnkPods.Items[0]
 
 				ictx = infraprovider.Get().NewTestContext()
-				// The infra cleanups run with the DeferCleanup(All) of this
-				// container, after the framework's own per-spec teardown has
-				// already set f.ClientSet to nil, and the uplink bridge cleanup
-				// needs it to find the ovnkube-node pods. Registered after the
-				// context so it runs first and restores the client.
-				DeferCleanup(func() { f.ClientSet = cs })
+				// The infra cleanups - CUDN and Uplink deletes, allocation
+				// releases, bridge and external network teardown - run with the
+				// DeferCleanup of this spec, in LIFO order against everything
+				// registered after the context here. The framework registers its
+				// own teardown even earlier, so f.ClientSet outlives all of them.
 
 				By("setting up the uplink network, bridge and Uplink CR on every node")
 				suffix := framework.RandomSuffix()
@@ -1585,16 +1626,25 @@ var _ = Describe("Network Segmentation: MAC binding mirroring for multiple UDNs 
 				}
 				framework.Logf("CUDN gateway router ports on the uplink: %v", memberPorts())
 
-				By("shortening the MAC binding lifetime on the member gateway routers for the duration of these specs")
-				withTestMACBindingAgeThreshold(&ovnkPod, func() []string { return gatewayRoutersOf(memberPorts()) })
-			})
-
-			It("designates exactly one CUDN gateway router as the ARP/NDP source of the uplink", func() {
+				By("resolving which CUDN gateway router is the ARP/NDP source of the uplink")
+				// sourceCUDN only reads OVS state, so resolving here does not prime
+				// the no-traffic baseline of the first spec.
 				Eventually(func() error {
 					var err error
 					source, err = sourceCUDN()
 					return err
 				}, 60*time.Second, 2*time.Second).Should(Succeed())
+
+				By("shortening the MAC binding lifetime on the member gateway routers for the duration of this spec")
+				withTestMACBindingAgeThreshold(&ovnkPod, func() []string { return gatewayRoutersOf(memberPorts()) })
+			})
+
+			It("designates exactly one CUDN gateway router as the ARP/NDP source of the uplink", func() {
+				// The fixture resolved and asserted the designation in BeforeEach:
+				// sourceCUDN fails unless the uplink bridge steers ARP/NDP to a
+				// single port, that port is one member's patch port, and the
+				// pre-no-flood fan-out flow is gone. Here, restate it and assert
+				// the follower set and the quiet baseline.
 				Expect(followers()).To(HaveLen(len(members) - 1))
 				framework.Logf("source: %s (%s), followers: %v", source.name, source.port, followers())
 
@@ -1645,6 +1695,9 @@ var _ = Describe("Network Segmentation: MAC binding mirroring for multiple UDNs 
 			})
 
 			It("keeps the uplink group's bindings stable and isolated while the traffic lasts", func() {
+				By("starting sustained pings to both containers and waiting for the bindings")
+				startGroupTraffic()
+
 				shortenAging()
 				cdnPort := defaultGatewayRouterExtPortName(trafficNode.Name)
 				Consistently(func(g Gomega) {
@@ -1687,6 +1740,9 @@ var _ = Describe("Network Segmentation: MAC binding mirroring for multiple UDNs 
 			})
 
 			It("backfills a CUDN that joins the uplink after the bindings were learned, and reaps it when it leaves", func(ctx SpecContext) {
+				By("starting sustained pings to both containers and waiting for the bindings")
+				startGroupTraffic()
+
 				late := addMember(ctx, "upflood-cudn4-"+framework.RandomSuffix())
 
 				By("asserting the late CUDN is backfilled with both containers' bindings")
@@ -1708,6 +1764,9 @@ var _ = Describe("Network Segmentation: MAC binding mirroring for multiple UDNs 
 			})
 
 			It("re-designates the source and keeps the followers resolved when the source CUDN leaves the uplink", func() {
+				By("starting sustained pings to both containers and waiting for the bindings")
+				startGroupTraffic()
+
 				former := source
 				By(fmt.Sprintf("deleting the source CUDN %s", former.name))
 				removeMember(former)
@@ -1752,6 +1811,9 @@ var _ = Describe("Network Segmentation: MAC binding mirroring for multiple UDNs 
 			})
 
 			It("ages out every binding on every member once the traffic stops", func() {
+				By("starting sustained pings to both containers and waiting for the bindings")
+				startGroupTraffic()
+
 				shortenAging()
 
 				By("stopping the background pings in every remaining pod")
@@ -1760,8 +1822,7 @@ var _ = Describe("Network Segmentation: MAC binding mirroring for multiple UDNs 
 				}
 				pings.Clear()
 
-				// Last spec of the ordered container, so nothing below needs the
-				// containers reachable.
+				// Nothing below needs the containers reachable.
 				By("silencing both external containers so they stop answering the refresh probe")
 				silenceExternalContainer(extA)
 				silenceExternalContainer(extB)
