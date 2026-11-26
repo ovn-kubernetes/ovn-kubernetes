@@ -28,6 +28,7 @@ import (
 	infraapi "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/api"
 
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
+	nadclient "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/typed/k8s.cni.cncf.io/v1"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -157,6 +158,25 @@ func listDynamicMACBindings(ovnkPod *v1.Pod) ([]macBindingRow, error) {
 func listStaticMACBindings(ovnkPod *v1.Pod) ([]macBindingRow, error) {
 	return listMACBindingRows(ovnkPod,
 		"ovn-nbctl --format=csv --no-headings --data=bare --columns=logical_port,ip,mac,override_dynamic_mac list Static_MAC_Binding", 4)
+}
+
+// gatewayRouterExtPorts returns every gateway router external port (rtoe-*)
+// present in the zone of the given ovnkube-node pod: the live port inventory,
+// as opposed to any test's expected set. Foreign primary networks present on
+// the node have their ports in it; routers deleted with their networks do not.
+func gatewayRouterExtPorts(ovnkPod *v1.Pod) ([]string, error) {
+	out, err := e2epodoutput.RunHostCmdWithRetries(ovnkPod.Namespace, ovnkPod.Name,
+		"ovn-nbctl --bare --columns=name list logical_router_port", framework.Poll, 10*time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("listing logical router ports failed: %w", err)
+	}
+	var ports []string
+	for _, line := range strings.Split(out, "\n") {
+		if port := strings.TrimSpace(line); strings.HasPrefix(port, ovntypes.GWRouterToExtSwitchPrefix) {
+			ports = append(ports, port)
+		}
+	}
+	return ports, nil
 }
 
 // purgeDynamicMACBindings destroys every MAC_Binding row holding one of ips.
@@ -444,6 +464,11 @@ var _ = Describe("Network Segmentation: MAC binding mirroring with ARP/NDP flood
 				// never add to them.
 				cdnStaticIPs []string
 
+				// toleratedHolders records the foreign (ip, port) MAC_Binding holders
+				// already logged, so polling windows do not repeat them on every
+				// poll. See expectMirroredEverywhere.
+				toleratedHolders = sets.New[string]()
+
 				cdnPodName = "noflood-cdn-client"
 				udnPodName = "noflood-udn-client"
 			)
@@ -458,24 +483,45 @@ var _ = Describe("Network Segmentation: MAC binding mirroring with ARP/NDP flood
 			}
 
 			// macBindingPorts returns logical port -> MAC for ip in the traffic
-			// node's zone.
-			macBindingPorts := func(ip string) map[string]string {
+			// node's zone. The read error is reported rather than silenced: a nil
+			// map would satisfy the emptiness assertions vacuously.
+			macBindingPorts := func(ip string) (map[string]string, error) {
 				rows, err := listDynamicMACBindings(ovnkPod)
 				if err != nil {
-					framework.Logf("failed to list MAC_Bindings: %v", err)
-					return nil
+					return nil, err
 				}
-				return macBindingPortsForIP(rows, ip)
+				return macBindingPortsForIP(rows, ip), nil
 			}
 
-			// expectMirroredEverywhere asserts that exactly ports hold ip, all with
-			// the same mac.
+			// expectMirroredEverywhere asserts that every port of ports holds ip
+			// with mac, and that every other holder of ip carries the same mac.
+			//
+			// The mirror controller's follower set is open world by design: every
+			// primary network's gateway router on the node is a legitimate mirror
+			// target, so a foreign primary UDN - another suite's leftover, or a
+			// real workload - may correctly hold the binding too. The exact-set
+			// assertion this replaces failed the specs on exactly that correct
+			// mirroring. What must never happen is a missing expected port or a
+			// wrong MAC on any holder: those still fail. Tolerated foreign holders
+			// are logged once per (ip, port) per spec so they are visible in the
+			// output; the boundaries the exact set used to pin - secondary
+			// networks and deleted CUDNs must not hold the test IPs - are
+			// asserted explicitly by the specs that care about them.
 			expectMirroredEverywhere := func(g Gomega, ip, mac string, ports []string) {
-				got := macBindingPorts(ip)
-				g.Expect(got).To(HaveLen(len(ports)), "MAC_Bindings for %s: got %v, want exactly %v", ip, got, ports)
-				g.Expect(macBindingPortNames(got)).To(ConsistOf(ports), "MAC_Bindings for %s must be on exactly %v, got %v", ip, ports, got)
+				got, err := macBindingPorts(ip)
+				g.Expect(err).NotTo(HaveOccurred(), "must list MAC_Bindings for %s", ip)
+				for _, port := range ports {
+					g.Expect(got).To(HaveKeyWithValue(port, mac),
+						"MAC_Binding for %s must exist on %s with MAC %s, got %v", ip, port, mac, got)
+				}
 				for port, gotMAC := range got {
 					g.Expect(gotMAC).To(Equal(mac), "MAC_Binding for %s on %s must carry MAC %s", ip, port, mac)
+					if !slices.Contains(ports, port) {
+						if key := ip + "/" + port; !toleratedHolders.Has(key) {
+							toleratedHolders.Insert(key)
+							framework.Logf("tolerating MAC_Binding for %s on foreign follower %s (MAC %s)", ip, port, gotMAC)
+						}
+					}
 				}
 			}
 
@@ -568,6 +614,7 @@ var _ = Describe("Network Segmentation: MAC binding mirroring with ARP/NDP flood
 				}
 				// Appended to below: start from scratch, not from the previous spec.
 				extAIPs, extBIPs, cudnNames = nil, nil, nil
+				toleratedHolders = sets.New[string]()
 
 				By("selecting the node that will carry all the test traffic")
 				nodes, err := e2enode.GetReadySchedulableNodes(context.TODO(), cs)
@@ -701,7 +748,9 @@ var _ = Describe("Network Segmentation: MAC binding mirroring with ARP/NDP flood
 				static, err := listStaticMACBindings(ovnkPod)
 				Expect(err).NotTo(HaveOccurred())
 				for _, ip := range []string{extA.GetIPv4(), extB.GetIPv4()} {
-					Expect(macBindingPorts(ip)).To(BeEmpty(),
+					got, err := macBindingPorts(ip)
+					Expect(err).NotTo(HaveOccurred(), "must list MAC_Bindings for %s", ip)
+					Expect(got).To(BeEmpty(),
 						"no MAC_Binding must exist for untouched external container IP %s", ip)
 					Expect(macBindingPortsForIP(static, ip)).To(BeEmpty(),
 						"no Static_MAC_Binding must exist for external container IP %s", ip)
@@ -718,6 +767,58 @@ var _ = Describe("Network Segmentation: MAC binding mirroring with ARP/NDP flood
 					Eventually(func(g Gomega) {
 						expectMirroredEverywhere(g, ip, extAMAC, expectedPorts)
 					}, 90*time.Second, 2*time.Second).Should(Succeed())
+				}
+
+				By("creating a primary UDN outside the fixture and asserting the mirror reaches it too")
+				// The controller's follower set is open world by design: every
+				// primary network's gateway router on the node is mirrored to, not
+				// just the fixture's. Pin that contract with a deliberate foreign
+				// NAD-backed UDN - the shape a leftover from another suite or a
+				// real workload takes - whose pod stays quiet: its gateway router
+				// must still be backfilled with the binding already learned by the
+				// CDN gateway router, and with the correct MAC.
+				foreignNs := createNamespace(map[string]string{
+					"e2e-framework":           f.BaseName,
+					RequiredUDNNamespaceLabel: "",
+				})
+				nadClient, err := nadclient.NewForConfig(f.ClientConfig())
+				Expect(err).NotTo(HaveOccurred())
+				v4, v6 := allocators.GetNthFirstUDNSubnets(5)
+				foreignConfig := newNetworkAttachmentConfig(networkAttachmentConfigParams{
+					name:      "noflood-foreign",
+					namespace: foreignNs.Name,
+					topology:  "layer2",
+					cidr:      joinStrings(v4[4], v6[4]),
+					role:      "primary",
+				})
+				_, err = nadClient.NetworkAttachmentDefinitions(foreignNs.Name).Create(context.TODO(),
+					generateNAD(foreignConfig, f.ClientSet), metav1.CreateOptions{})
+				Expect(err).NotTo(HaveOccurred(), "must create the foreign primary UDN's NAD")
+				// The NAD is namespaced: deleting the namespace takes the network
+				// with it. Waited, so no trace reaches the next spec.
+				DeferCleanup(func() {
+					deleteNamespaceAndWait(foreignNs.Name)
+				})
+				createPod(foreignNs.Name, "noflood-foreign-client")
+				// ovn-k sanitizes OVN entity names - the network name's hyphens become
+				// dots - so locate the port through the same prefix the other specs
+				// use, not the raw network name.
+				foreignPrefix := util.GetUserDefinedNetworkPrefix(foreignConfig.networkName)
+				for _, ip := range extAIPs {
+					Eventually(func(g Gomega) {
+						got, err := macBindingPorts(ip)
+						g.Expect(err).NotTo(HaveOccurred(), "must list MAC_Bindings for %s", ip)
+						var foreign string
+						for port := range got {
+							if strings.Contains(port, foreignPrefix) {
+								foreign = port
+							}
+						}
+						g.Expect(foreign).NotTo(BeEmpty(),
+							"the foreign primary UDN %s must hold the mirrored binding for %s", foreignConfig.networkName, ip)
+						g.Expect(got[foreign]).To(Equal(extAMAC),
+							"the foreign primary UDN's binding for %s must carry MAC %s", ip, extAMAC)
+					}, 120*time.Second, 5*time.Second).Should(Succeed())
 				}
 			})
 
@@ -871,6 +972,7 @@ var _ = Describe("Network Segmentation: MAC binding mirroring with ARP/NDP flood
 				secName := createCUDN(ns, "layer2", joinStrings(v4[4], v6[4]), "secondary")
 				createPod(ns, "noflood-secondary", nadapi.NetworkSelectionElement{Name: secName, Namespace: ns})
 				secPrefix := util.GetUserDefinedNetworkPrefix(ovntypes.CUDNPrefix + secName)
+				testIPs := append(append([]string{}, extAIPs...), extBIPs...)
 
 				Consistently(func(g Gomega) {
 					for _, ip := range extAIPs {
@@ -884,6 +986,16 @@ var _ = Describe("Network Segmentation: MAC binding mirroring with ARP/NDP flood
 					for _, row := range static {
 						g.Expect(row.logicalPort).NotTo(ContainSubstring(secPrefix),
 							"the secondary network must not get static MAC bindings either")
+					}
+					// A secondary network is not a legitimate follower, so exclude it
+					// explicitly.
+					dynamic, err := listDynamicMACBindings(ovnkPod)
+					g.Expect(err).NotTo(HaveOccurred())
+					for _, row := range dynamic {
+						if strings.Contains(row.logicalPort, secPrefix) {
+							g.Expect(row.ip).NotTo(BeElementOf(testIPs),
+								"the secondary network must not get dynamic MAC bindings for the test IPs either")
+						}
 					}
 				}, 30*time.Second, 5*time.Second).Should(Succeed())
 			})
@@ -1011,6 +1123,10 @@ var _ = Describe("Network Segmentation: MAC binding mirroring with ARP/NDP flood
 					for _, ip := range spec.ips {
 						Eventually(func(g Gomega) {
 							expectMirroredEverywhere(g, ip, spec.mac, expectedPorts)
+							got, err := macBindingPorts(ip)
+							g.Expect(err).NotTo(HaveOccurred(), "must list MAC_Bindings for %s", ip)
+							g.Expect(got).NotTo(HaveKey(latePort),
+								"the deleted CUDN's binding for %s must be reaped from %s", ip, latePort)
 						}, 120*time.Second, 5*time.Second).Should(Succeed())
 					}
 				}
@@ -1063,10 +1179,16 @@ var _ = Describe("Network Segmentation: MAC binding mirroring with ARP/NDP flood
 
 				By("asserting repairStaticMacBindings left no orphans behind")
 				Eventually(func(g Gomega) {
+					// The live port inventory, not the fixture's expected set: a
+					// foreign primary UDN's static rows are as legitimate as its
+					// mirrored dynamic ones, and only a row surviving on a port
+					// that no longer exists is an orphan.
+					live, err := gatewayRouterExtPorts(ovnkPod)
+					g.Expect(err).NotTo(HaveOccurred(), "must list the zone's gateway router ports")
 					static, err := listStaticMACBindings(ovnkPod)
 					g.Expect(err).NotTo(HaveOccurred())
 					for _, row := range static {
-						g.Expect(expectedPorts).To(ContainElement(row.logicalPort),
+						g.Expect(live).To(ContainElement(row.logicalPort),
 							"static binding for %s survives on %s, which is not a live gateway router port", row.ip, row.logicalPort)
 					}
 				}, noFloodReconvergeTimeout, 5*time.Second).Should(Succeed())
@@ -1128,6 +1250,10 @@ var _ = Describe("Network Segmentation: MAC binding mirroring with ARP/NDP flood
 				By("silencing external container A so it stops answering the refresh probe")
 				silenceExternalContainer(extA)
 
+				// The row set is zone-wide, foreign followers included: their mirror
+				// rows carry the source's timestamp - the controller copies it - so
+				// they age out with it once the traffic stops and the container
+				// stops answering the refresh probe.
 				for _, ip := range extAIPs {
 					By(fmt.Sprintf("waiting for %s to age out of all gateway routers", ip))
 					Eventually(func(g Gomega) {
@@ -1158,6 +1284,8 @@ var _ = Describe("Network Segmentation: MAC binding mirroring with ARP/NDP flood
 				By("silencing external container B so it stops answering the refresh probe")
 				silenceExternalContainer(extB)
 
+				// Foreign followers age out with the source the same way: their
+				// mirror rows carry the source's timestamp.
 				for _, ip := range extBIPs {
 					By(fmt.Sprintf("waiting for %s to age out of all gateway routers", ip))
 					Eventually(func(g Gomega) {
