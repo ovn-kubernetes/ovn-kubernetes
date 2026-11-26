@@ -674,7 +674,11 @@ var _ = ginkgo.Describe("blocking ICMP needs frag", func() {
 				curlDest = "[" + curlDest + "]"
 			}
 			ginkgo.By(fmt.Sprintf("Sending TCP large payload to server IP %s ", serverIP))
-			cmd := fmt.Sprintf("curl --max-time 10 -g -q -s http://%s:%d/echo?msg=%s",
+			// Only the request is large: /clientip ignores the query and answers
+			// with a few bytes. The VM advertises the MSS of its 1500 MTU
+			// interface and needs frag towards node IPs is dropped, so a
+			// response larger than the pod MTU would never reach the VM.
+			cmd := fmt.Sprintf("curl --max-time 10 -g -q -s http://%s:%d/clientip?msg=%s",
 				curlDest,
 				serverPodPort,
 				payload,
