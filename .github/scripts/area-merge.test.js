@@ -10,6 +10,12 @@ const waitingComment = sha => ({ user: { login: botLogin, type: 'Bot' }, body: `
 const actionsCheck = name =>
   ({ name, app: { slug: 'github-actions' }, status: 'completed', conclusion: 'success' });
 
+/** A review in which the area maintainer approves the fixture PR's head and gives the command. */
+const commandReview = changes => ({
+  user: { login: 'maintainer', type: 'User' }, state: 'APPROVED', commit_id: 'approved-sha',
+  body: '/area-maintainer-approved', submitted_at: '2026-01-02T00:00:00Z', ...changes,
+});
+
 /**
  * Mock GitHub for an open fork PR whose head commit "approved-sha" passed CI
  * and that an area maintainer approves with /area-maintainer-approved. Tests
@@ -26,6 +32,7 @@ function fixture(t) {
   };
   const command = { user: { login: 'maintainer', type: 'User' }, body: '/area-maintainer-approved' };
   const comments = [command];
+  const reviews = [];
   const checks = [actionsCheck('e2e')];
   // GitHub returns state "pending" with total_count 0 when a commit has no commit statuses.
   const status = { state: 'pending', total_count: 0, statuses: [] };
@@ -33,12 +40,23 @@ function fixture(t) {
   const workflowRun = {
     head_sha: pr.head.sha, pull_requests: [], head_repository: headRepository, head_branch: pr.head.ref,
   };
+  // The "Pull Request Review" run of a review that the area maintainer submitted.
+  // For a fork PR it reports the upstream repository and lists no pull requests.
+  const reviewRun = {
+    event: 'pull_request_review', display_title: `Review PR ${pr.number}`, actor: { login: 'maintainer' },
+    head_sha: pr.head.sha, pull_requests: [], head_repository: { id: 1, owner: { login: 'ovn-kubernetes' } },
+    head_branch: pr.head.ref,
+  };
   const github = {
     rest: {
       repos: { getCombinedStatusForRef: async () => ({ data: status }) },
       pulls: {
         list() {},
-        get: async () => ({ data: pr }),
+        listReviews() {},
+        get: async ({ pull_number }) => {
+          assert.equal(pull_number, pr.number);
+          return { data: pr };
+        },
         listFiles: async () => ({ data: [{ filename: 'test/e2e/kubevirt.go' }] }),
         merge: t.mock.fn(async () => ({ data: { merged: true } })),
       },
@@ -55,10 +73,12 @@ function fixture(t) {
       },
     },
     // Like GitHub, only return the open PRs of the queried source branch.
-    paginate: async (endpoint, query) =>
-      query.head === `${pr.head.repo.owner.login}:${pr.head.ref}` ? [pr] : [],
+    paginate: async (endpoint, query) => {
+      if (endpoint === github.rest.pulls.listReviews) return reviews;
+      return query.head === `${pr.head.repo.owner.login}:${pr.head.ref}` ? [pr] : [];
+    },
   };
-  const run = eventName => areaMerge({
+  const run = (eventName, source = workflowRun) => areaMerge({
     github,
     // A core.setFailed call fails the test.
     core: { info() {}, setFailed: message => assert.fail(message) },
@@ -67,10 +87,12 @@ function fixture(t) {
       repo: { owner: 'ovn-kubernetes', repo: 'ovn-kubernetes' },
       payload: eventName === 'issue_comment'
         ? { comment: command, issue: { number: pr.number } }
-        : { [eventName]: workflowRun },
+        : { [eventName]: source },
     },
   });
-  return { pr, comments, checks, status, workflowRun, github, merge: github.rest.pulls.merge, run };
+  return {
+    pr, comments, reviews, checks, status, workflowRun, reviewRun, github, merge: github.rest.pulls.merge, run,
+  };
 }
 
 /** Report one commit status in the given state, as a non-Actions CI system would. */
@@ -125,6 +147,12 @@ for (const [reason, setup] of [
     f => { f.comments.push({ ...waitingComment('approved-sha'), user: { login: 'author', type: 'User' } }); }],
   ['the completed run tested an older head',
     f => { f.comments.push(waitingComment('approved-sha')); f.workflowRun.head_sha = 'old-sha'; }],
+  ['the command is in a review that got no waiting comment',
+    f => { f.comments.length = 0; f.reviews.push(commandReview()); }],
+  ['the review with the command was dismissed while waiting for CI', f => {
+    f.comments.splice(0, 1, waitingComment('approved-sha'));
+    f.reviews.push(commandReview({ state: 'DISMISSED' }));
+  }],
 ]) {
   test(`ovn-ci completion does not merge when ${reason}`, async t => {
     const f = fixture(t);
@@ -154,3 +182,79 @@ test('approval merges when CI completes just before the waiting comment is publi
   assert.equal(f.merge.mock.callCount(), 1);
   assert.match(f.comments.at(-1).body, /^PR merged by area maintainer @maintainer/);
 });
+
+// What the bot does when a review is submitted. Except in the first case, the
+// PR also has the fixture's older comment command, which must not be honored
+// in place of the review: nothing ties it to the PR's current head.
+for (const [outcome, setup, merges, reply] of [
+  ['merges when it approves the head and starts with the command',
+    f => { f.comments.length = 0; f.reviews.push(commandReview()); }, 1, /^PR merged by area maintainer @maintainer/],
+  ['is rejected when the reviewer is not an area maintainer for the changed files', f => {
+    f.reviews.push(commandReview({ user: { login: 'other', type: 'User' } }));
+    f.reviewRun.actor.login = 'other';
+  }, 0, /^@other cannot merge this PR/],
+  ['is ignored when it approves an older commit',
+    f => { f.reviews.push(commandReview({ commit_id: 'old-sha' })); }, 0],
+  ['is ignored when it does not approve the PR',
+    f => { f.reviews.push(commandReview({ state: 'COMMENTED' })); }, 0],
+  ['is ignored when it was dismissed',
+    f => { f.reviews.push(commandReview({ state: 'DISMISSED' })); }, 0],
+  ['is ignored when it does not start with the command',
+    f => { f.reviews.push(commandReview({ body: 'LGTM' })); }, 0],
+  ['is ignored when the PR author submitted it', f => {
+    f.reviews.push(commandReview({ user: { login: 'author', type: 'User' } }));
+    f.reviewRun.actor.login = 'author';
+  }, 0],
+  ['is ignored when a bot submitted it',
+    f => { f.reviews.push(commandReview({ user: { login: 'maintainer', type: 'Bot' } })); }, 0],
+  ['is ignored when the command was in an earlier review of the same reviewer',
+    f => { f.reviews.push(commandReview(), commandReview({ state: 'COMMENTED', body: 'A nit.' })); }, 0],
+  ['is ignored when the command was in the review of another reviewer', f => {
+    f.reviews.push(commandReview(), commandReview({ user: { login: 'other', type: 'User' }, body: 'LGTM' }));
+    f.reviewRun.actor.login = 'other';
+  }, 0],
+  ['is ignored when its run does not name the PR',
+    f => { f.reviews.push(commandReview()); f.reviewRun.display_title = 'Review PR'; }, 0],
+]) {
+  test(`submitted review ${outcome}`, async t => {
+    const f = fixture(t);
+    setup(f);
+    const posted = f.comments.length;
+    await f.run('workflow_run', f.reviewRun);
+    assert.equal(f.merge.mock.callCount(), merges);
+    if (reply) assert.match(f.comments.at(-1).body, reply);
+    else assert.equal(f.comments.length, posted);
+  });
+}
+
+test('approving review with the command waits for CI, then the ovn-ci completion merges the PR', async t => {
+  const f = fixture(t);
+  f.comments.length = 0;
+  f.reviews.push(commandReview());
+  f.checks[0].status = 'in_progress';
+  await f.run('workflow_run', f.reviewRun);
+  assert.equal(f.merge.mock.callCount(), 0);
+  assert.match(f.comments.at(-1).body, /^<!-- area-merge-sha:approved-sha -->\nArea maintainer @maintainer /);
+
+  f.checks[0].status = 'completed';
+  await f.run('workflow_run');
+  assert.equal(f.merge.mock.callCount(), 1);
+  assert.equal(f.merge.mock.calls[0].arguments[0].sha, 'approved-sha');
+});
+
+// A completion honors the most recent command, whether it is a comment or a
+// review. Here someone who is not an area maintainer gave the comment command.
+for (const [latest, commented, merges, reply] of [
+  ['review', '2026-01-01T00:00:00Z', 1, /^PR merged by area maintainer @maintainer/],
+  ['comment', '2026-01-03T00:00:00Z', 0, /^@other cannot merge this PR/],
+]) {
+  test(`ovn-ci completion honors the ${latest} when it is the most recent command`, async t => {
+    const f = fixture(t);
+    Object.assign(f.comments[0], { user: { login: 'other', type: 'User' }, created_at: commented });
+    f.comments.push(waitingComment('approved-sha'));
+    f.reviews.push(commandReview());
+    await f.run('workflow_run');
+    assert.equal(f.merge.mock.callCount(), merges);
+    assert.match(f.comments.at(-1).body, reply);
+  });
+}
