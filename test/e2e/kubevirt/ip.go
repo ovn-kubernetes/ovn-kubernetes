@@ -25,7 +25,7 @@ func RetrieveAllGlobalAddressesFromGuest(cli *Client, vmi *v1.VirtualMachineInst
 
 	output, err := cli.RunCommand(vmi, "ip -j a show", 2*time.Second)
 	if err != nil {
-		return nil, fmt.Errorf("failed retrieving adresses with ip command: %s: %w", output, err)
+		return nil, fmt.Errorf("failed retrieving addresses with ip command: %s: %w", output, err)
 	}
 	if err := json.Unmarshal([]byte(output), &ifaces); err != nil {
 		return nil, fmt.Errorf("failed unmarshaling ip command addresses: %s: %w", output, err)
