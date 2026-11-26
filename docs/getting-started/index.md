@@ -32,6 +32,10 @@ Install OVN-Kubernetes on Ubuntu hosts.
 
 Tune OVN-Kubernetes settings and customize cluster networking behavior.
 
+**[CLI Guide](cli-guide.md)**
+
+Build and run the OVN-Kubernetes binaries (`ovnkube`, CNI plugin, util, and trace tools).
+
 **[Requirements](../features/requirements.md)**
 
 Minimum system and software requirements for running OVN-Kubernetes.

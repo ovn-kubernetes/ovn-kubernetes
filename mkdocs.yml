@@ -123,6 +123,7 @@ nav:
     - Launching OVN-Kubernetes with kubeadm: installation/INSTALL.KUBEADM.md
     - Launching OVN-Kubernetes on Ubuntu: installation/INSTALL.UBUNTU.md
     - Configuration Guide: getting-started/configuration.md
+    - CLI Guide: getting-started/cli-guide.md
     - Requirements: features/requirements.md
   - Developer Guide:
       - developer-guide/index.md
