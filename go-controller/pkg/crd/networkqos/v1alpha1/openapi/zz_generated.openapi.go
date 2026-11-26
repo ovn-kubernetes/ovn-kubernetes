@@ -25,6 +25,7 @@ func GetOpenAPIDefinitions(ref common.ReferenceCallback) map[string]common.OpenA
 		v1alpha1.Bandwidth{}.OpenAPIModelName():                        schema_pkg_crd_networkqos_v1alpha1_Bandwidth(ref),
 		v1alpha1.Classifier{}.OpenAPIModelName():                       schema_pkg_crd_networkqos_v1alpha1_Classifier(ref),
 		v1alpha1.Destination{}.OpenAPIModelName():                      schema_pkg_crd_networkqos_v1alpha1_Destination(ref),
+		v1alpha1.IPBlock{}.OpenAPIModelName():                          schema_pkg_crd_networkqos_v1alpha1_IPBlock(ref),
 		v1alpha1.NetworkQoS{}.OpenAPIModelName():                       schema_pkg_crd_networkqos_v1alpha1_NetworkQoS(ref),
 		v1alpha1.NetworkQoSList{}.OpenAPIModelName():                   schema_pkg_crd_networkqos_v1alpha1_NetworkQoSList(ref),
 		v1alpha1.Port{}.OpenAPIModelName():                             schema_pkg_crd_networkqos_v1alpha1_Port(ref),
@@ -228,14 +229,55 @@ func schema_pkg_crd_networkqos_v1alpha1_Destination(ref common.ReferenceCallback
 					"ipBlock": {
 						SchemaProps: spec.SchemaProps{
 							Description: "ipBlock defines policy on a particular IPBlock. If this field is set then neither of the other fields can be.",
-							Ref:         ref(v1.IPBlock{}.OpenAPIModelName()),
+							Ref:         ref(v1alpha1.IPBlock{}.OpenAPIModelName()),
 						},
 					},
 				},
 			},
 		},
 		Dependencies: []string{
-			v1.IPBlock{}.OpenAPIModelName(), metav1.LabelSelector{}.OpenAPIModelName()},
+			v1alpha1.IPBlock{}.OpenAPIModelName(), metav1.LabelSelector{}.OpenAPIModelName()},
+	}
+}
+
+func schema_pkg_crd_networkqos_v1alpha1_IPBlock(ref common.ReferenceCallback) common.OpenAPIDefinition {
+	return common.OpenAPIDefinition{
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "IPBlock selects destination addresses by CIDR, with optional exclusions.",
+				Type:        []string{"object"},
+				Properties: map[string]spec.Schema{
+					"cidr": {
+						SchemaProps: spec.SchemaProps{
+							Description: "cidr is a CIDR, for example \"192.168.1.0/24\" or \"2001:db8::/64\", or a single IP address.",
+							Default:     "",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"except": {
+						VendorExtensible: spec.VendorExtensible{
+							Extensions: spec.Extensions{
+								"x-kubernetes-list-type": "atomic",
+							},
+						},
+						SchemaProps: spec.SchemaProps{
+							Description: "except lists CIDRs or single IP addresses that are excluded from cidr, for example \"192.168.1.0/28\" or \"2001:db8::/96\".",
+							Type:        []string{"array"},
+							Items: &spec.SchemaOrArray{
+								Schema: &spec.Schema{
+									SchemaProps: spec.SchemaProps{
+										Type:   []string{"string"},
+										Format: "",
+									},
+								},
+							},
+						},
+					},
+				},
+				Required: []string{"cidr"},
+			},
+		},
 	}
 }
 

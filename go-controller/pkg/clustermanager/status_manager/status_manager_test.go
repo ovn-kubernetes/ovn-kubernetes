@@ -12,7 +12,6 @@ import (
 	cnitypes "github.com/containernetworking/cni/pkg/types"
 
 	corev1 "k8s.io/api/core/v1"
-	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -243,7 +242,7 @@ func newNetworkQoS(namespace string) *networkqosapi.NetworkQoS {
 					Classifier: networkqosapi.Classifier{
 						To: []networkqosapi.Destination{
 							{
-								IPBlock: &networkingv1.IPBlock{
+								IPBlock: &networkqosapi.IPBlock{
 									CIDR: "1.2.3.4/32",
 								},
 							},

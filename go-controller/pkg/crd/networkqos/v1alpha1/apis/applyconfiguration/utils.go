@@ -25,6 +25,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &networkqosv1alpha1.ClassifierApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("Destination"):
 		return &networkqosv1alpha1.DestinationApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("IPBlock"):
+		return &networkqosv1alpha1.IPBlockApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("NetworkQoS"):
 		return &networkqosv1alpha1.NetworkQoSApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("Port"):
