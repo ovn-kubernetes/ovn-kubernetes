@@ -640,8 +640,8 @@ jobs:
           - {"target": "control-plane", "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "snatGW",   "second-bridge": "1br", "cni-mode": "privileged", "dns-name-resolver": "enable-dns-name-resolver"}
           - {"target": "control-plane", "gateway-mode": "local",  "ipfamily": "ipv4",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "cni-mode": "privileged", "dns-name-resolver": "enable-dns-name-resolver", "image_family": "ubuntu"}
           - {"target": "control-plane", "gateway-mode": "local",  "ipfamily": "ipv6",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "cni-mode": "privileged"}
-          - {"target": "control-plane", "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "2br", "cni-mode": "privileged"}
-          - {"target": "control-plane", "gateway-mode": "shared", "ipfamily": "ipv6",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "2br", "cni-mode": "unprivileged"}
+          - {"target": "control-plane", "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "2br", "cni-mode": "privileged", "traffic-class-extended": "true"}
+          - {"target": "control-plane", "gateway-mode": "shared", "ipfamily": "ipv6",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "2br", "cni-mode": "unprivileged", "traffic-class-extended": "true"}
           - {"target": "multi-homing", "gateway-mode": "shared",  "ipfamily": "dualstack",      "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "cni-mode": "privileged"}
           - {"target": "node-ip-mac-migration", "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "cni-mode": "privileged"}
           - {"target": "multi-homing", "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "network-segmentation": "enable-network-segmentation"}
@@ -652,7 +652,7 @@ jobs:
           - {"target": "kv-live-migration", "gateway-mode": "shared", "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "num-workers": "3", "network-segmentation": "enable-network-segmentation", "routeadvertisements": "true"}
           - {"target": "kv-live-migration", "gateway-mode": "local", "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "num-workers": "3", "network-segmentation": "enable-network-segmentation", "routeadvertisements": "true", "evpn": "enable-evpn"}
           - {"target": "control-plane", "gateway-mode": "shared", "ipfamily": "ipv4", "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "forwarding": "disable-forwarding"}
-          - {"target": "network-segmentation", "gateway-mode": "shared", "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "cni-mode": "privileged", "forwarding": "disable-forwarding"}
+          - {"target": "network-segmentation", "gateway-mode": "shared", "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "cni-mode": "privileged", "forwarding": "disable-forwarding", "traffic-class-extended": "true"}
           - {"target": "network-segmentation", "gateway-mode": "local", "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "cni-mode": "unprivileged"}
           - {"target": "network-segmentation-dynamic", "gateway-mode": "shared", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "cni-mode": "unprivileged"}
           - {"target": "network-segmentation", "gateway-mode": "shared", "ipfamily": "ipv6", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "cni-mode": "privileged"}
@@ -689,6 +689,9 @@ jobs:
       OVN_DUMMY_GATEWAY_BRIDGE: "${{ matrix.target == 'no-uplink' }}"
       OVN_SECOND_BRIDGE: "${{ matrix.second-bridge == '2br' }}"
       ENABLE_MULTI_NET: "${{ matrix.target == 'multi-homing' || matrix.target == 'kv-live-migration' || startsWith(matrix.target, 'network-segmentation') || matrix.target == 'tools' || matrix.target == 'traffic-flow-test-only' || matrix.routeadvertisements != '' }}"
+      OVN_TRAFFIC_CLASS_ENABLE: "${{ matrix.target == 'control-plane' || startsWith(matrix.target, 'network-segmentation') }}"
+      # Sample the full selector matrix without repeating it in every lane.
+      OVN_TRAFFIC_CLASS_EXTENDED: "${{ matrix.traffic-class-extended == 'true' }}"
       ENABLE_NETWORK_SEGMENTATION: "${{ startsWith(matrix.target, 'network-segmentation') || matrix.network-segmentation == 'enable-network-segmentation' }}"
       DISABLE_UDN_ARP_NDP_FLOOD: "${{ matrix.disable-udn-arp-ndp-flood }}"
       PLATFORM_IPV4_SUPPORT: "${{ matrix.ipfamily == 'ipv4' || matrix.ipfamily == 'dualstack' }}"

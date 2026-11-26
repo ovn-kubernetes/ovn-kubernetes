@@ -22,9 +22,13 @@ func (f *FakeControllerWithError) AddWithMetadata(_ IPRule, _ string) error {
 func (f *FakeControllerWithError) Delete(_ IPRule) error {
 	return nil
 }
+func (f *FakeControllerWithError) DeleteWithoutRetry(rule IPRule) error {
+	return f.Delete(rule)
+}
+
 func (f *FakeControllerWithError) DeleteWithMetadata(_ string) error {
 	return fmt.Errorf("fake delete metadata error")
 }
-func (f *FakeControllerWithError) OwnPriority(_ int) error {
+func (f *FakeControllerWithError) OwnPriority(_ int, _ ...IPRule) error {
 	return nil
 }

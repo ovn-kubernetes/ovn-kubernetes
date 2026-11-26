@@ -16,6 +16,7 @@ import (
 	utilnet "k8s.io/utils/net"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	utilerrors "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/ndp"
 )
 
@@ -122,8 +123,17 @@ func (c *Controller) runInternal(stopChan <-chan struct{}, doneWg *sync.WaitGrou
 	klog.Info("Link manager is running")
 }
 
-// AddAddress stores the address in a store and ensures its applied
+// AddAddress registers an address and attempts installation; kernel add failures are retried in the background.
 func (c *Controller) AddAddress(address netlink.Addr) error {
+	return c.addAddress(address, false)
+}
+
+// EnsureAddress registers an address and reports whether its installation succeeded.
+func (c *Controller) EnsureAddress(address netlink.Addr) error {
+	return c.addAddress(address, true)
+}
+
+func (c *Controller) addAddress(address netlink.Addr, requireInstalled bool) error {
 	if !c.isAddressValid(address) {
 		return fmt.Errorf("address (%s) is not valid", address.String())
 	}
@@ -135,7 +145,10 @@ func (c *Controller) AddAddress(address netlink.Addr) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.addAddressToStore(link.Attrs().Name, address)
-	return c.syncLink(link)
+	if requireInstalled {
+		return c.syncAddresses(link, []netlink.Addr{address}, true)
+	}
+	return c.syncAddresses(link, c.store[link.Attrs().Name], false)
 }
 
 // DelAddress removes the address from the store and ensure its removed from a link
@@ -175,29 +188,46 @@ func (c *Controller) syncLinkLocked(link netlink.Link) error {
 // syncLink handles link updates
 // It MUST be called with the controller locked
 func (c *Controller) syncLink(link netlink.Link) error {
+	return c.syncAddresses(link, c.store[link.Attrs().Name], true)
+}
+
+// Apply registrations, optionally reporting kernel add failures to callers requiring confirmation.
+// Caller holds the controller lock.
+func (c *Controller) syncAddresses(link netlink.Link, wantedAddresses []netlink.Addr, requireInstalled bool) error {
 	if c.linkHandlerFunc != nil {
 		if err := c.linkHandlerFunc(link); err != nil {
 			klog.Errorf("Failed to execute link handler function on link: %s, error: %v", link.Attrs().Name, err)
 		}
 	}
 	linkName := link.Attrs().Name
-	wantedAddresses, found := c.store[linkName]
 	// we don't manage this link therefore we don't need to add any addresses
-	if !found {
+	if len(wantedAddresses) == 0 {
 		return nil
 	}
-	// get all addresses associated with the link depending on which IP families we support
-	foundAddresses, err := util.GetFilteredInterfaceAddrs(link, c.ipv4Enabled, c.ipv6Enabled)
+	// Managed IPv6 EgressIPs are deprecated (preferred lifetime zero); they still
+	// count as installed and must not be hidden by interface-address filtering.
+	family := netlink.FAMILY_ALL
+	if c.ipv4Enabled && !c.ipv6Enabled {
+		family = netlink.FAMILY_V4
+	} else if !c.ipv4Enabled && c.ipv6Enabled {
+		family = netlink.FAMILY_V6
+	}
+	foundAddresses, err := util.GetNetLinkOps().AddrList(link, family)
 	if err != nil {
 		return fmt.Errorf("failed to get address from link %q: %w", linkName, err)
 	}
 	// add addresses we want that are not found on the link
+	var errs []error
 	for _, addressWanted := range wantedAddresses {
 		if containsAddress(foundAddresses, addressWanted) {
 			continue
 		}
 		if err = util.GetNetLinkOps().AddrAdd(link, &addressWanted); err != nil {
-			klog.Errorf("Link manager: failed to add address %q to link %q: %v", addressWanted.String(), linkName, err)
+			klog.Errorf("Failed to add address %q to link %q: %v", addressWanted.String(), linkName, err)
+			if requireInstalled {
+				errs = append(errs, fmt.Errorf("failed to add address %q to link %q: %w", addressWanted.String(), linkName, err))
+			}
+			continue
 		}
 		// For IPv4, use arping to try to update other hosts ARP caches, in case this IP was
 		// previously active on another node
@@ -226,7 +256,7 @@ func (c *Controller) syncLink(link netlink.Link) error {
 		}
 		klog.Infof("Link manager: completed adding address %s to link %s", addressWanted, linkName)
 	}
-	return nil
+	return utilerrors.Join(errs...)
 }
 
 func (c *Controller) sync() {

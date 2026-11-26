@@ -4,15 +4,23 @@
 package linkmanager
 
 import (
+	"errors"
 	"fmt"
+	"net"
+	"testing"
 
+	"github.com/containernetworking/plugins/pkg/ns"
+	"github.com/containernetworking/plugins/pkg/testutils"
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	"github.com/stretchr/testify/mock"
 	"github.com/vishvananda/netlink"
+	"golang.org/x/sys/unix"
 
+	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
 	netlink_mocks "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing/mocks/github.com/vishvananda/netlink"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	egressiputil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/egressip"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/mocks"
 )
 
@@ -106,6 +114,42 @@ var _ = ginkgo.Describe("Link network manager", func() {
 		nlMock.On("LinkByIndex", getLinkIndexFromName(linkName1)).Return(nil, netlink.LinkNotFoundError{})
 		nlMock.On("IsLinkNotFoundError", mock.Anything).Return(true)
 		gomega.Expect(c.DelAddress(linkAddr)).Should(gomega.Succeed())
+	})
+
+	ginkgo.It("reports rejected address additions and forgets them on deletion", func() {
+		address := newNetlinkAddrWithIndexSet(v4CIDR1, linkName1)
+		nlLink1Mock.On("Attrs").Return(&netlink.LinkAttrs{Name: linkName1, Index: getLinkIndexFromName(linkName1)})
+		nlMock.On("LinkByIndex", address.LinkIndex).Return(nlLink1Mock, nil)
+		nlMock.On("AddrList", nlLink1Mock, netlink.FAMILY_V4).Return([]netlink.Addr{}, nil)
+		nlMock.On("AddrAdd", nlLink1Mock, &address).Return(errors.New("injected address failure")).Once()
+		nlMock.On("AddrDel", nlLink1Mock, &address).Return(unix.EADDRNOTAVAIL).Once()
+		nlMock.On("IsLinkNotFoundError", mock.Anything).Return(false)
+		c = NewController("test", true, false, nil)
+		gomega.Expect(c.EnsureAddress(address)).To(gomega.MatchError(gomega.ContainSubstring("injected address failure")))
+		gomega.Expect(isAddrInStore(c.store, linkName1, address)).To(gomega.BeTrue(), "retain the attempt for retry")
+		gomega.Expect(c.DelAddress(address)).To(gomega.Succeed())
+		gomega.Expect(isAddrInStore(c.store, linkName1, address)).To(gomega.BeFalse(), "deletion must cancel repair of the failed attempt")
+		gomega.Expect(c.syncLink(nlLink1Mock)).To(gomega.Succeed())
+		nlMock.AssertExpectations(ginkgo.GinkgoT())
+	})
+
+	ginkgo.It("isolates requested-address errors from other registrations on the link", func() {
+		rejected := newNetlinkAddrWithIndexSet(v4CIDR1, linkName1)
+		healthy := newNetlinkAddrWithIndexSet(v4CIDR2, linkName1)
+		nlLink1Mock.On("Attrs").Return(&netlink.LinkAttrs{Name: linkName1, Index: getLinkIndexFromName(linkName1)})
+		nlMock.On("LinkByIndex", healthy.LinkIndex).Return(nlLink1Mock, nil)
+		nlMock.On("AddrList", nlLink1Mock, netlink.FAMILY_V4).Return([]netlink.Addr{}, nil).Twice()
+		nlMock.On("AddrList", nlLink1Mock, netlink.FAMILY_V4).Return([]netlink.Addr{healthy}, nil)
+		nlMock.On("AddrAdd", nlLink1Mock, &rejected).Return(errors.New("rejected peer address")).Twice()
+		nlMock.On("AddrAdd", nlLink1Mock, &healthy).Return(nil).Once()
+		c = NewController("test", true, false, nil)
+		gomega.Expect(c.EnsureAddress(rejected)).To(gomega.MatchError(gomega.ContainSubstring("rejected peer address")))
+		gomega.Expect(c.EnsureAddress(healthy)).To(gomega.Succeed(), "the rejected peer must not block installing the requested address")
+		gomega.Expect(c.EnsureAddress(healthy)).To(gomega.Succeed(), "an already installed address must remain successful")
+		gomega.Expect(c.syncLink(nlLink1Mock)).To(gomega.MatchError(gomega.ContainSubstring("rejected peer address")), "background repair still retries and reports the peer failure")
+		gomega.Expect(isAddrInStore(c.store, linkName1, rejected)).To(gomega.BeTrue(), "retain failed peers for background repair")
+		gomega.Expect(isAddrInStore(c.store, linkName1, healthy)).To(gomega.BeTrue(), "retain the healthy registration")
+		nlMock.AssertExpectations(ginkgo.GinkgoT())
 	})
 
 	// Test that:
@@ -240,4 +284,49 @@ func getIPFamilyInt(v4, v6 bool) int {
 		return netlink.FAMILY_V4
 	}
 	return netlink.FAMILY_V6
+}
+
+func TestEnsureDeprecatedIPv6Address(t *testing.T) {
+	if ovntest.NoRoot() {
+		t.Skip("requires root privileges")
+	}
+	g := gomega.NewWithT(t)
+	testNS, err := testutils.NewNS()
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	t.Cleanup(func() {
+		g.Expect(testNS.Close()).To(gomega.Succeed())
+		g.Expect(testutils.UnmountNS(testNS)).To(gomega.Succeed())
+	})
+	g.Expect(testNS.Do(func(ns.NetNS) error {
+		link := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "egress"}}
+		if err := netlink.LinkAdd(link); err != nil {
+			return err
+		}
+		if err := netlink.LinkSetUp(link); err != nil {
+			return err
+		}
+		address := egressiputil.GetNetlinkAddress(net.ParseIP("2001:db8::100"), link.Attrs().Index)
+		c := NewController("test", false, true, nil)
+		g.Expect(c.EnsureAddress(*address)).To(gomega.Succeed())
+		installed, err := netlink.AddrList(link, netlink.FAMILY_V6)
+		if err != nil {
+			return err
+		}
+		var found bool
+		for _, addr := range installed {
+			if addr.Equal(*address) {
+				found = true
+				g.Expect(addr.Flags&unix.IFA_F_DEPRECATED).NotTo(gomega.BeZero(), "exercise Linux's deprecated EgressIP readback")
+			}
+		}
+		g.Expect(found).To(gomega.BeTrue())
+		g.Expect(c.EnsureAddress(*address)).To(gomega.Succeed(), "an installed deprecated address must not be added again")
+		g.Expect(c.syncLink(link)).To(gomega.Succeed(), "background repair must also retain the address")
+		g.Expect(c.DelAddress(*address)).To(gomega.Succeed())
+		installed, err = netlink.AddrList(link, netlink.FAMILY_V6)
+		for _, addr := range installed {
+			g.Expect(addr.Equal(*address)).To(gomega.BeFalse(), "the address must still be removable")
+		}
+		return err
+	})).To(gomega.Succeed())
 }

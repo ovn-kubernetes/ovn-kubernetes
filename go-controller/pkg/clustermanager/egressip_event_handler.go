@@ -11,6 +11,7 @@ import (
 	ocpcloudnetworkapi "github.com/openshift/api/cloudnetwork/v1"
 
 	corev1 "k8s.io/api/core/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/labels"
 	cache "k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
@@ -32,6 +33,20 @@ type egressIPClusterControllerEventHandler struct {
 
 func (h *egressIPClusterControllerEventHandler) FilterOutResource(_ interface{}) bool {
 	return false
+}
+
+// Conditions belong to the OVN controller; changing them must not replay cloud assignments.
+func (h *egressIPClusterControllerEventHandler) AreResourcesEqual(old, new interface{}) (bool, error) {
+	if h.objType != factory.EgressIPType {
+		return false, nil
+	}
+	before, after := old.(*egressipv1.EgressIP), new.(*egressipv1.EgressIP)
+	return before.UID == after.UID &&
+		apiequality.Semantic.DeepEqual(before.Spec, after.Spec) &&
+		apiequality.Semantic.DeepEqual(before.Status.Items, after.Status.Items) &&
+		apiequality.Semantic.DeepEqual(before.Annotations, after.Annotations) &&
+		apiequality.Semantic.DeepEqual(before.Labels, after.Labels) &&
+		apiequality.Semantic.DeepEqual(before.DeletionTimestamp, after.DeletionTimestamp), nil
 }
 
 // egressIPClusterControllerEventHandler functions

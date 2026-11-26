@@ -127,7 +127,7 @@ for crd in ${crds}; do
     --output-dir "${SCRIPT_ROOT}"/pkg/crd/$crd/${api_version}/apis/clientset \
     --output-pkg github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/$crd/${api_version}/apis/clientset \
     --apply-configuration-package github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/$crd/${api_version}/apis/applyconfiguration \
-    --plural-exceptions="EgressQoS:EgressQoSes,RouteAdvertisements:RouteAdvertisements,NetworkQoS:NetworkQoSes" \
+    --plural-exceptions="EgressQoS:EgressQoSes,RouteAdvertisements:RouteAdvertisements,NetworkQoS:NetworkQoSes,TrafficClass:TrafficClasses" \
     "$@"
 
   echo "Generating listers for $crd ($api_version)"
@@ -135,7 +135,7 @@ for crd in ${crds}; do
     --go-header-file hack/boilerplate.go.txt \
     --output-dir "${SCRIPT_ROOT}"/pkg/crd/$crd/${api_version}/apis/listers \
     --output-pkg github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/$crd/${api_version}/apis/listers \
-    --plural-exceptions="EgressQoS:EgressQoSes,RouteAdvertisements:RouteAdvertisements,NetworkQoS:NetworkQoSes" \
+    --plural-exceptions="EgressQoS:EgressQoSes,RouteAdvertisements:RouteAdvertisements,NetworkQoS:NetworkQoSes,TrafficClass:TrafficClasses" \
     github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/$crd/${api_version} \
     "$@"
 
@@ -146,13 +146,18 @@ for crd in ${crds}; do
     --listers-package  github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/$crd/${api_version}/apis/listers \
     --output-dir "${SCRIPT_ROOT}"/pkg/crd/$crd/${api_version}/apis/informers \
     --output-pkg github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/$crd/${api_version}/apis/informers \
-    --plural-exceptions="EgressQoS:EgressQoSes,RouteAdvertisements:RouteAdvertisements,NetworkQoS:NetworkQoSes" \
+    --plural-exceptions="EgressQoS:EgressQoSes,RouteAdvertisements:RouteAdvertisements,NetworkQoS:NetworkQoSes,TrafficClass:TrafficClasses" \
     github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/$crd/${api_version} \
     "$@"
 
   echo "Generating CRDs for $crd ($api_version)"
   controller-gen crd:crdVersions="v1"  paths=./pkg/crd/$crd/${api_version} output:crd:dir=_output/crds
 done
+
+# informer-gen v0.37.1 ignores plural exceptions in the metrics GVR.
+# Normalize the generated TrafficClass identity until the generator uses the plural.
+sed -i -e 's/Resource: "trafficclasss"/Resource: "trafficclasses"/' \
+  pkg/crd/trafficclass/v1/apis/informers/externalversions/trafficclass/v1/trafficclass.go
 
 echo "Editing egressFirewall CRD"
 ## We desire that only egressFirewalls with the name "default" are accepted by the apiserver. The only
@@ -171,6 +176,8 @@ echo "Copying egressFirewall CRD"
 cp _output/crds/k8s.ovn.org_egressfirewalls.yaml ../helm/ovn-kubernetes/crds/k8s.ovn.org_egressfirewalls.yaml
 echo "Copying egressIP CRD"
 cp _output/crds/k8s.ovn.org_egressips.yaml ../helm/ovn-kubernetes/crds/k8s.ovn.org_egressips.yaml
+echo "Copying TrafficClass CRD"
+cp _output/crds/k8s.ovn.org_trafficclasses.yaml ../helm/ovn-kubernetes/crds/k8s.ovn.org_trafficclasses.yaml
 echo "Copying egressQoS CRD"
 cp _output/crds/k8s.ovn.org_egressqoses.yaml ../helm/ovn-kubernetes/crds/k8s.ovn.org_egressqoses.yaml
 echo "Copying adminpolicybasedexternalroutes CRD"

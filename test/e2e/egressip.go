@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -23,10 +24,13 @@ import (
 	"github.com/onsi/gomega"
 	"golang.org/x/sync/errgroup"
 
+	eipv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressip/v1"
+	trafficv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/trafficclass/v1"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/allocators"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
+	deploymentapi "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig/api"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/feature"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/images"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider"
@@ -34,8 +38,11 @@ import (
 
 	nadclient "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/typed/k8s.cni.cncf.io/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8stypes "k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/wait"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -213,6 +220,26 @@ func containsIPInLastEntry(data, ip string) bool {
 		return false
 	}
 	return host == ip
+}
+
+// SCTP peers can advertise multiple addresses; agnhost joins them with "/" before the port.
+func containsSCTPIPInLastEntry(data, ip string) bool {
+	expected, err := netip.ParseAddr(ip)
+	if err != nil {
+		return false
+	}
+	lastLine := getLastLogLine(data)
+	separator := strings.LastIndexByte(lastLine, ':')
+	if separator < 0 {
+		return false
+	}
+	for _, address := range strings.Split(lastLine[:separator], "/") {
+		parsed, err := netip.ParseAddr(strings.Trim(address, "[]"))
+		if err == nil && parsed.WithZone("").Unmap() == expected.WithZone("").Unmap() {
+			return true
+		}
+	}
+	return false
 }
 
 // support for agnhost image is limited to netexec command
@@ -1310,6 +1337,1039 @@ spec:
 				ginkgo.Entry("disabling egress nodes impeding Legacy health check", &egressNodeAvailabilityHandlerViaHealthCheck{F: f, Legacy: true}),
 			)
 		})
+
+		const sourcePortStart, sourcePortEnd = 20000, 20100
+		for _, secondary := range []bool{false, true} {
+			hosting := "OVN network"
+			if secondary {
+				hosting = "secondary-host-eip"
+			}
+			clusterDefault := isClusterDefaultNetwork(netConfigParams)
+			// Secondary-host EgressIPs are supported only on the cluster default network.
+			if secondary && !clusterDefault {
+				continue
+			}
+			networkIP, _, _ := strings.Cut(netConfigParams.cidr, "/")
+			ipv6Network := utilnet.IsIPv6String(networkIP)
+			// Core UDN checks cover every family/topology; sample lifecycle tests to avoid repeated node restarts.
+			udnFailover := !clusterDefault && netConfigParams.topology == types.Layer3Topology && !ipv6Network
+			udnRestart := !clusterDefault && netConfigParams.topology == types.Layer2Topology && ipv6Network
+			// Extended variants run in representative CI lanes; other lanes retain core coverage.
+			focusedCoverage := func(include bool) ginkgo.Labels {
+				if include {
+					return ginkgo.Label()
+				}
+				return ginkgo.Label("TrafficClassExtended")
+			}
+			ginkgo.Context(fmt.Sprintf("[%s] [traffic-selector]", hosting), feature.TrafficClass, focusedCoverage(!secondary || clusterDefault), func() {
+				ginkgo.BeforeEach(func() {
+					if !deploymentconfig.Get().IsConfigurationEnabled(deploymentapi.TrafficClass) {
+						if os.Getenv("OVN_TRAFFIC_CLASS_ENABLE") == "true" {
+							framework.Failf("TrafficClass is expected for this run but disabled in the deployment")
+						}
+						ginkgo.Skip("TrafficClass is disabled in the deployment")
+					}
+					resources, err := f.ClientSet.Discovery().ServerResourcesForGroupVersion(trafficv1.SchemeGroupVersion.String())
+					if !apierrors.IsNotFound(err) {
+						framework.ExpectNoError(err, "discover the TrafficClass API")
+						for _, resource := range resources.APIResources {
+							if resource.Name == "trafficclasses" {
+								return
+							}
+						}
+					}
+					// CI explicitly enables TrafficClass in the lanes that run these specs.
+					if os.Getenv("OVN_TRAFFIC_CLASS_ENABLE") == "true" {
+						framework.Failf("TrafficClass is enabled for this run but its API is unavailable")
+					}
+					ginkgo.Skip("TrafficClass API is unavailable")
+				})
+
+				type selectiveTraffic struct {
+					target, other                   infraapi.ExternalContainer
+					class                           *trafficv1.TrafficClass
+					eip                             *eipv1.EgressIP
+					selectedIP, unmatched, protocol string
+					probeIPs                        map[string]bool
+					udpAttempt                      int
+				}
+				newTraffic := func() *selectiveTraffic {
+					traffic := &selectiveTraffic{}
+					traffic.target = primaryTargetExternalContainer
+					traffic.unmatched = pod1Node.nodeIP
+					if secondary {
+						traffic.target = secondaryTargetExternalContainer
+						traffic.unmatched = ""
+					}
+					traffic.probeIPs = map[string]bool{}
+					for _, probe := range []infraapi.ExternalContainer{primaryTargetExternalContainer, primaryDeniedExternalContainer, secondaryTargetExternalContainer} {
+						traffic.probeIPs[probe.GetIPv4()] = true
+						traffic.probeIPs[probe.GetIPv6()] = true
+					}
+					return traffic
+				}
+				familyIP := func(v4, v6 string) string {
+					if isIPv6TestRun {
+						return net.ParseIP(v6).String()
+					}
+					return v4
+				}
+				targetIP := func(container infraapi.ExternalContainer) string {
+					if isIPv6TestRun {
+						return container.GetIPv6()
+					}
+					return container.GetIPv4()
+				}
+				prefix := func(container infraapi.ExternalContainer) string {
+					bits := 32
+					if isIPv6TestRun {
+						bits = 128
+					}
+					return fmt.Sprintf("%s/%d", targetIP(container), bits)
+				}
+				createProbe := func(probeIPs map[string]bool, name string, network infraapi.Network, transport string) infraapi.ExternalContainer {
+					ginkgo.GinkgoHelper()
+					port := infraprovider.Get().GetExternalContainerPort()
+					args := getAgnHostHTTPPortBindCMDArgs(port)
+					if transport != "tcp" {
+						args = []string{"netexec", fmt.Sprintf("--http-port=%d", port), fmt.Sprintf("--%s-port=%d", transport, port)}
+					}
+					container, err := providerCtx.CreateExternalContainer(infraapi.ExternalContainer{
+						Name: name, Image: images.AgnHost(), Network: network, CmdArgs: args, ExtPort: port,
+					})
+					framework.ExpectNoError(err, "create %s probe %s on network %s", transport, name, network.Name())
+					probeIPs[container.GetIPv4()] = true
+					probeIPs[container.GetIPv6()] = true
+					return container
+				}
+				ovnNodePods := func(nodeName string) []corev1.Pod {
+					ginkgo.GinkgoHelper()
+					ctx, cancel := context.WithTimeout(context.Background(), retryTimeout)
+					defer cancel()
+					options := metav1.ListOptions{LabelSelector: "app=ovnkube-node"}
+					if nodeName != "" {
+						options.FieldSelector = "spec.nodeName=" + nodeName
+					}
+					namespace := deploymentconfig.Get().OVNKubernetesNamespace()
+					pods, err := f.ClientSet.CoreV1().Pods(namespace).List(ctx, options)
+					framework.ExpectNoError(err, "list OVN node pods in %s for node %q", namespace, nodeName)
+					gomega.Expect(pods.Items).NotTo(gomega.BeEmpty(), "find OVN northbound databases for node %q", nodeName)
+					return pods.Items
+				}
+				runNBCommand := func(dbPod corev1.Pod, command ...string) (string, error) {
+					deadline := time.NewTimer(10 * time.Second)
+					defer deadline.Stop()
+					args := append([]string{"exec", dbPod.Name, "-c", deploymentconfig.Get().NBDBContainerName(), "--", "ovn-nbctl"}, command...)
+					out, err := e2ekubectl.NewKubectlCommand(dbPod.Namespace, args...).WithTimeout(deadline.C).Exec()
+					return strings.TrimSpace(out), err
+				}
+				allocatePrimary := func(probeIPs map[string]bool) string {
+					ginkgo.GinkgoHelper()
+					for {
+						var ip net.IP
+						var err error
+						if isIPv6TestRun {
+							ip, err = allocators.NewPrimaryIPv6(egress1Node.name)
+						} else {
+							ip, err = allocators.NewPrimaryIPv4(egress1Node.name)
+						}
+						framework.ExpectNoError(err, "allocate a primary EgressIP on node %s", egress1Node.name)
+						ginkgo.DeferCleanup(func() {
+							// Owner deletion is registered later and runs before the address is released.
+							for _, dbPod := range ovnNodePods("") {
+								gomega.Eventually(func() (string, error) {
+									return runNBCommand(dbPod, "--bare", "--columns=_uuid", "find", "NAT", "type=snat", "external_ip="+strconv.Quote(ip.String()))
+								}, retryTimeout, retryInterval).Should(gomega.BeEmpty(), "remove SNAT for %s from %s before reuse", ip, dbPod.Name)
+							}
+							allocators.ReleasePrimaryIP(ip)
+						})
+						if !probeIPs[ip.String()] {
+							return ip.String()
+						}
+					}
+				}
+				apply := func(resource interface{}, kind, name string) {
+					ginkgo.GinkgoHelper()
+					data, err := json.Marshal(resource)
+					framework.ExpectNoError(err, "marshal %s %s", kind, name)
+					ginkgo.DeferCleanup(func() { e2ekubectl.RunKubectlOrDie("default", "delete", kind, name, "--ignore-not-found=true") })
+					cleanup, err := applyManifest("default", string(data))
+					ginkgo.DeferCleanup(cleanup)
+					framework.ExpectNoError(err, "apply %s %s", kind, name)
+				}
+				patch := func(kind, name string, value interface{}) {
+					ginkgo.GinkgoHelper()
+					data, err := json.Marshal(value)
+					framework.ExpectNoError(err, "marshal patch for %s %s", kind, name)
+					e2ekubectl.RunKubectlOrDie("default", "patch", kind, name, "--type=merge", "-p", string(data))
+				}
+				patchClass := func(class *trafficv1.TrafficClass) {
+					ginkgo.GinkgoHelper()
+					patch("trafficclass", class.Name, map[string]interface{}{"spec": class.Spec})
+				}
+				// Prepare probes and resource templates so each spec can edit its initial selection.
+				prepareTraffic := func(traffic *selectiveTraffic, transport string, peerNetwork infraapi.Network) {
+					ginkgo.GinkgoHelper()
+					ginkgo.By(fmt.Sprintf("Selecting node %s and the test namespace for egress", egress1Node.name))
+					availability := egressNodeAvailabilityHandlerViaLabel{f}
+					availability.Enable(egress1Node.name)
+					updateNamespaceLabels(f, f.Namespace, map[string]string{"name": f.Namespace.Name})
+					traffic.protocol = transport
+					if traffic.protocol != "tcp" {
+						traffic.target = createProbe(traffic.probeIPs, "traffic-"+traffic.protocol, traffic.target.Network, traffic.protocol)
+					}
+					traffic.other = createProbe(traffic.probeIPs, "traffic-other", peerNetwork, "tcp")
+					// Allocate after every probe exists so runtime-assigned addresses cannot collide with EgressIPs.
+					traffic.selectedIP = familyIP("10.10.10.100", "2001:db8:abcd:1234:c001::")
+					if !secondary {
+						traffic.selectedIP = allocatePrimary(traffic.probeIPs)
+					}
+					traffic.class = &trafficv1.TrafficClass{
+						TypeMeta:   metav1.TypeMeta{APIVersion: "k8s.ovn.org/v1", Kind: "TrafficClass"},
+						ObjectMeta: metav1.ObjectMeta{Name: "traffic-" + f.Namespace.Name, Labels: map[string]string{"traffic": f.Namespace.Name}},
+						Spec:       trafficv1.TrafficClassSpec{Matches: []trafficv1.TrafficMatch{{DestinationCIDR: prefix(traffic.target)}}},
+					}
+					traffic.eip = &eipv1.EgressIP{
+						TypeMeta:   metav1.TypeMeta{APIVersion: "k8s.ovn.org/v1", Kind: "EgressIP"},
+						ObjectMeta: metav1.ObjectMeta{Name: egressIPName},
+						Spec: eipv1.EgressIPSpec{
+							EgressIPs:         []string{traffic.selectedIP},
+							NamespaceSelector: metav1.LabelSelector{MatchLabels: map[string]string{"name": f.Namespace.Name}},
+							PodSelector:       metav1.LabelSelector{MatchLabels: podEgressLabel},
+							TrafficSelector:   &metav1.LabelSelector{MatchLabels: traffic.class.Labels},
+						},
+						Status: eipv1.EgressIPStatus{Items: []eipv1.EgressIPStatusItem{}},
+					}
+				}
+				setProtocolFilter := func(class *trafficv1.TrafficClass, protocol string, ports *trafficv1.PortProtocol) {
+					match := trafficv1.ProtocolMatch{}
+					switch protocol {
+					case "tcp":
+						match.TCP = ports
+					case "udp":
+						match.UDP = ports
+					case "sctp":
+						match.SCTP = ports
+					}
+					class.Spec.Matches[0].Protocols = []trafficv1.ProtocolMatch{match}
+				}
+				matchDestinationPort := func(traffic *selectiveTraffic) *trafficv1.PortProtocol {
+					port := int32(traffic.target.GetPort())
+					ports := &trafficv1.PortProtocol{DestinationPort: &trafficv1.Port{Number: &port}}
+					setProtocolFilter(traffic.class, traffic.protocol, ports)
+					return ports
+				}
+				prepareDestinationPortTraffic := func(traffic *selectiveTraffic, transport string) *trafficv1.PortProtocol {
+					ginkgo.GinkgoHelper()
+					prepareTraffic(traffic, transport, traffic.target.Network)
+					return matchDestinationPort(traffic)
+				}
+				prepareSourcePortTraffic := func(traffic *selectiveTraffic) *trafficv1.PortProtocol {
+					ginkgo.GinkgoHelper()
+					prepareTraffic(traffic, "udp", traffic.target.Network)
+					ports := &trafficv1.PortProtocol{SourcePort: &trafficv1.Port{Range: &trafficv1.PortRange{Start: sourcePortStart, End: sourcePortEnd}}}
+					setProtocolFilter(traffic.class, traffic.protocol, ports)
+					return ports
+				}
+				startTraffic := func(traffic *selectiveTraffic, clientNode string) {
+					ginkgo.GinkgoHelper()
+					// Local gateways route unmatched traffic through the pod node's host network.
+					if secondary && IsGatewayModeLocal(f.ClientSet) {
+						link, err := infraprovider.Get().GetK8NodeNetworkInterface(clientNode, traffic.target.Network)
+						framework.ExpectNoError(err, "get node %s interface on network %s", clientNode, traffic.target.Network.Name())
+						traffic.unmatched = familyIP(link.GetIPv4(), link.GetIPv6())
+					}
+					ginkgo.By("Creating the TrafficClass and EgressIP")
+					apply(traffic.class, "trafficclass", traffic.class.Name)
+					apply(traffic.eip, "egressip", traffic.eip.Name)
+					verifySpecificEgressIPStatusLengthEquals(traffic.eip.Name, 1, func(items []egressIPStatus) bool { return items[0].Node == egress1Node.name })
+					ginkgo.By("Creating a pod selected by the EgressIP")
+					_, err := createGenericPodWithLabel(f, pod1Name, clientNode, f.Namespace.Name, getAgnHostHTTPPortBindFullCMD(clusterNetworkHTTPPort), podEgressLabel)
+					framework.ExpectNoError(err, "create selected pod %s/%s on node %s", f.Namespace.Name, pod1Name, clientNode)
+				}
+				execTrafficProbe := func(podName string, command ...string) (string, error) {
+					deadline := time.NewTimer(10 * time.Second)
+					defer deadline.Stop()
+					args := append([]string{"exec", podName, "--"}, command...)
+					return e2ekubectl.NewKubectlCommand(f.Namespace.Name, args...).WithTimeout(deadline.C).Exec()
+				}
+				probeTCPFromPod := func(podName string, container infraapi.ExternalContainer, expected string) {
+					ginkgo.GinkgoHelper()
+					url := "http://" + net.JoinHostPort(targetIP(container), container.GetPortStr()) + aghHostNetexecSrcIPPath
+					gomega.Eventually(func() error {
+						out, err := execTrafficProbe(podName, "curl", "--silent", "--show-error", "--noproxy", "*",
+							"--connect-timeout", "2", "--max-time", "5", url)
+						if err != nil {
+							return err
+						}
+						if !containsIPInLastEntry(out, expected) {
+							return fmt.Errorf("expected source %s, got %q", expected, out)
+						}
+						return nil
+					}, retryTimeout, retryInterval).Should(gomega.Succeed(), "probe %s from pod %s", container.GetName(), podName)
+				}
+				probeProtocol := func(traffic *selectiveTraffic, container infraapi.ExternalContainer, expected, protocol string, sourcePorts ...int) {
+					ginkgo.GinkgoHelper()
+					if expected != "" {
+						ginkgo.By(fmt.Sprintf("Checking %s traffic to %s uses source %s", protocol, container.GetName(), expected))
+					} else {
+						ginkgo.By(fmt.Sprintf("Checking %s traffic to %s is blocked", protocol, container.GetName()))
+					}
+					if protocol == "tcp" && expected != "" {
+						probeTCPFromPod(pod1Name, container, expected)
+						return
+					}
+					containsSourceIP := containsIPInLastEntry
+					if protocol == "sctp" {
+						containsSourceIP = containsSCTPIPInLastEntry
+					}
+					blockedSCTP := protocol == "sctp" && expected == ""
+					attempt := 0
+					gomega.Eventually(func() error {
+						command := fmt.Sprintf("curl --silent --show-error --noproxy '*' --connect-timeout 2 --max-time 5 --write-out '\ntraffic-probe-connects=%%{num_connects}' http://%s%s", net.JoinHostPort(targetIP(container), container.GetPortStr()), aghHostNetexecSrcIPPath)
+						udp := protocol == "udp"
+						if udp {
+							// Fresh tuples avoid retaining pre-convergence UDP conntrack SNAT.
+							sourcePort := sourcePortStart + 1 + traffic.udpAttempt%(sourcePortEnd-sourcePortStart-1)
+							traffic.udpAttempt++
+							switch len(sourcePorts) {
+							case 1:
+								sourcePort = sourcePorts[0]
+							case 2:
+								sourcePort = sourcePorts[0] + attempt
+								if sourcePort > sourcePorts[1] {
+									return gomega.StopTrying("exhausted fresh UDP source ports")
+								}
+								attempt++
+							}
+							command = fmt.Sprintf("printf 'clientip' | nc -u -w 2 -p %d %s %d", sourcePort, targetIP(container), container.GetPort())
+						}
+						if blockedSCTP {
+							// Check the association without waiting for an application response.
+							command = fmt.Sprintf("socat -u OPEN:/dev/null 'SCTP-CONNECT:%s,connect-timeout=5' 2>&1",
+								net.JoinHostPort(targetIP(container), container.GetPortStr()))
+						} else if protocol == "sctp" {
+							command = fmt.Sprintf("curl --silent --show-error --noproxy '*' --connect-timeout 2 --max-time 8 'http://127.0.0.1:%d/dial?host=%s&port=%d&protocol=sctp&request=clientip&tries=1'", clusterNetworkHTTPPort, targetIP(container), container.GetPort())
+						}
+						// The marker distinguishes probe failure from kubectl/exec/transport failure.
+						command += "; status=$?; printf '\ntraffic-probe-exit=%s\n' \"$status\""
+						out, err := execTrafficProbe(pod1Name, "sh", "-c", command)
+						if err != nil {
+							return fmt.Errorf("exec probe: %w", err)
+						}
+						payload, status, found := strings.Cut(out, "\ntraffic-probe-exit=")
+						if !found {
+							return fmt.Errorf("missing probe exit status: %q", out)
+						}
+						status = strings.TrimSpace(status)
+						if blockedSCTP && status == "1" {
+							for line := range strings.SplitSeq(strings.TrimSpace(payload), "\n") {
+								if strings.HasSuffix(line, ": Operation timed out") || strings.HasSuffix(line, ": Connection refused") {
+									return nil
+								}
+							}
+						}
+						if protocol == "sctp" && !blockedSCTP && status == "0" {
+							var result struct {
+								Responses []string `json:"responses"`
+								Errors    []string `json:"errors"`
+							}
+							if err := json.Unmarshal([]byte(payload), &result); err != nil {
+								return fmt.Errorf("decode SCTP probe: %w", err)
+							}
+							if len(result.Errors) > 0 {
+								return fmt.Errorf("SCTP probe: %s", strings.Join(result.Errors, ", "))
+							}
+							payload = strings.Join(result.Responses, "\n")
+						}
+						if expected == "" {
+							if protocol == "tcp" {
+								_, connects, found := strings.Cut(payload, "\ntraffic-probe-connects=")
+								if found && strings.TrimSpace(connects) == "0" && (status == "7" || status == "28") {
+									return nil
+								}
+							}
+							if udp && status == "0" && strings.TrimSpace(payload) == "" {
+								return nil
+							}
+						} else if status == "0" && containsSourceIP(payload, expected) {
+							return nil
+						}
+						return fmt.Errorf("expected source %q, probe exit %s, output %q", expected, status, payload)
+					}, retryTimeout, retryInterval).Should(gomega.Succeed(), "probe %s", container.GetName())
+				}
+				peerIP := func(probeIPs map[string]bool) string {
+					if secondary {
+						return familyIP("10.10.10.101", "2001:db8:abcd:1234:c001::1")
+					}
+					return allocatePrimary(probeIPs)
+				}
+				addOwner := func(template *eipv1.EgressIP, name, ip string, selector *metav1.LabelSelector) *eipv1.EgressIP {
+					ginkgo.GinkgoHelper()
+					owner := template.DeepCopy()
+					owner.Name = name
+					owner.Spec.EgressIPs = []string{ip}
+					owner.Spec.TrafficSelector = selector
+					ginkgo.By(fmt.Sprintf("Adding EgressIP owner %s with address %s", owner.Name, ip))
+					apply(owner, "egressip", owner.Name)
+					verifySpecificEgressIPStatusLengthEquals(owner.Name, 1, func(items []egressIPStatus) bool { return items[0].Node == egress1Node.name })
+					return owner
+				}
+				addSelectivePeer := func(traffic *selectiveTraffic, ip string, matches ...trafficv1.TrafficMatch) *eipv1.EgressIP {
+					ginkgo.GinkgoHelper()
+					peerClass := traffic.class.DeepCopy()
+					peerClass.Name += "-peer"
+					peerClass.Labels = map[string]string{"traffic": f.Namespace.Name + "-peer"}
+					peerClass.Spec.Matches = matches
+					apply(peerClass, "trafficclass", peerClass.Name)
+					return addOwner(traffic.eip, egressIPName2, ip, &metav1.LabelSelector{MatchLabels: peerClass.Labels})
+				}
+				deleteOwnerAndCheckPeer := func(traffic *selectiveTraffic, owner string, container infraapi.ExternalContainer, ip, transport string, sourcePorts ...int) {
+					ginkgo.GinkgoHelper()
+					ginkgo.By("Deleting one owner and checking that its peer still serves traffic")
+					e2ekubectl.RunKubectlOrDie("default", "delete", "egressip", owner)
+					ginkgo.By("Waiting for the deleted owner's dataplane state to be removed")
+					if secondary {
+						// Host teardown removes the address after withdrawing pod steering and SNAT.
+						for _, node := range []string{egress1Node.name, egress2Node.name} {
+							gomega.Eventually(func() (string, error) {
+								return infraprovider.Get().ExecK8NodeCommand(node, []string{"ip", "-o", "addr", "show", "to", traffic.selectedIP})
+							}, retryTimeout, retryInterval).Should(gomega.BeEmpty(), "remove the deleted EgressIP from %s", node)
+						}
+					}
+					// OVN prunes the owner's destination sets after cleaning up its
+					// pod assignments, including on UDNs that steer SNAT with marks.
+					for _, dbPod := range ovnNodePods("") {
+						gomega.Eventually(func() (string, error) {
+							return runNBCommand(dbPod, "--bare", "--columns=external_ids", "find", "Address_Set", "external_ids:k8s.ovn.org/owner-type=EgressIP")
+						}, retryTimeout, retryInterval).ShouldNot(gomega.ContainSubstring("egressip-dest-nets-"+owner+"/"), "remove the deleted owner's destination sets from %s", dbPod.Name)
+					}
+					probeProtocol(traffic, container, ip, transport, sourcePorts...)
+				}
+				expectConflict := func(owner string, status string) {
+					ginkgo.GinkgoHelper()
+					gomega.Eventually(func() (string, error) {
+						return e2ekubectl.RunKubectl("default", "get", "egressip", owner, "-o", `jsonpath={.status.conditions[?(@.type=="TrafficConflict")].status}`)
+					}, retryTimeout, retryInterval).Should(gomega.Equal(status))
+				}
+
+				ginkgo.DescribeTable("destination port and protocol matching", focusedCoverage(clusterDefault), func(transport string) {
+					traffic := newTraffic()
+					ports := prepareDestinationPortTraffic(traffic, transport)
+					startTraffic(traffic, pod1Node.name)
+					// Establish that the endpoint works before asserting exclusion.
+					probeProtocol(traffic, traffic.target, traffic.selectedIP, traffic.protocol)
+
+					ginkgo.By("Changing the destination port so the endpoint no longer matches")
+					wrongPort := int32(traffic.target.GetPort()) + 1
+					ports.DestinationPort.Number = &wrongPort
+					patchClass(traffic.class)
+					probeProtocol(traffic, traffic.target, traffic.unmatched, traffic.protocol)
+
+					ginkgo.By("Removing the port restriction while retaining the protocol restriction")
+					ports.DestinationPort = nil
+					patchClass(traffic.class)
+					probeProtocol(traffic, traffic.target, traffic.selectedIP, traffic.protocol)
+					probeProtocol(traffic, traffic.target, traffic.unmatched, "tcp")
+
+					ginkgo.By("Removing the protocol restriction so both transports use the EgressIP")
+					traffic.class.Spec.Matches[0].Protocols = nil
+					patchClass(traffic.class)
+					probeProtocol(traffic, traffic.target, traffic.selectedIP, traffic.protocol)
+					probeProtocol(traffic, traffic.target, traffic.selectedIP, "tcp")
+				},
+					ginkgo.Entry("UDP", "udp"),
+					ginkgo.Entry("SCTP", "sctp"),
+				)
+				ginkgo.It("TCP destination port matching, ranges and exclusions", focusedCoverage(clusterDefault), func() {
+					traffic := newTraffic()
+					ports := prepareDestinationPortTraffic(traffic, "tcp")
+					port := int32(traffic.target.GetPort())
+					startTraffic(traffic, pod1Node.name)
+					probeProtocol(traffic, traffic.target, traffic.selectedIP, traffic.protocol)
+
+					ginkgo.By("Excluding a nonmatching destination port")
+					wrongPort := port + 1
+					ports.DestinationPort.Number = &wrongPort
+					patchClass(traffic.class)
+					probeProtocol(traffic, traffic.target, traffic.unmatched, traffic.protocol)
+
+					ginkgo.By("Matching a destination port inside a range")
+					ports.DestinationPort = &trafficv1.Port{Range: &trafficv1.PortRange{Start: port - 1, End: port + 1}}
+					patchClass(traffic.class)
+					probeProtocol(traffic, traffic.target, traffic.selectedIP, traffic.protocol)
+					ginkgo.By("Excluding the destination port immediately below the range")
+					ports.DestinationPort.Range = &trafficv1.PortRange{Start: port + 1, End: port + 2}
+					patchClass(traffic.class)
+					probeProtocol(traffic, traffic.target, traffic.unmatched, traffic.protocol)
+
+					ginkgo.By("Moving the range down to include the destination port at its start")
+					ports.DestinationPort.Range = &trafficv1.PortRange{Start: port, End: port + 1}
+					patchClass(traffic.class)
+					probeProtocol(traffic, traffic.target, traffic.selectedIP, traffic.protocol)
+
+					ginkgo.By("Excluding the destination port immediately above the range")
+					ports.DestinationPort.Range = &trafficv1.PortRange{Start: port - 2, End: port - 1}
+					patchClass(traffic.class)
+					probeProtocol(traffic, traffic.target, traffic.unmatched, traffic.protocol)
+
+					ginkgo.By("Moving the range up to include the destination port at its end")
+					ports.DestinationPort.Range = &trafficv1.PortRange{Start: port - 1, End: port}
+					patchClass(traffic.class)
+					probeProtocol(traffic, traffic.target, traffic.selectedIP, traffic.protocol)
+				})
+				ginkgo.It("UDP source port boundaries and combined destination filtering", focusedCoverage(clusterDefault), func() {
+					traffic := newTraffic()
+					ports := prepareSourcePortTraffic(traffic)
+					startTraffic(traffic, pod1Node.name)
+					probeProtocol(traffic, traffic.target, traffic.selectedIP, traffic.protocol)
+					ginkgo.By("Checking inclusive source-port boundaries and adjacent exclusions")
+					probeProtocol(traffic, traffic.target, traffic.selectedIP, traffic.protocol, sourcePortStart)
+					probeProtocol(traffic, traffic.target, traffic.selectedIP, traffic.protocol, sourcePortEnd)
+					probeProtocol(traffic, traffic.target, traffic.unmatched, traffic.protocol, sourcePortStart-1)
+					probeProtocol(traffic, traffic.target, traffic.unmatched, traffic.protocol, sourcePortEnd+1)
+
+					ginkgo.By("Combining source and destination filters using fresh UDP tuples")
+					// A distinct range avoids reusing conntrack entries from the boundary checks.
+					const combinedStart, combinedEnd = 23000, 26001
+					ports.SourcePort.Range = &trafficv1.PortRange{Start: combinedStart, End: combinedEnd}
+					port := int32(traffic.target.GetPort())
+					ports.DestinationPort = &trafficv1.Port{Number: &port}
+					patchClass(traffic.class)
+					probeProtocol(traffic, traffic.target, traffic.selectedIP, traffic.protocol, combinedStart+1, combinedStart+1000)
+					ginkgo.By("Excluding the source port while the destination still matches")
+					probeProtocol(traffic, traffic.target, traffic.unmatched, traffic.protocol, combinedEnd+1)
+					ginkgo.By("Excluding the destination port while the source still matches")
+					wrongPort := port + 1
+					ports.DestinationPort.Number = &wrongPort
+					patchClass(traffic.class)
+					probeProtocol(traffic, traffic.target, traffic.unmatched, traffic.protocol, combinedStart+1001, combinedStart+2000)
+					ginkgo.By("Restoring both port matches and checking a fresh connection")
+					ports.DestinationPort.Number = &port
+					patchClass(traffic.class)
+					probeProtocol(traffic, traffic.target, traffic.selectedIP, traffic.protocol, combinedStart+2001, combinedEnd-1)
+				})
+				ginkgo.It("multiple classes selected by one owner", focusedCoverage(secondary), func() {
+					traffic := newTraffic()
+					exclusive := createProbe(traffic.probeIPs, "traffic-exclusive", traffic.target.Network, "tcp")
+					prepareTraffic(traffic, "tcp", traffic.target.Network)
+					traffic.class.Spec.Matches = append(traffic.class.Spec.Matches, trafficv1.TrafficMatch{DestinationCIDR: prefix(exclusive)})
+					startTraffic(traffic, pod1Node.name)
+					probeProtocol(traffic, exclusive, traffic.selectedIP, traffic.protocol)
+					probeProtocol(traffic, traffic.target, traffic.selectedIP, traffic.protocol)
+					ginkgo.By("Selecting another class with both a redundant match and another destination")
+					additional := traffic.class.DeepCopy()
+					additional.Name += "-additional"
+					additional.Spec.Matches = []trafficv1.TrafficMatch{
+						{DestinationCIDR: prefix(traffic.target)},
+						{DestinationCIDR: prefix(traffic.other)},
+					}
+					apply(additional, "trafficclass", additional.Name)
+					probeProtocol(traffic, traffic.target, traffic.selectedIP, traffic.protocol)
+					probeProtocol(traffic, traffic.other, traffic.selectedIP, traffic.protocol)
+					expectConflict(traffic.eip.Name, "False")
+					ginkgo.By("Deleting one selected class while the remaining class continues serving traffic")
+					e2ekubectl.RunKubectlOrDie("default", "delete", "trafficclass", traffic.class.Name)
+					probeProtocol(traffic, exclusive, traffic.unmatched, traffic.protocol)
+					probeProtocol(traffic, traffic.target, traffic.selectedIP, traffic.protocol)
+					probeProtocol(traffic, traffic.other, traffic.selectedIP, traffic.protocol)
+					expectConflict(traffic.eip.Name, "False")
+					ginkgo.By("Deleting the last selected class and withdrawing its matches")
+					e2ekubectl.RunKubectlOrDie("default", "delete", "trafficclass", additional.Name)
+					probeProtocol(traffic, traffic.target, traffic.unmatched, traffic.protocol)
+					probeProtocol(traffic, traffic.other, traffic.unmatched, traffic.protocol)
+				})
+				ginkgo.It("class and selector lifecycle", focusedCoverage(clusterDefault), func() {
+					traffic := newTraffic()
+					prepareTraffic(traffic, "tcp", traffic.target.Network)
+					selector := traffic.eip.Spec.TrafficSelector
+					traffic.eip.Spec.TrafficSelector = nil
+					startTraffic(traffic, pod1Node.name)
+					probeProtocol(traffic, traffic.target, traffic.selectedIP, traffic.protocol)
+					probeProtocol(traffic, traffic.other, traffic.selectedIP, traffic.protocol)
+					ginkgo.By("Adding traffic selection to the existing catch-all EgressIP")
+					patch("egressip", traffic.eip.Name, map[string]interface{}{"spec": map[string]interface{}{"trafficSelector": selector}})
+					probeProtocol(traffic, traffic.other, traffic.unmatched, traffic.protocol)
+					probeProtocol(traffic, traffic.target, traffic.selectedIP, traffic.protocol)
+
+					probeProtocol(traffic, primaryDeniedExternalContainer, pod1Node.nodeIP, traffic.protocol)
+					ginkgo.By("Moving the class match to the other destination")
+					traffic.class.Spec.Matches = []trafficv1.TrafficMatch{{DestinationCIDR: prefix(traffic.other)}}
+					patchClass(traffic.class)
+					probeProtocol(traffic, traffic.other, traffic.selectedIP, traffic.protocol)
+					probeProtocol(traffic, traffic.target, traffic.unmatched, traffic.protocol)
+
+					ginkgo.By("Changing class labels so the EgressIP stops selecting it")
+					patch("trafficclass", traffic.class.Name, map[string]interface{}{"metadata": map[string]interface{}{"labels": map[string]string{"traffic": "unmatched"}}})
+					probeProtocol(traffic, traffic.other, traffic.unmatched, traffic.protocol)
+					ginkgo.By("Restoring the class labels and checking selective egress returns")
+					patch("trafficclass", traffic.class.Name, map[string]interface{}{"metadata": map[string]interface{}{"labels": traffic.class.Labels}})
+					probeProtocol(traffic, traffic.other, traffic.selectedIP, traffic.protocol)
+
+					ginkgo.By("Deleting the class and checking its traffic is no longer selected")
+					e2ekubectl.RunKubectlOrDie("default", "delete", "trafficclass", traffic.class.Name)
+					probeProtocol(traffic, traffic.other, traffic.unmatched, traffic.protocol)
+					probeProtocol(traffic, traffic.target, traffic.unmatched, traffic.protocol)
+					ginkgo.By("Removing traffic selection and restoring catch-all egress")
+					patch("egressip", traffic.eip.Name, map[string]interface{}{"spec": map[string]interface{}{"trafficSelector": nil}})
+					probeProtocol(traffic, traffic.other, traffic.selectedIP, traffic.protocol)
+					probeProtocol(traffic, traffic.target, traffic.selectedIP, traffic.protocol)
+				})
+				ginkgo.It("destination update", focusedCoverage(!clusterDefault), func() {
+					traffic := newTraffic()
+					prepareTraffic(traffic, "tcp", traffic.target.Network)
+					startTraffic(traffic, pod1Node.name)
+					probeProtocol(traffic, traffic.target, traffic.selectedIP, traffic.protocol)
+					ginkgo.By("Moving the class match to the other destination")
+					traffic.class.Spec.Matches = []trafficv1.TrafficMatch{{DestinationCIDR: prefix(traffic.other)}}
+					patchClass(traffic.class)
+					probeProtocol(traffic, traffic.other, traffic.selectedIP, traffic.protocol)
+					probeProtocol(traffic, traffic.target, traffic.unmatched, traffic.protocol)
+				})
+				ginkgo.It("mixed destinations", focusedCoverage(clusterDefault), func() {
+					traffic := newTraffic()
+					prepareDestinationPortTraffic(traffic, "tcp")
+					traffic.class.Spec.Matches = append(traffic.class.Spec.Matches, trafficv1.TrafficMatch{DestinationCIDR: prefix(traffic.other)})
+					startTraffic(traffic, pod1Node.name)
+					probeProtocol(traffic, traffic.target, traffic.selectedIP, traffic.protocol)
+					probeProtocol(traffic, traffic.other, traffic.selectedIP, traffic.protocol)
+					ginkgo.By("Excluding the TCP port while keeping the CIDR-only destination selected")
+					wrongPort := int32(traffic.target.GetPort()) + 1
+					traffic.class.Spec.Matches[0].Protocols[0].TCP.DestinationPort.Number = &wrongPort
+					patchClass(traffic.class)
+					probeProtocol(traffic, traffic.target, traffic.unmatched, traffic.protocol)
+					probeProtocol(traffic, traffic.other, traffic.selectedIP, traffic.protocol)
+				})
+				ginkgo.Context("multiple owners", focusedCoverage(secondary), func() {
+					ginkgo.It("multiple selective owners", func() {
+						traffic := newTraffic()
+						peerNetwork := traffic.target.Network
+						if secondary {
+							peerSubnet := "10.20.20.0/24"
+							if isIPv6TestRun {
+								peerSubnet = "2001:db8:abcd:5678::/64"
+							}
+							var err error
+							ginkgo.By("Attaching a distinct secondary network to both egress nodes")
+							peerNetwork, err = providerCtx.CreateNetwork("traffic-peer", peerSubnet)
+							framework.ExpectNoError(err, "create the secondary peer network with subnet %s", peerSubnet)
+							for _, node := range []string{egress1Node.name, egress2Node.name} {
+								_, err = providerCtx.AttachNetwork(peerNetwork, node)
+								framework.ExpectNoError(err, "attach network %s to node %s", peerNetwork.Name(), node)
+							}
+							firstInterface, err := infraprovider.Get().GetK8NodeNetworkInterface(egress1Node.name, traffic.target.Network)
+							framework.ExpectNoError(err, "get node %s interface on network %s", egress1Node.name, traffic.target.Network.Name())
+							secondInterface, err := infraprovider.Get().GetK8NodeNetworkInterface(egress1Node.name, peerNetwork)
+							framework.ExpectNoError(err, "get node %s interface on network %s", egress1Node.name, peerNetwork.Name())
+							gomega.Expect(firstInterface.GetName()).NotTo(gomega.Equal(secondInterface.GetName()))
+						}
+						prepareTraffic(traffic, "tcp", peerNetwork)
+						startTraffic(traffic, pod1Node.name)
+						probeProtocol(traffic, traffic.target, traffic.selectedIP, traffic.protocol)
+						ip := peerIP(traffic.probeIPs)
+						if secondary {
+							ip = familyIP("10.20.20.100", "2001:db8:abcd:5678:c001::")
+						}
+						addSelectivePeer(traffic, ip, trafficv1.TrafficMatch{DestinationCIDR: prefix(traffic.other)})
+						probeProtocol(traffic, traffic.target, traffic.selectedIP, traffic.protocol)
+						probeProtocol(traffic, traffic.other, ip, traffic.protocol)
+						deleteOwnerAndCheckPeer(traffic, traffic.eip.Name, traffic.other, ip, traffic.protocol)
+					})
+				})
+				startTwoOwners := func(traffic *selectiveTraffic) (*eipv1.EgressIP, string) {
+					ginkgo.GinkgoHelper()
+					prepareTraffic(traffic, "tcp", traffic.target.Network)
+					startTraffic(traffic, pod1Node.name)
+					probeProtocol(traffic, traffic.target, traffic.selectedIP, traffic.protocol)
+					ip := peerIP(traffic.probeIPs)
+					peer := addSelectivePeer(traffic, ip, trafficv1.TrafficMatch{DestinationCIDR: prefix(traffic.other)})
+					probeProtocol(traffic, traffic.target, traffic.selectedIP, traffic.protocol)
+					probeProtocol(traffic, traffic.other, ip, traffic.protocol)
+					return peer, ip
+				}
+				ginkgo.It("multi-owner restart", focusedCoverage(false), func() {
+					traffic := newTraffic()
+					_, ip := startTwoOwners(traffic)
+					ginkgo.By("Restarting OVN-Kubernetes on the shared egress node")
+					ovnNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
+					framework.ExpectNoError(restartOVNKubeNodePod(f.ClientSet, ovnNamespace, egress1Node.name), "restart ovnkube-node on node %s", egress1Node.name)
+					framework.ExpectNoError(waitOVNKubernetesHealthy(f), "wait for OVN-Kubernetes health after node %s restart", egress1Node.name)
+					probeProtocol(traffic, traffic.target, traffic.selectedIP, traffic.protocol)
+					probeProtocol(traffic, traffic.other, ip, traffic.protocol)
+					deleteOwnerAndCheckPeer(traffic, traffic.eip.Name, traffic.other, ip, traffic.protocol)
+				})
+				ovnFailoverNextHop := func(egressNode string, ipv6 bool) string {
+					ginkgo.GinkgoHelper()
+					ctx, cancel := context.WithTimeout(context.Background(), retryTimeout)
+					defer cancel()
+					if netConfigParams.topology != types.Layer2Topology {
+						node, err := f.ClientSet.CoreV1().Nodes().Get(ctx, egressNode, metav1.GetOptions{})
+						framework.ExpectNoError(err, "get the new egress node")
+						transitIPs, err := util.ParseNodeTransitSwitchPortAddrs(node)
+						framework.ExpectNoError(err, "read the new egress node's transit switch addresses")
+						nextHop, err := util.MatchFirstIPNetFamily(ipv6, transitIPs)
+						framework.ExpectNoError(err, "find the transit switch address for the peer's family")
+						return nextHop.IP.String()
+					}
+
+					// Layer 2 steers to the gateway's end of the paired transit-router link.
+					nadClient, err := nadclient.NewForConfig(f.ClientConfig())
+					framework.ExpectNoError(err, "create the network attachment client")
+					nad, err := nadClient.NetworkAttachmentDefinitions(f.Namespace.Name).Get(ctx, netConfigParams.name, metav1.GetOptions{})
+					framework.ExpectNoError(err, "get the Layer 2 network attachment")
+					var cniConfig struct {
+						Name string `json:"name"`
+					}
+					framework.ExpectNoError(json.Unmarshal([]byte(nad.Spec.Config), &cniConfig), "read the Layer 2 network name")
+					gomega.Expect(cniConfig.Name).NotTo(gomega.BeEmpty(), "find the network name for NAD %s", nad.Name)
+					router := util.GetGatewayRouterFromNode(util.GetNetworkScopedNameForNetwork(cniConfig.Name, egressNode))
+					port := types.RouterToTransitRouterPrefix + router
+					gatewayDB := ovnNodePods(egressNode)[0]
+					networks, err := runNBCommand(gatewayDB, "--bare", "--columns=networks", "find", "Logical_Router_Port", "name="+port)
+					framework.ExpectNoError(err, "read the networks on gateway port %s", port)
+					var nextHops []string
+					for _, network := range strings.Fields(networks) {
+						prefix, err := netip.ParsePrefix(network)
+						framework.ExpectNoError(err, "parse gateway port network %q", network)
+						addr := prefix.Addr()
+						if addr.Is6() == ipv6 && prefix.Bits() == addr.BitLen()-1 {
+							nextHops = append(nextHops, addr.String())
+						}
+					}
+					gomega.Expect(nextHops).To(gomega.HaveLen(1), "find one transit address for the peer's family on %s (networks %q)", port, networks)
+					return nextHops[0]
+				}
+				ginkgo.It("multi-owner failover", focusedCoverage(secondary || udnFailover), func() {
+					traffic := newTraffic()
+					peer, ip := startTwoOwners(traffic)
+					ginkgo.By("Moving both owners to the other eligible egress node")
+					availability := egressNodeAvailabilityHandlerViaLabel{f}
+					availability.Enable(egress2Node.name)
+					availability.Disable(egress1Node.name)
+					for _, name := range []string{traffic.eip.Name, peer.Name} {
+						verifySpecificEgressIPStatusLengthEquals(name, 1, func(items []egressIPStatus) bool { return items[0].Node == egress2Node.name })
+					}
+					ginkgo.By("Verifying the surviving peer's dataplane moved to the new egress node")
+					if secondary {
+						gomega.Eventually(func() (string, error) {
+							return infraprovider.Get().ExecK8NodeCommand(egress1Node.name, []string{"ip", "-o", "addr", "show", "to", ip})
+						}, retryTimeout, retryInterval).Should(gomega.BeEmpty(), "remove the peer's address from %s", egress1Node.name)
+						gomega.Eventually(func() (string, error) {
+							return infraprovider.Get().ExecK8NodeCommand(egress2Node.name, []string{"ip", "-o", "addr", "show", "to", ip})
+						}, retryTimeout, retryInterval).ShouldNot(gomega.BeEmpty(), "install the peer's address on %s", egress2Node.name)
+					} else {
+						nextHop := ovnFailoverNextHop(egress2Node.name, isIPv6TestRun)
+						dbPod := ovnNodePods(pod1Node.name)[0]
+						identity := fmt.Sprintf("external_ids:k8s.ovn.org/name=%s_%s/%s", peer.Name, f.Namespace.Name, pod1Name)
+						gomega.Eventually(func() (string, error) {
+							return runNBCommand(dbPod, "--bare", "--columns=nexthops", "find", "Logical_Router_Policy", "action=reroute", identity)
+						}, retryTimeout, retryInterval).Should(gomega.Equal(nextHop), "steer the peer only to %s", egress2Node.name)
+					}
+					probeProtocol(traffic, traffic.target, traffic.selectedIP, traffic.protocol)
+					probeProtocol(traffic, traffic.other, ip, traffic.protocol)
+					deleteOwnerAndCheckPeer(traffic, traffic.eip.Name, traffic.other, ip, traffic.protocol)
+				})
+				ginkgo.It("conflict winner withdrawal and recovery", func() {
+					traffic := newTraffic()
+					nonOverlapping := createProbe(traffic.probeIPs, "traffic-nonoverlap", traffic.target.Network, "tcp")
+					prepareTraffic(traffic, "tcp", traffic.target.Network)
+					startTraffic(traffic, pod1Node.name)
+					probeProtocol(traffic, traffic.target, traffic.selectedIP, traffic.protocol)
+					ginkgo.By("Adding a second owner on the same interface with disjoint destinations")
+					ip := peerIP(traffic.probeIPs)
+					peer := addSelectivePeer(traffic, ip, trafficv1.TrafficMatch{DestinationCIDR: prefix(traffic.other)}, trafficv1.TrafficMatch{DestinationCIDR: prefix(nonOverlapping)})
+					ginkgo.By("Selecting the first pod with both owners and a second pod with only the newer owner")
+					e2ekubectl.RunKubectlOrDie(f.Namespace.Name, "label", "pod", pod1Name, "conflict-pod=true")
+					traffic.eip.Spec.PodSelector.MatchLabels = map[string]string{"wants": "egress", "conflict-pod": "true"}
+					patch("egressip", traffic.eip.Name, map[string]interface{}{"spec": map[string]interface{}{"podSelector": traffic.eip.Spec.PodSelector}})
+					_, err := createGenericPodWithLabel(f, pod2Name, pod1Node.name, f.Namespace.Name, getAgnHostHTTPPortBindFullCMD(clusterNetworkHTTPPort), podEgressLabel)
+					framework.ExpectNoError(err, "create pod selected only by %s", peer.Name)
+					probeProtocol(traffic, traffic.target, traffic.selectedIP, traffic.protocol)
+					probeProtocol(traffic, traffic.other, ip, traffic.protocol)
+					probeProtocol(traffic, nonOverlapping, ip, traffic.protocol)
+					probeTCPFromPod(pod2Name, traffic.other, ip)
+					probeTCPFromPod(pod2Name, nonOverlapping, ip)
+					ginkgo.By("Introducing overlap and withdrawing the peer's whole assignment")
+					traffic.class.Spec.Matches = append(traffic.class.Spec.Matches, trafficv1.TrafficMatch{DestinationCIDR: prefix(traffic.other)})
+					patchClass(traffic.class)
+					probeProtocol(traffic, traffic.other, traffic.selectedIP, traffic.protocol)
+					probeProtocol(traffic, nonOverlapping, traffic.unmatched, traffic.protocol)
+					expectConflict(peer.Name, "True")
+					ginkgo.By("Keeping the newer owner's traffic on the second pod while the first pod is conflicted")
+					probeTCPFromPod(pod2Name, traffic.other, ip)
+					probeTCPFromPod(pod2Name, nonOverlapping, ip)
+					ginkgo.By("Removing overlap and restoring the rejected owner")
+					traffic.class.Spec.Matches = traffic.class.Spec.Matches[:1]
+					patchClass(traffic.class)
+					probeProtocol(traffic, traffic.other, ip, traffic.protocol)
+					probeProtocol(traffic, nonOverlapping, ip, traffic.protocol)
+					expectConflict(peer.Name, "False")
+					ginkgo.By("Keeping the second pod's traffic unchanged after conflict recovery")
+					probeTCPFromPod(pod2Name, traffic.other, ip)
+					probeTCPFromPod(pod2Name, nonOverlapping, ip)
+					deleteOwnerAndCheckPeer(traffic, traffic.eip.Name, traffic.other, ip, traffic.protocol)
+				})
+				ginkgo.It("three-candidate conflict recomputation", focusedCoverage(clusterDefault || udnRestart), func() {
+					traffic := newTraffic()
+					thirdTarget := createProbe(traffic.probeIPs, "traffic-third", traffic.target.Network, "tcp")
+					prepareTraffic(traffic, "tcp", traffic.target.Network)
+					startTraffic(traffic, pod1Node.name)
+					probeProtocol(traffic, traffic.target, traffic.selectedIP, traffic.protocol)
+					ginkgo.By("Rejecting the middle owner where it overlaps the oldest owner")
+					middleIP := peerIP(traffic.probeIPs)
+					middle := addSelectivePeer(traffic, middleIP, trafficv1.TrafficMatch{DestinationCIDR: prefix(traffic.target)}, trafficv1.TrafficMatch{DestinationCIDR: prefix(traffic.other)})
+					expectConflict(middle.Name, "True")
+					ginkgo.By("Accepting the youngest owner because rejected candidates do not block it")
+					youngestClass := traffic.class.DeepCopy()
+					youngestClass.Name += "-youngest"
+					youngestClass.Labels = map[string]string{"traffic": f.Namespace.Name + "-youngest"}
+					youngestClass.Spec.Matches = []trafficv1.TrafficMatch{{DestinationCIDR: prefix(traffic.other)}}
+					apply(youngestClass, "trafficclass", youngestClass.Name)
+					youngestIP := familyIP("10.10.10.102", "2001:db8:abcd:1234:c001::2")
+					if !secondary {
+						youngestIP = allocatePrimary(traffic.probeIPs)
+					}
+					youngest := addOwner(traffic.eip, egressIPName+"-3", youngestIP, &metav1.LabelSelector{MatchLabels: youngestClass.Labels})
+					probeProtocol(traffic, traffic.target, traffic.selectedIP, traffic.protocol)
+					probeProtocol(traffic, traffic.other, youngestIP, traffic.protocol)
+					expectConflict(youngest.Name, "False")
+					ginkgo.By("Removing the oldest owner's overlap and recomputing without preference for active owners")
+					traffic.class.Spec.Matches[0].DestinationCIDR = prefix(thirdTarget)
+					patchClass(traffic.class)
+					probeProtocol(traffic, thirdTarget, traffic.selectedIP, traffic.protocol)
+					probeProtocol(traffic, traffic.target, middleIP, traffic.protocol)
+					probeProtocol(traffic, traffic.other, middleIP, traffic.protocol)
+					expectConflict(middle.Name, "False")
+					expectConflict(youngest.Name, "True")
+					ginkgo.By("Restarting the egress node's OVN-Kubernetes pod and checking the same winners")
+					ovnNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
+					framework.ExpectNoError(restartOVNKubeNodePod(f.ClientSet, ovnNamespace, egress1Node.name), "restart ovnkube-node before checking conflict winners on node %s", egress1Node.name)
+					framework.ExpectNoError(waitOVNKubernetesHealthy(f), "wait for OVN-Kubernetes health before checking conflict winners")
+					probeProtocol(traffic, thirdTarget, traffic.selectedIP, traffic.protocol)
+					probeProtocol(traffic, traffic.target, middleIP, traffic.protocol)
+					probeProtocol(traffic, traffic.other, middleIP, traffic.protocol)
+					expectConflict(youngest.Name, "True")
+					deleteOwnerAndCheckPeer(traffic, traffic.eip.Name, traffic.other, middleIP, traffic.protocol)
+				})
+				if clusterDefault && !secondary {
+					ginkgo.DescribeTable("mixed interfaces", func(l4 bool, local bool) {
+						traffic := newTraffic()
+						clientNode := pod1Node.name
+						if local {
+							clientNode = egress1Node.name
+						}
+						prepareTraffic(traffic, "tcp", traffic.target.Network)
+						if l4 {
+							matchDestinationPort(traffic)
+						}
+						startTraffic(traffic, clientNode)
+						probeProtocol(traffic, traffic.target, traffic.selectedIP, traffic.protocol)
+						ip := familyIP("10.10.10.100", "2001:db8:abcd:1234:c001::")
+						ginkgo.By("Adding a catch-all EgressIP alongside the selective owner")
+						addOwner(traffic.eip, egressIPName2, ip, nil)
+						probeProtocol(traffic, traffic.target, traffic.selectedIP, traffic.protocol)
+						probeProtocol(traffic, secondaryTargetExternalContainer, ip, traffic.protocol)
+						deleteOwnerAndCheckPeer(traffic, traffic.eip.Name, secondaryTargetExternalContainer, ip, traffic.protocol)
+					},
+						ginkgo.Entry("secondary default and OVN override in the same zone", false, true),
+						ginkgo.Entry("secondary default and OVN override across zones", false, false),
+						ginkgo.Entry("secondary default and L4 OVN override across zones", true, false),
+						ginkgo.Entry("secondary default and L4 OVN override in the same zone", true, true),
+					)
+				}
+				ginkgo.It("disjoint protocol owners before and after adding a default", focusedCoverage(secondary), func() {
+					traffic := newTraffic()
+					traffic.target = createProbe(traffic.probeIPs, "traffic-udp", traffic.target.Network, "udp")
+					prepareDestinationPortTraffic(traffic, "tcp")
+					startTraffic(traffic, pod1Node.name)
+					probeProtocol(traffic, traffic.target, traffic.selectedIP, traffic.protocol)
+					ip := peerIP(traffic.probeIPs)
+					port := int32(traffic.target.GetPort())
+					ginkgo.By("Adding a disjoint UDP owner for the TCP destination")
+					addSelectivePeer(traffic, ip, trafficv1.TrafficMatch{
+						DestinationCIDR: prefix(traffic.target),
+						Protocols: []trafficv1.ProtocolMatch{{UDP: &trafficv1.PortProtocol{
+							DestinationPort: &trafficv1.Port{Number: &port},
+						}}},
+					})
+					probeProtocol(traffic, traffic.target, traffic.selectedIP, traffic.protocol)
+					probeProtocol(traffic, traffic.target, ip, "udp")
+					deleteOwnerAndCheckPeer(traffic, traffic.eip.Name, traffic.target, ip, "udp")
+					ginkgo.By("Restoring the TCP owner before adding a catch-all")
+					apply(traffic.eip, "egressip", traffic.eip.Name)
+					verifySpecificEgressIPStatusLengthEquals(traffic.eip.Name, 1, func(items []egressIPStatus) bool { return items[0].Node == egress1Node.name })
+					probeProtocol(traffic, traffic.target, traffic.selectedIP, traffic.protocol)
+					fallbackIP := familyIP("10.10.10.102", "2001:db8:abcd:1234:c001::2")
+					if !secondary {
+						fallbackIP = allocatePrimary(traffic.probeIPs)
+					}
+					ginkgo.By("Adding a catch-all owner for the remaining traffic")
+					addOwner(traffic.eip, egressIPName+"-default", fallbackIP, nil)
+					probeProtocol(traffic, traffic.target, traffic.selectedIP, traffic.protocol)
+					probeProtocol(traffic, traffic.target, ip, "udp")
+					probeProtocol(traffic, traffic.other, fallbackIP, traffic.protocol)
+					deleteOwnerAndCheckPeer(traffic, traffic.eip.Name, traffic.target, ip, "udp")
+				})
+				ginkgo.It("same destination and protocol with disjoint source ports", focusedCoverage(secondary), func() {
+					traffic := newTraffic()
+					ports := prepareSourcePortTraffic(traffic)
+					ports.SourcePort.Range.End = sourcePortStart + 999
+					startTraffic(traffic, pod1Node.name)
+					probeProtocol(traffic, traffic.target, traffic.selectedIP, traffic.protocol)
+					ip := peerIP(traffic.probeIPs)
+					ginkgo.By("Adding another UDP owner with a disjoint source-port range")
+					addSelectivePeer(traffic, ip, trafficv1.TrafficMatch{
+						DestinationCIDR: prefix(traffic.target),
+						Protocols: []trafficv1.ProtocolMatch{{UDP: &trafficv1.PortProtocol{
+							SourcePort: &trafficv1.Port{Range: &trafficv1.PortRange{Start: sourcePortStart + 1000, End: sourcePortStart + 1999}},
+						}}},
+					})
+					probeProtocol(traffic, traffic.target, traffic.selectedIP, traffic.protocol)
+					probeProtocol(traffic, traffic.target, ip, traffic.protocol, sourcePortStart+1001, sourcePortStart+1333)
+					probeProtocol(traffic, traffic.target, traffic.unmatched, traffic.protocol, sourcePortStart+2001)
+					fallbackIP := familyIP("10.10.10.102", "2001:db8:abcd:1234:c001::2")
+					if !secondary {
+						fallbackIP = allocatePrimary(traffic.probeIPs)
+					}
+					ginkgo.By("Adding a catch-all owner for ports outside both ranges")
+					addOwner(traffic.eip, egressIPName+"-default", fallbackIP, nil)
+					probeProtocol(traffic, traffic.target, traffic.selectedIP, traffic.protocol)
+					probeProtocol(traffic, traffic.target, ip, traffic.protocol, sourcePortStart+1334, sourcePortStart+1666)
+					probeProtocol(traffic, traffic.target, fallbackIP, traffic.protocol, sourcePortStart+2002, sourcePortStart+2999)
+					expectConflict(traffic.eip.Name, "False")
+					expectConflict(egressIPName2, "False")
+					ginkgo.By("Deleting one filtered owner while its peer and catch-all remain")
+					deleteOwnerAndCheckPeer(traffic, traffic.eip.Name, traffic.target, ip, traffic.protocol, sourcePortStart+1667, sourcePortStart+1999)
+					probeProtocol(traffic, traffic.target, fallbackIP, traffic.protocol, sourcePortEnd+1, sourcePortStart+999)
+				})
+				ginkgo.It("NetworkPolicy denies selective traffic", focusedCoverage(clusterDefault), func() {
+					traffic := newTraffic()
+					prepareTraffic(traffic, "tcp", traffic.target.Network)
+					startTraffic(traffic, pod1Node.name)
+					probeProtocol(traffic, traffic.target, traffic.selectedIP, traffic.protocol)
+					policy := &networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: "deny-selective", Namespace: f.Namespace.Name}, Spec: networkingv1.NetworkPolicySpec{
+						PodSelector: metav1.LabelSelector{MatchLabels: podEgressLabel}, PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeEgress},
+					}}
+					ginkgo.By("Denying egress with NetworkPolicy")
+					ctx, cancel := context.WithTimeout(context.Background(), retryTimeout)
+					defer cancel()
+					policies := f.ClientSet.NetworkingV1().NetworkPolicies(f.Namespace.Name)
+					ginkgo.DeferCleanup(func() error {
+						ctx, cancel := context.WithTimeout(context.Background(), retryTimeout)
+						defer cancel()
+						err := policies.Delete(ctx, policy.Name, metav1.DeleteOptions{})
+						if apierrors.IsNotFound(err) {
+							return nil
+						}
+						return err
+					})
+					_, err := policies.Create(ctx, policy, metav1.CreateOptions{})
+					framework.ExpectNoError(err, "create NetworkPolicy %s/%s", f.Namespace.Name, policy.Name)
+					probeProtocol(traffic, traffic.target, "", traffic.protocol)
+					ginkgo.By("Removing NetworkPolicy and checking selective egress recovers")
+					deleteCtx, deleteCancel := context.WithTimeout(context.Background(), retryTimeout)
+					defer deleteCancel()
+					framework.ExpectNoError(policies.Delete(deleteCtx, policy.Name, metav1.DeleteOptions{}), "delete NetworkPolicy %s/%s", f.Namespace.Name, policy.Name)
+					probeProtocol(traffic, traffic.target, traffic.selectedIP, traffic.protocol)
+				})
+				ginkgo.It("EgressFirewall denies selective traffic", focusedCoverage(clusterDefault), feature.EgressFirewall, func() {
+					traffic := newTraffic()
+					prepareTraffic(traffic, "tcp", traffic.target.Network)
+					startTraffic(traffic, pod1Node.name)
+					probeProtocol(traffic, traffic.target, traffic.selectedIP, traffic.protocol)
+					cidr := "0.0.0.0/0"
+					if isIPv6TestRun {
+						cidr = "::/0"
+					}
+					manifest := fmt.Sprintf(`apiVersion: k8s.ovn.org/v1
+kind: EgressFirewall
+metadata:
+  name: default
+  namespace: %s
+spec:
+  egress:
+  - type: Deny
+    to:
+      cidrSelector: %s
+`, f.Namespace.Name, cidr)
+					ginkgo.By("Denying egress with EgressFirewall")
+					cleanup, err := applyManifest(f.Namespace.Name, manifest)
+					ginkgo.DeferCleanup(cleanup)
+					framework.ExpectNoError(err, "apply EgressFirewall in namespace %s", f.Namespace.Name)
+					probeProtocol(traffic, traffic.target, "", traffic.protocol)
+					ginkgo.By("Removing EgressFirewall and checking selective egress recovers")
+					e2ekubectl.RunKubectlOrDie(f.Namespace.Name, "delete", "egressfirewall", "default")
+					probeProtocol(traffic, traffic.target, traffic.selectedIP, traffic.protocol)
+				})
+				ginkgo.DescribeTable("catch-all coexistence and Service replies", func(l4 bool) {
+					traffic := newTraffic()
+					prepareTraffic(traffic, "tcp", traffic.target.Network)
+					if l4 {
+						matchDestinationPort(traffic)
+					}
+					startTraffic(traffic, pod1Node.name)
+					probeProtocol(traffic, traffic.target, traffic.selectedIP, traffic.protocol)
+					ip := allocatePrimary(traffic.probeIPs)
+					peerTarget := traffic.other
+					if secondary {
+						peerTarget = primaryDeniedExternalContainer
+					}
+					ginkgo.By("Adding a catch-all EgressIP alongside the selective owner")
+					addOwner(traffic.eip, egressIPName2, ip, nil)
+					probeProtocol(traffic, traffic.target, traffic.selectedIP, traffic.protocol)
+					probeProtocol(traffic, peerTarget, ip, traffic.protocol)
+
+					ginkgo.By("Widening the selective destination to include Service addresses")
+					traffic.class.Spec.Matches[0].DestinationCIDR = "0.0.0.0/0"
+					if isIPv6TestRun {
+						traffic.class.Spec.Matches[0].DestinationCIDR = "::/0"
+					}
+					if l4 {
+						otherPort, servicePort := int32(traffic.other.GetPort()), int32(clusterNetworkHTTPPort)
+						traffic.class.Spec.Matches[0].Protocols = append(traffic.class.Spec.Matches[0].Protocols,
+							trafficv1.ProtocolMatch{TCP: &trafficv1.PortProtocol{DestinationPort: &trafficv1.Port{Number: &otherPort}}},
+							trafficv1.ProtocolMatch{TCP: &trafficv1.PortProtocol{DestinationPort: &trafficv1.Port{Number: &servicePort}}},
+							trafficv1.ProtocolMatch{TCP: &trafficv1.PortProtocol{SourcePort: &trafficv1.Port{Number: &servicePort}}})
+					}
+					patchClass(traffic.class)
+					// A newly selected destination proves the wider match is applied before Service checks.
+					probeProtocol(traffic, traffic.other, traffic.selectedIP, traffic.protocol)
+					probeProtocol(traffic, traffic.target, traffic.selectedIP, traffic.protocol)
+					ipFamily := corev1.IPv4Protocol
+					if isIPv6TestRun {
+						ipFamily = corev1.IPv6Protocol
+					}
+					service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "traffic-service", Namespace: f.Namespace.Name}, Spec: corev1.ServiceSpec{
+						Type: corev1.ServiceTypeNodePort, Selector: podEgressLabel,
+						IPFamilies:  []corev1.IPFamily{ipFamily},
+						ExternalIPs: []string{allocatePrimary(traffic.probeIPs)},
+						Ports:       []corev1.ServicePort{{Port: int32(clusterNetworkHTTPPort), TargetPort: intstr.FromInt32(int32(clusterNetworkHTTPPort))}},
+					}}
+					ctx, cancel := context.WithTimeout(context.Background(), retryTimeout)
+					defer cancel()
+					service, err := f.ClientSet.CoreV1().Services(f.Namespace.Name).Create(ctx, service, metav1.CreateOptions{})
+					framework.ExpectNoError(err, "create the selective-traffic Service in namespace %s", f.Namespace.Name)
+					ginkgo.By("Checking ClusterIP and ExternalIP despite the wildcard traffic match")
+					for _, address := range append(service.Spec.ClusterIPs, service.Spec.ExternalIPs...) {
+						url := "http://" + net.JoinHostPort(address, strconv.Itoa(int(clusterNetworkHTTPPort))) + "/hostname"
+						gomega.Eventually(func() (string, error) {
+							return execTrafficProbe(pod1Name, "curl", "--silent", "--show-error", "--noproxy", "*", "--connect-timeout", "2", "--max-time", "5", url)
+						}, retryTimeout, retryInterval).Should(gomega.Equal(pod1Name), "probe pod %s/%s via Service address %s", f.Namespace.Name, pod1Name, address)
+					}
+					ginkgo.By("Checking NodePort access from the external container")
+					for _, node := range []node{pod1Node, egress1Node} {
+						gomega.Eventually(func() (string, error) {
+							return curlServiceAgnHostHostnameFromExternalContainer(primaryTargetExternalContainer,
+								node.nodeIP, strconv.Itoa(int(service.Spec.Ports[0].NodePort)))
+						}, retryTimeout, retryInterval).Should(gomega.ContainSubstring(pod1Name))
+					}
+					probeProtocol(traffic, traffic.target, traffic.selectedIP, traffic.protocol)
+				},
+					ginkgo.Entry("CIDR override and catch-all", false),
+					ginkgo.Entry("L4 override and catch-all", true),
+				)
+			})
+		}
 
 		// Validate the egress IP by creating a httpd container on the kind
 		// networking (effectively seen as "outside" the cluster) and curl it from a

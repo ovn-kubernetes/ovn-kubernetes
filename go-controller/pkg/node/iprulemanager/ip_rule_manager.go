@@ -25,18 +25,40 @@ type Interface interface {
 	Add(rule IPRule) error
 	AddWithMetadata(rule IPRule, metadata string) error
 	Delete(rule IPRule) error
+	DeleteWithoutRetry(rule IPRule) error
 	DeleteWithMetadata(metadata string) error
-	OwnPriority(priority int) error
+	OwnPriority(priority int, installed ...IPRule) error
 }
 
 // This struct should be updated whenever a new netlink.Rule field is used in the codebase.
 type IPRule struct {
+	IPProto  int
+	Dport    PortRange
+	Sport    PortRange
 	Priority int
 	Table    int
 	Family   int
 	Mark     uint32
 	Src      netip.Prefix
 	Dst      netip.Prefix
+}
+
+// PortRange keeps optional ports comparable by value for IPRule map keys.
+// Set distinguishes an explicit zero interval from an unconstrained port.
+type PortRange struct {
+	netlink.RulePortRange
+	Set bool
+}
+
+// normalized matches Linux readback, which omits wildcard prefixes.
+func (r IPRule) normalized() IPRule {
+	if r.Src.Bits() == 0 {
+		r.Src = netip.Prefix{}
+	}
+	if r.Dst.Bits() == 0 {
+		r.Dst = netip.Prefix{}
+	}
+	return r
 }
 
 type ruleState struct {
@@ -61,6 +83,15 @@ func (r IPRule) String() string {
 	if r.Dst.IsValid() {
 		s += fmt.Sprintf(" dst:%s", r.Dst)
 	}
+	if r.IPProto != 0 {
+		s += fmt.Sprintf(" ipproto:%d", r.IPProto)
+	}
+	if r.Dport.Set {
+		s += fmt.Sprintf(" dport:%d-%d", r.Dport.Start, r.Dport.End)
+	}
+	if r.Sport.Set {
+		s += fmt.Sprintf(" sport:%d-%d", r.Sport.Start, r.Sport.End)
+	}
 	return s
 }
 
@@ -68,14 +99,22 @@ func (r IPRule) String() string {
 // This function does not copy a netlink rule one-to-one.
 // If additional fields are needed, they must be added to IPRule.
 func IPRuleFromNetlinkRule(r *netlink.Rule) IPRule {
-	return IPRule{
+	rule := IPRule{
 		Priority: r.Priority,
+		IPProto:  r.IPProto,
 		Table:    r.Table,
 		Family:   r.Family,
 		Mark:     r.Mark,
 		Src:      ipNetToPrefix(r.Src),
 		Dst:      ipNetToPrefix(r.Dst),
 	}
+	if r.Dport != nil {
+		rule.Dport = PortRange{RulePortRange: *r.Dport, Set: true}
+	}
+	if r.Sport != nil {
+		rule.Sport = PortRange{RulePortRange: *r.Sport, Set: true}
+	}
+	return rule.normalized()
 }
 
 func (r IPRule) toNetlinkRule() *netlink.Rule {
@@ -84,6 +123,15 @@ func (r IPRule) toNetlinkRule() *netlink.Rule {
 	nl.Table = r.Table
 	nl.Family = r.Family
 	nl.Mark = r.Mark
+	nl.IPProto = r.IPProto
+	if r.Dport.Set {
+		port := r.Dport.RulePortRange
+		nl.Dport = &port
+	}
+	if r.Sport.Set {
+		port := r.Sport.RulePortRange
+		nl.Sport = &port
+	}
 	nl.Src = prefixToIPNet(r.Src)
 	nl.Dst = prefixToIPNet(r.Dst)
 	return nl
@@ -157,6 +205,7 @@ func (rm *Controller) Add(rule IPRule) error {
 
 // AddWithMetadata ensures an IP rule along with its metadata is applied even if it is altered by something else, it will be restored
 func (rm *Controller) AddWithMetadata(rule IPRule, metadata string) error {
+	rule = rule.normalized()
 	rm.mu.Lock()
 	defer rm.mu.Unlock()
 
@@ -173,6 +222,17 @@ func (rm *Controller) AddWithMetadata(rule IPRule, metadata string) error {
 
 // Delete stops managed an IP rule and ensures its deleted
 func (rm *Controller) Delete(rule IPRule) error {
+	return rm.delete(rule, true)
+}
+
+// DeleteWithoutRetry leaves a failed deletion to the caller, which owns the
+// other dataplane state that must remain installed while the rule is active.
+func (rm *Controller) DeleteWithoutRetry(rule IPRule) error {
+	return rm.delete(rule, false)
+}
+
+func (rm *Controller) delete(rule IPRule, retry bool) error {
+	rule = rule.normalized()
 	rm.mu.Lock()
 	defer rm.mu.Unlock()
 	if _, ok := rm.rules[rule]; !ok {
@@ -180,7 +240,9 @@ func (rm *Controller) Delete(rule IPRule) error {
 	}
 
 	if err := netlink.RuleDel(rule.toNetlinkRule()); err != nil && !errors.Is(err, syscall.ENOENT) {
-		rm.rules[rule] = ruleState{metadata: rm.rules[rule].metadata, delete: true}
+		if retry {
+			rm.rules[rule] = ruleState{metadata: rm.rules[rule].metadata, delete: true}
+		}
 		return fmt.Errorf("failed to delete IP rule (%s): %w", rule.String(), err)
 	}
 	delete(rm.rules, rule)
@@ -209,9 +271,13 @@ func (rm *Controller) DeleteWithMetadata(metadata string) error {
 }
 
 // OwnPriority ensures any IP rules observed with priority 'priority' must be specified otherwise its removed
-func (rm *Controller) OwnPriority(priority int) error {
+func (rm *Controller) OwnPriority(priority int, installed ...IPRule) error {
 	rm.mu.Lock()
 	defer rm.mu.Unlock()
+	// Retain the caller's validated installed rules before the first stale-rule sweep.
+	for _, rule := range installed {
+		rm.rules[rule.normalized()] = ruleState{}
+	}
 	rm.ownPriorities[priority] = true
 	return rm.reconcile()
 }
