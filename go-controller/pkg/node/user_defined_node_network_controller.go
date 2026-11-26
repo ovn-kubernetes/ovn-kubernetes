@@ -66,17 +66,12 @@ func NewUserDefinedNodeNetworkController(
 		mpdm: mpdm,
 	}
 	if util.IsNetworkSegmentationSupportEnabled() && snnc.IsPrimaryNetwork() {
-		node, err := snnc.watchFactory.GetNode(snnc.name)
-		if err != nil {
-			return nil, fmt.Errorf("error retrieving node %s while creating node network controller for network %s: %v",
-				snnc.name, netInfo.GetNetworkName(), err)
-		}
-
+		var err error
 		var uplinkStateInformer uplinkinformers.UplinkStateInformer
 		if util.IsUplinkEnabled() {
 			uplinkStateInformer = snnc.watchFactory.UplinkStateInformer()
 		}
-		snnc.gateway, err = NewUserDefinedNetworkGateway(snnc.GetNetInfo(), node,
+		snnc.gateway, err = NewUserDefinedNetworkGateway(snnc.GetNetInfo(), snnc.name,
 			snnc.watchFactory.NodeCoreInformer().Lister(), snnc.Kube, vrfManager, ruleManager, defaultNetworkGateway,
 			ovsClient, uplinkStateInformer, uplinkStateGatewayStatusController)
 		if err != nil {
