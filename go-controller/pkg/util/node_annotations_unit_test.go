@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -17,6 +18,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
@@ -1187,4 +1189,58 @@ func TestParseCloudEgressIPConfigCapacity(t *testing.T) {
 	assert.Equal(t, 14, *parsed.Capacity.IPv4, "IPv4 capacity must not be corrupted by other capacity values")
 	assert.Equal(t, 15, *parsed.Capacity.IPv6, "IPv6 capacity must not be corrupted by other capacity values")
 	assert.Equal(t, UnlimitedNodeCapacity, *parsed.Capacity.IP, "IP capacity must remain unlimited when unset")
+}
+
+// TestChangedNetworksForNodeAnnotation checks scoped changes, equivalent encodings,
+// empty annotations, and context for parse failures.
+func TestChangedNetworksForNodeAnnotation(t *testing.T) {
+	const nodeName = "worker-1"
+	for _, tt := range []struct {
+		name, before, after string
+		want                []string
+		wantError           string
+	}{
+		{"unchanged", `{"a":["10.0.0.0/24"]}`, `{"a":["10.0.0.0/24"]}`, nil, ""},
+		// Updating a must leave the unchanged network b out of the result.
+		{"only a changed", `{"a":["10.0.0.0/24"],"b":["fd00::/64"]}`, `{"a":["10.0.1.0/24"],"b":["fd00::/64"]}`, []string{"a"}, ""},
+		{"map formatting", `{"a":["10.0.0.0/24"],"b":["fd00::/64"]}`, `{"b": ["fd00::/64"], "a": ["10.0.0.0/24"]}`, nil, ""},
+		// Whitespace inside an entry changes its bytes but not its subnets.
+		{"array whitespace", `{"a":["10.0.0.0/24","fd00::/64"]}`, `{"a":[ "10.0.0.0/24", "fd00::/64" ]}`, nil, ""},
+		// The writer normalizes every entry in a legacy annotation together.
+		{"legacy strings normalized", `{"a":"10.0.0.0/24","b":"fd00::/64"}`, `{"a":["10.0.0.0/24"],"b":["fd00::/64"]}`, nil, ""},
+		// A one-element array is also equivalent when it becomes a string.
+		{"array to string", `{"a":["10.0.0.0/24"]}`, `{"a":"10.0.0.0/24"}`, nil, ""},
+		{"add change remove", `{"a":["10.0.0.0/24"],"b":["fd00::/64"]}`, `{"a":["10.0.0.0/24","fd01::/64"],"c":["fd02::/64"]}`, []string{"a", "b", "c"}, ""},
+		// Missing annotations and empty maps both contain no networks.
+		{"missing to empty map", "", `{}`, nil, ""},
+		{"annotation added", "", `{"default":["10.0.0.0/24"]}`, []string{"default"}, ""},
+		{"annotation removed", `{"a":["10.0.0.0/24"],"b":["fd00::/64"]}`, "", []string{"a", "b"}, ""},
+		{"malformed new map", `{"a":["10.0.0.0/24"]}`, `{`, nil, "new node"},
+		{"malformed old map", `{`, `{"a":["10.0.0.0/24"]}`, nil, "old node"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			nodes := [2]*corev1.Node{}
+			for i, raw := range []string{tt.before, tt.after} {
+				nodes[i] = &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: nodeName, Annotations: map[string]string{}}}
+				if raw != "" {
+					nodes[i].Annotations[types.NodeSubnetsAnnotation] = raw
+				}
+			}
+			changed, err := ChangedNetworksForNodeAnnotation(nodes[0], nodes[1], types.NodeSubnetsAnnotation)
+			if (err != nil) != (tt.wantError != "") {
+				t.Fatalf("annotation diff returned error %v, wantError=%q", err, tt.wantError)
+			}
+			if err != nil {
+				for _, context := range []string{tt.wantError, nodeName, types.NodeSubnetsAnnotation} {
+					if !strings.Contains(err.Error(), context) {
+						t.Fatalf("annotation diff error %q must include %q", err, context)
+					}
+				}
+				return
+			}
+			if !changed.Equal(sets.New(tt.want...)) {
+				t.Fatalf("affected networks = %v, want %v", sets.List(changed), tt.want)
+			}
+		})
+	}
 }

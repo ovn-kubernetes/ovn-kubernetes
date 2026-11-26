@@ -4,12 +4,14 @@
 package util
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"math"
 	"net"
 	"net/netip"
+	"reflect"
 	"strconv"
 
 	"github.com/gaissmai/cidrtree"
@@ -1165,6 +1167,90 @@ func GetNodeID(node *corev1.Node) (int, error) {
 // NodeIDAnnotationChanged returns true if the OvnNodeID in the corev1.Nodes doesn't match
 func NodeIDAnnotationChanged(oldNode, newNode *corev1.Node) bool {
 	return oldNode.Annotations[OvnNodeID] != newNode.Annotations[OvnNodeID]
+}
+
+// ChangedNetworksForNodeAnnotation returns the added, changed, and removed network
+// entries, parsing each annotation map once and decoding only differing entries.
+// Missing annotations are empty maps. An error means callers cannot safely limit
+// reconciliation to particular networks.
+func ChangedNetworksForNodeAnnotation(oldNode, newNode *corev1.Node, annotationName string) (sets.Set[string], error) {
+	const (
+		oldIndex = iota
+		newIndex
+	)
+	if oldNode.Annotations[annotationName] == newNode.Annotations[annotationName] {
+		return nil, nil
+	}
+	entries := [2]map[string]json.RawMessage{}
+	for nodeIndex, node := range []*corev1.Node{oldNode, newNode} {
+		if _, exists := node.Annotations[annotationName]; !exists {
+			continue
+		}
+		var err error
+		entries[nodeIndex], err = nodeNetworkAnnotationEntries(node, annotationName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to extract networks from %s node: %w", [2]string{"old", "new"}[nodeIndex], err)
+		}
+	}
+	changed := sets.New[string]()
+	for network, oldRaw := range entries[oldIndex] {
+		newRaw, exists := entries[newIndex][network]
+		if !exists {
+			changed.Insert(network)
+			continue
+		}
+		equal, err := nodeNetworkAnnotationValuesEqual(annotationName, oldRaw, newRaw)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse %s entry for network %s: %w", annotationName, network, err)
+		}
+		if !equal {
+			changed.Insert(network)
+		}
+	}
+	for network := range entries[newIndex] {
+		if _, exists := entries[oldIndex][network]; !exists {
+			changed.Insert(network)
+		}
+	}
+	return changed, nil
+}
+
+// nodeNetworkAnnotationValuesEqual ignores formatting differences and equivalent
+// single-subnet encodings. Identical bytes avoid JSON decoding for unchanged entries.
+func nodeNetworkAnnotationValuesEqual(annotationName string, oldRaw, newRaw json.RawMessage) (bool, error) {
+	if bytes.Equal(oldRaw, newRaw) {
+		return true, nil
+	}
+	var oldValue, newValue any
+	if err := json.Unmarshal(oldRaw, &oldValue); err != nil {
+		return false, err
+	}
+	if err := json.Unmarshal(newRaw, &newValue); err != nil {
+		return false, err
+	}
+	if annotationName == types.NodeSubnetsAnnotation {
+		if subnet, ok := oldValue.(string); ok {
+			oldValue = []any{subnet}
+		}
+		if subnet, ok := newValue.(string); ok {
+			newValue = []any{subnet}
+		}
+	}
+	return reflect.DeepEqual(oldValue, newValue), nil
+}
+
+// nodeNetworkAnnotationEntries extracts network entries without interpreting
+// their values. Callers can decode selected entries without reparsing the map.
+func nodeNetworkAnnotationEntries(node *corev1.Node, annotationName string) (map[string]json.RawMessage, error) {
+	annotation, ok := node.Annotations[annotationName]
+	if !ok {
+		return nil, newAnnotationNotSetError("could not find %q annotation", annotationName)
+	}
+	var entries map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(annotation), &entries); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal %q annotation on node %s: %v", annotationName, node.Name, err)
+	}
+	return entries, nil
 }
 
 // parseNetworkMapAnnotation parses the provided network aware annotation  which is in map format
