@@ -22,6 +22,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
 	egressfirewallv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressfirewall/v1"
+	networkqosv1alpha1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/networkqos/v1alpha1"
 	uplinkv1alpha1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1"
 )
 
@@ -41,6 +42,7 @@ var _ = BeforeSuite(func() {
 	scheme := k8sruntime.NewScheme()
 	utilruntime.Must(apiextensionsv1.AddToScheme(scheme))
 	utilruntime.Must(egressfirewallv1.AddToScheme(scheme))
+	utilruntime.Must(networkqosv1alpha1.AddToScheme(scheme))
 	utilruntime.Must(uplinkv1alpha1.AddToScheme(scheme))
 
 	testEnv = &envtest.Environment{
