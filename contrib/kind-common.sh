@@ -1095,7 +1095,8 @@ wait_for_ovn_daemonset() {
 # DS are actually up. Next, it waits for ovnkube-control-plane pods to post
 # "Ready" when that deployment is part of the mode. If the DNS name resolver
 # replaced the CoreDNS image, it then waits for that rollout to finish. Last,
-# it will do the same with all pods in the kube-system namespace.
+# it waits for every non-terminating pod in the kube-system namespace to be
+# Ready.
 kubectl_wait_pods() {
   # IPv6 cluster seems to take a little longer to come up, so extend the wait time.
   OVN_TIMEOUT=${KIND_HELM_OVN_TIMEOUT:-300}
@@ -1136,19 +1137,44 @@ kubectl_wait_pods() {
   restart_dpu_sim_multus_after_ovnk
 
   if [ "${OVN_ENABLE_DNSNAMERESOLVER:-false}" == true ]; then
-    # Avoid passing an obsolete CoreDNS pod to the fixed pod list used by the
-    # kube-system wait below while the custom image rollout is still in flight.
+    # Make sure the custom CoreDNS image rollout completed before checking the
+    # kube-system pods, so the check below covers the new replicas.
     timeout=$(calculate_timeout "${endtime}")
     echo "Waiting for the CoreDNS deployment rollout (timeout ${timeout})..."
     kubectl -n kube-system rollout status deployment/coredns --timeout "${timeout}s"
   fi
 
-  timeout=$(calculate_timeout ${endtime})
-  if ! kubectl wait -n kube-system --for=condition=ready pods --all --timeout=${timeout}s ; then
+  if ! kubectl_wait_namespace_pods_ready kube-system ${endtime}; then
     echo "some pods in the system are not running"
     kubectl get pods -A -o wide || true
     exit 1
   fi
+}
+
+# kubectl_wait_namespace_pods_ready waits until every non-terminating pod in the
+# namespace is Ready, giving up at the absolute endtime (in $SECONDS, see
+# calculate_timeout). `kubectl wait --all` is not used because it resolves the
+# pod list once and keeps waiting for a pod deleted mid-wait (e.g. a terminating
+# CoreDNS replica) until its timeout expires; instead the current pods are
+# checked once per poll.
+kubectl_wait_namespace_pods_ready() {
+  local namespace=$1
+  local endtime=$2
+  local pods
+
+  echo "Waiting for pods in ${namespace} to become ready (timeout $(calculate_timeout ${endtime}))..."
+  while true; do
+    pods=$(kubectl get pods -n ${namespace} -o go-template \
+      --template='{{range .items}}{{if not .metadata.deletionTimestamp}}{{.metadata.name}} {{end}}{{end}}')
+    if [ -n "${pods}" ] && \
+      kubectl wait -n ${namespace} --for=condition=ready --timeout=0 pod ${pods} >/dev/null 2>&1; then
+      return 0
+    fi
+    if [ $(( endtime - SECONDS )) -le 0 ]; then
+      return 1
+    fi
+    sleep 2
+  done
 }
 
 # calculate_timeout takes an absolute endtime in seconds (based on bash script runtime, see
