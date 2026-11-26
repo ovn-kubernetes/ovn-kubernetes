@@ -400,6 +400,9 @@ var _ = Describe("NetworkQoS Controller", func() {
 		Entry("an IPv6 CIDR",
 			&Classifier{Destinations: []*Destination{{IpBlock: &nqostype.IPBlock{CIDR: "fd00:1::/64"}}}},
 			"ip6.dst == fd00:1::/64"),
+		Entry("an IPv6 address",
+			&Classifier{Destinations: []*Destination{{IpBlock: &nqostype.IPBlock{CIDR: "fd00:1::5"}}}},
+			"ip6.dst == fd00:1::5"),
 	)
 
 	DescribeTable("When starting controller with NetworkQoS, Pod and Node objects",
