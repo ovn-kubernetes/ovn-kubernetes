@@ -6840,6 +6840,70 @@ func TestPendingWritesHoldReconcile(t *testing.T) {
 	g.Expect(c.pendingFRR.waiting("ra")).To(gomega.BeTrue(), "absence in an older cache must not release the RA")
 	g.Expect(indexer.Replace(nil, "13")).To(gomega.Succeed(), "relist without the created object")
 	g.Expect(c.pendingFRR.waiting("ra")).To(gomega.BeFalse(), "a newer relist confirms the object is gone")
+	g.Expect(c.pendingFRR.byKey).To(gomega.BeEmpty(), "all write and deletion expectations are satisfied")
+	g.Expect(c.pendingFRR.held).To(gomega.BeEmpty(), "the final cache check releases the RA")
+}
+
+// TestPendingWritePreservesNewerWriterAfterDelayedResponse checks that a delayed
+// API response from one RA cannot clear another RA's newer, unseen NAD write.
+// The test orders cache updates and response recording explicitly to reproduce
+// the race without relying on goroutine scheduling.
+func TestPendingWritePreservesNewerWriterAfterDelayedResponse(t *testing.T) {
+	const (
+		earlierWriter = "earlier-writer"
+		laterWriter   = "later-writer"
+	)
+	g := gomega.NewWithT(t)
+	store := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+	pending := newPendingWrites(store)
+	earlierPatch := &nadtypes.NetworkAttachmentDefinition{ObjectMeta: metav1.ObjectMeta{
+		Namespace: "default", Name: "shared", ResourceVersion: "2",
+	}}
+	laterPatch := earlierPatch.DeepCopy()
+	laterPatch.ResourceVersion = "3"
+
+	// 1. The earlier writer patches the shared NAD from resource version 1 to
+	// resource version 2. The informer caches resource version 2 before that
+	// writer's API response arrives.
+	g.Expect(store.Add(earlierPatch)).To(gomega.Succeed())
+
+	// 2. The later writer uses cached resource version 2 as its patch
+	// precondition and writes resource version 3. Its response arrives first,
+	// but the cache still has resource version 2, so this writer must wait.
+	pending.written(laterWriter, laterPatch)
+	g.Expect(pending.waiting(laterWriter)).To(gomega.BeTrue(), "the later writer's patch is not cached yet")
+
+	// 3. The earlier writer's delayed response for resource version 2 arrives.
+	// Its patch is already cached, but recording that response must preserve
+	// the later writer's pending expectation for resource version 3.
+	pending.written(earlierWriter, earlierPatch)
+	g.Expect(pending.waiting(earlierWriter)).To(gomega.BeFalse(), "the earlier writer's patch is already cached")
+	g.Expect(pending.waiting(laterWriter)).To(gomega.BeTrue(), "the delayed response must preserve the later writer's unseen patch")
+	g.Expect(pending.byKey).To(gomega.Equal(map[string]pendingWrite{
+		"default/shared": {ra: laterWriter, version: "3"},
+	}), "only the later writer's expectation remains")
+	g.Expect(pending.held).To(gomega.Equal(map[string]bool{laterWriter: true}))
+
+	// 4. Process the older watch event for resource version 2. It cannot
+	// confirm the later writer's write at resource version 3 or identify that
+	// writer as ready to resume reconciliation.
+	ra, held, own := pending.observed(earlierPatch)
+	g.Expect(ra).To(gomega.BeEmpty(), "an older event must not release the later writer")
+	g.Expect(held).To(gomega.BeFalse(), "the older event must not wake a waiting writer")
+	g.Expect(own).To(gomega.BeFalse(), "the older event must not be mistaken for the later writer's write")
+
+	// 5. Deliver resource version 3 to the cache and handler. The tracker must
+	// identify the later writer for wakeup and allow it to reconcile using the
+	// NAD that includes its patch.
+	g.Expect(store.Update(laterPatch)).To(gomega.Succeed())
+	ra, held, own = pending.observed(laterPatch)
+	g.Expect(ra).To(gomega.Equal(laterWriter))
+	g.Expect(held).To(gomega.BeTrue(), "wake the later writer when its patch reaches the cache")
+	g.Expect(own).To(gomega.BeTrue(), "recognize the later writer's exact patch for event suppression")
+	g.Expect(pending.waiting(laterWriter)).To(gomega.BeFalse())
+	g.Expect(pending.byKey).To(gomega.BeEmpty(), "observing the write removes its expectation")
+	g.Expect(pending.held).To(gomega.BeEmpty(), "the resumed reconciliation clears the held RA")
+	g.Expect(store.List()).To(gomega.ConsistOf(laterPatch), "the cache retains the updated NAD")
 }
 
 type replacingNetworkManager struct {
