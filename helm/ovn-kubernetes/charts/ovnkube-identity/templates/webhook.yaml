@@ -71,14 +71,21 @@ webhooks:
     admissionReviewVersions: ['v1']
     sideEffects: None
     matchConditions:
-      # Avoid a bootstrap dependency on the identity webhook for its own pods.
-      # Skip only when neither the old nor the new pod has protected annotations;
-      # adding, removing, or retaining it must still invoke admission, even if
-      # the caller supplies the identity pod label.
+      # Avoid a bootstrap dependency on the identity webhook for its own pods:
+      # when all identity pods are down, writes to them must not wait for the
+      # webhook. Identity pods are recognized by their service account, which
+      # cannot be changed on an existing pod, unlike a label.
+      # The skip never applies to ovnkube-node credentials, which must always
+      # be validated. The same holds for identities configured with
+      # --pod-admission-conditions, but this chart configures none. A
+      # deployment that does must add each prefix to this expression.
+      # It also never applies when the old or the new pod has a protected
+      # annotation: adding, removing, or retaining one must invoke admission.
       - name: skip-ovnkube-identity-self-pods
         expression: >-
-          !(request.namespace == "ovn-kubernetes" && has(object.metadata.labels) &&
-          "name" in object.metadata.labels && object.metadata.labels["name"] == "ovnkube-identity" &&
+          request.userInfo.username.startsWith('system:ovn-node') ||
+          !(request.namespace == "ovn-kubernetes" &&
+          has(object.spec.serviceAccountName) && object.spec.serviceAccountName == "ovnkube-identity" &&
           [object, oldObject].all(p, p == null || !has(p.metadata.annotations) ||
             !["k8s.ovn.org/pod-networks", "k8s.ovn.org/dpu.connection-details",
               "k8s.ovn.org/dpu.connection-status"].exists(k, k in p.metadata.annotations)))
