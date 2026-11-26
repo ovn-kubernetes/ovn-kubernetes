@@ -17,7 +17,7 @@ spec:
   validations:
     - expression: >-
         request.userInfo.username == "system:serviceaccount:ovn-kubernetes:ovnkube-cluster-manager" ||
-        ["k8s.ovn.org/network-id", "k8s.ovn.org/tunnel-keys"].all(annotation,
+        ["k8s.ovn.org/network-name", "k8s.ovn.org/network-id", "k8s.ovn.org/tunnel-keys"].all(annotation,
           (request.operation == "UPDATE" && has(oldObject.metadata.annotations) &&
            annotation in oldObject.metadata.annotations)
             ? (has(object.metadata.annotations) &&
@@ -26,7 +26,7 @@ spec:
             : (!has(object.metadata.annotations) ||
                !(annotation in object.metadata.annotations)))
       message: >-
-        Only cluster-manager may add, change, or remove the k8s.ovn.org/network-id and k8s.ovn.org/tunnel-keys annotations.
+        Only cluster-manager may add, change, or remove the k8s.ovn.org/network-name, k8s.ovn.org/network-id and k8s.ovn.org/tunnel-keys annotations.
       reason: Forbidden
 
 ---

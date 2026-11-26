@@ -2557,6 +2557,23 @@ func owningCUDN(nad *nadtypes.NetworkAttachmentDefinition) string {
 	return ""
 }
 
+// isCUDNNetworkNAD reports whether nad is the NAD of the
+// ClusterUserDefinedNetwork in its controller owner reference. An owner
+// reference alone proves nothing: the API server does not validate it, so a
+// hand-written NAD can copy one. The NAD must also have the name of that CUDN
+// and the network name generated for it. Only cluster-manager can produce
+// that: the NAD admission webhook of ovnkube-identity
+// (pkg/ovnwebhook/nadadmission.go) reserves the name in the CNI config, and the
+// ovn-controller-owned-nad-annotations admission policy reserves the
+// network-name annotation read here. So the subnets of a hand-written NAD are
+// never advertised.
+func isCUDNNetworkNAD(nad *nadtypes.NetworkAttachmentDefinition) bool {
+	cudnName := owningCUDN(nad)
+	return cudnName != "" &&
+		nad.Name == cudnName &&
+		util.GetAnnotatedNetworkName(nad) == util.GenerateCUDNNetworkName(cudnName)
+}
+
 func (c *Controller) getSelectedNADs(ctx context.Context, networkSelectors apitypes.NetworkSelectors) ([]*nadtypes.NetworkAttachmentDefinition, error) {
 	var selected []*nadtypes.NetworkAttachmentDefinition
 	for _, networkSelector := range networkSelectors {
@@ -2579,7 +2596,7 @@ func (c *Controller) getSelectedNADs(ctx context.Context, networkSelectors apity
 				return nil, err
 			}
 			for _, nad := range nads {
-				if owningCUDN(nad) != "" {
+				if isCUDNNetworkNAD(nad) {
 					selected = append(selected, nad)
 				}
 			}
@@ -2736,7 +2753,9 @@ func (c *Controller) nadNeedsUpdate(oldObj, newObj *nadtypes.NetworkAttachmentDe
 			patchOwner = ra
 		}
 	}
-	if newObj != nil && (patchOwner != "" || isOwnUpdate(newObj.ManagedFields)) && (oldObj == nil || reflect.DeepEqual(oldObj.Labels, newObj.Labels)) {
+	if newObj != nil && (patchOwner != "" || isOwnUpdate(newObj.ManagedFields)) &&
+		(oldObj == nil || (reflect.DeepEqual(oldObj.Labels, newObj.Labels) &&
+			oldObj.Annotations[types.OvnNetworkNameAnnotation] == newObj.Annotations[types.OvnNetworkNameAnnotation])) {
 		var oldAnnotations map[string]string
 		if oldObj != nil {
 			oldAnnotations = oldObj.Annotations
@@ -2787,7 +2806,8 @@ func (c *Controller) nadNeedsUpdate(oldObj, newObj *nadtypes.NetworkAttachmentDe
 	return oldObj == nil || newObj == nil ||
 		!reflect.DeepEqual(oldObj.Labels, newObj.Labels) ||
 		oldObj.Annotations[types.OvnRouteAdvertisementsKey] != newObj.Annotations[types.OvnRouteAdvertisementsKey] ||
-		oldObj.Annotations[types.OvnRouteAdvertisementsIntentKey] != newObj.Annotations[types.OvnRouteAdvertisementsIntentKey]
+		oldObj.Annotations[types.OvnRouteAdvertisementsIntentKey] != newObj.Annotations[types.OvnRouteAdvertisementsIntentKey] ||
+		oldObj.Annotations[types.OvnNetworkNameAnnotation] != newObj.Annotations[types.OvnNetworkNameAnnotation]
 }
 
 // nodeNeedsUpdate tracks inputs to advertisement generation, including the
