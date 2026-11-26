@@ -735,7 +735,7 @@ fi
 			return vmim
 		}
 
-		checkLiveMigrationSucceeded = func(vmName string, migrationMode kubevirtv1.MigrationMode) {
+		checkLiveMigrationSucceeded = func(vmName, sourceNode string, migrationMode kubevirtv1.MigrationMode) {
 			GinkgoHelper()
 			By("checking the VM live-migrated correctly")
 			vmi := &kubevirtv1.VirtualMachineInstance{
@@ -746,8 +746,6 @@ fi
 			}
 			err := crClient.Get(context.TODO(), crclient.ObjectKeyFromObject(vmi), vmi)
 			Expect(err).NotTo(HaveOccurred(), "should success retrieving vmi")
-			currentNode := vmi.Status.NodeName
-
 			Eventually(func() *kubevirtv1.VirtualMachineInstanceMigrationState {
 				err := crClient.Get(context.TODO(), crclient.ObjectKeyFromObject(vmi), vmi)
 				Expect(err).NotTo(HaveOccurred())
@@ -757,7 +755,7 @@ fi
 				err := crClient.Get(context.TODO(), crclient.ObjectKeyFromObject(vmi), vmi)
 				Expect(err).NotTo(HaveOccurred())
 				return vmi.Status.MigrationState.TargetNode
-			}).WithPolling(time.Second).WithTimeout(10*time.Minute).ShouldNot(Equal(currentNode), "should refresh MigrationState")
+			}).WithPolling(time.Second).WithTimeout(10*time.Minute).ShouldNot(Equal(sourceNode), "should refresh MigrationState")
 			Eventually(func() bool {
 				err := crClient.Get(context.TODO(), crclient.ObjectKeyFromObject(vmi), vmi)
 				Expect(err).NotTo(HaveOccurred())
@@ -789,8 +787,10 @@ fi
 		}
 
 		liveMigrateSucceed = func(vmi *kubevirtv1.VirtualMachineInstance) {
+			Expect(crClient.Get(context.TODO(), crclient.ObjectKeyFromObject(vmi), vmi)).To(Succeed())
+			sourceNode := vmi.Status.NodeName
 			liveMigrateVirtualMachine(vmi.Name)
-			checkLiveMigrationSucceeded(vmi.Name, kubevirtv1.MigrationPreCopy)
+			checkLiveMigrationSucceeded(vmi.Name, sourceNode, kubevirtv1.MigrationPreCopy)
 		}
 
 		checkLiveMigrationFailed = func(migration *kubevirtv1.VirtualMachineInstanceMigration) {
@@ -1052,8 +1052,13 @@ config:
 			return vms
 		}
 		liveMigrateAndCheck = func(vmName string, migrationMode kubevirtv1.MigrationMode, externalContainer infraapi.ExternalContainer, serverAddresses []string, serverPort int32, step string) {
+			vmi := &kubevirtv1.VirtualMachineInstance{
+				ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: vmName},
+			}
+			Expect(crClient.Get(context.TODO(), crclient.ObjectKeyFromObject(vmi), vmi)).To(Succeed())
+			sourceNode := vmi.Status.NodeName
 			liveMigrateVirtualMachine(vmName)
-			checkLiveMigrationSucceeded(vmName, migrationMode)
+			checkLiveMigrationSucceeded(vmName, sourceNode, migrationMode)
 			checkConnectivityAndNetworkPolicies(vmName, externalContainer, serverAddresses, serverPort, step)
 		}
 
