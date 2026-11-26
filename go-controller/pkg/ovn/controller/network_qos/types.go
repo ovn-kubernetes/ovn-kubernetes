@@ -13,7 +13,6 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	knet "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
@@ -270,13 +269,17 @@ func (c *Classifier) ToQosMatchString(ipv4Enabled, ipv6Enabled bool) string {
 			match = addressSetToMatchString(dest.DestAddrSet, trafficDirDest, ipv4Enabled, ipv6Enabled)
 		} else if dest.IpBlock != nil && dest.IpBlock.CIDR != "" {
 			ipVersion := "ip4"
-			if utilnet.IsIPv6CIDRString(dest.IpBlock.CIDR) {
+			if cidr := string(dest.IpBlock.CIDR); utilnet.IsIPv6CIDRString(cidr) {
 				ipVersion = "ip6"
 			}
 			if len(dest.IpBlock.Except) == 0 {
 				match = fmt.Sprintf("%s.%s == %s", ipVersion, trafficDirDest, dest.IpBlock.CIDR)
 			} else {
-				match = fmt.Sprintf("%s.%s == %s && %s.%s != {%s}", ipVersion, trafficDirDest, dest.IpBlock.CIDR, ipVersion, trafficDirDest, strings.Join(dest.IpBlock.Except, ","))
+				except := make([]string, 0, len(dest.IpBlock.Except))
+				for _, cidr := range dest.IpBlock.Except {
+					except = append(except, string(cidr))
+				}
+				match = fmt.Sprintf("%s.%s == %s && %s.%s != {%s}", ipVersion, trafficDirDest, dest.IpBlock.CIDR, ipVersion, trafficDirDest, strings.Join(except, ","))
 			}
 		}
 		destMatchStrings = append(destMatchStrings, match)
@@ -342,7 +345,7 @@ func (c *Classifier) ToQosMatchString(ipv4Enabled, ipv6Enabled bool) string {
 }
 
 type Destination struct {
-	IpBlock *knet.IPBlock
+	IpBlock *networkqosv1alpha1.IPBlock
 
 	DestAddrSet       addressset.AddressSet
 	PodSelector       labels.Selector

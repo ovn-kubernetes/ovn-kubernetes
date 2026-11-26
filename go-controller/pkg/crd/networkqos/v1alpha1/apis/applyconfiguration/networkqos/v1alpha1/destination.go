@@ -6,7 +6,6 @@
 package v1alpha1
 
 import (
-	networkingv1 "k8s.io/api/networking/v1"
 	v1 "k8s.io/client-go/applyconfigurations/meta/v1"
 )
 
@@ -32,7 +31,7 @@ type DestinationApplyConfiguration struct {
 	NamespaceSelector *v1.LabelSelectorApplyConfiguration `json:"namespaceSelector,omitempty"`
 	// ipBlock defines policy on a particular IPBlock. If this field is set then
 	// neither of the other fields can be.
-	IPBlock *networkingv1.IPBlock `json:"ipBlock,omitempty"`
+	IPBlock *IPBlockApplyConfiguration `json:"ipBlock,omitempty"`
 }
 
 // DestinationApplyConfiguration constructs a declarative configuration of the Destination type for use with
@@ -60,7 +59,7 @@ func (b *DestinationApplyConfiguration) WithNamespaceSelector(value *v1.LabelSel
 // WithIPBlock sets the IPBlock field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the IPBlock field is set to the value of the last call.
-func (b *DestinationApplyConfiguration) WithIPBlock(value networkingv1.IPBlock) *DestinationApplyConfiguration {
-	b.IPBlock = &value
+func (b *DestinationApplyConfiguration) WithIPBlock(value *IPBlockApplyConfiguration) *DestinationApplyConfiguration {
+	b.IPBlock = value
 	return b
 }

@@ -57,13 +57,26 @@ var schemaYAML = typed.YAMLObject(`types:
     fields:
     - name: ipBlock
       type:
-        namedType: io.k8s.api.networking.v1.IPBlock
+        namedType: com.github.ovn-kubernetes.ovn-kubernetes.go-controller.pkg.crd.networkqos.v1alpha1.IPBlock
     - name: namespaceSelector
       type:
         namedType: io.k8s.apimachinery.pkg.apis.meta.v1.LabelSelector
     - name: podSelector
       type:
         namedType: io.k8s.apimachinery.pkg.apis.meta.v1.LabelSelector
+- name: com.github.ovn-kubernetes.ovn-kubernetes.go-controller.pkg.crd.networkqos.v1alpha1.IPBlock
+  map:
+    fields:
+    - name: cidr
+      type:
+        scalar: string
+      default: ""
+    - name: except
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
 - name: com.github.ovn-kubernetes.ovn-kubernetes.go-controller.pkg.crd.networkqos.v1alpha1.NetworkQoS
   map:
     fields:
@@ -202,19 +215,6 @@ var schemaYAML = typed.YAMLObject(`types:
       type:
         namedType: io.k8s.apimachinery.pkg.apis.meta.v1.LabelSelector
       default: {}
-- name: io.k8s.api.networking.v1.IPBlock
-  map:
-    fields:
-    - name: cidr
-      type:
-        scalar: string
-      default: ""
-    - name: except
-      type:
-        list:
-          elementType:
-            scalar: string
-          elementRelationship: atomic
 - name: io.k8s.apimachinery.pkg.apis.meta.v1.Condition
   map:
     fields:
