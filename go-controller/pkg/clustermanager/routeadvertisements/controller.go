@@ -62,31 +62,35 @@ const (
 	generateName          = "ovnk-generated-"
 	fieldManager          = "clustermanager-routeadvertisements-controller"
 	conditionTypeAccepted = "Accepted"
+	conditionTypeDegraded = "Degraded"
+	cacheRecheckInterval  = 2 * time.Second
 	// rawConfigPriority is set to an arbitrary value that still allows users to
 	// override if needed.
 	rawConfigPriority = 10
+
+	// reconcile outcomes, used as the "result" label of the reconcile duration
+	// metric
+	reconcileResultSuccess     = "success"
+	reconcileResultError       = "error"
+	reconcileResultConfigError = "config_error"
+	reconcileResultPending     = "pending"
+
+	// generated FRRConfiguration operations, used as the "op" label of the
+	// write counter
+	frrConfigOpCreate    = "create"
+	frrConfigOpUpdate    = "update"
+	frrConfigOpDelete    = "delete"
+	frrConfigOpUnchanged = "unchanged"
 )
 
 var (
 	errConfig      = errors.New("configuration error")
 	errPending     = errors.New("configuration pending")
 	errInvalidVTEP = fmt.Errorf("%w: invalid VTEP annotation", errConfig)
-	cudnController = userdefinednetworkv1.SchemeGroupVersion.WithKind("ClusterUserDefinedNetwork")
+	// Node annotations are operational state, not invalid RA/template input.
+	errNodeNotReady = fmt.Errorf("%w: node configuration unavailable", errPending)
+	cudnController  = userdefinednetworkv1.SchemeGroupVersion.WithKind("ClusterUserDefinedNetwork")
 )
-
-// incompleteVTEPConfigurationError identifies nodes whose advertisements must
-// be withdrawn even when another error prevents generating a complete state.
-type incompleteVTEPConfigurationError struct {
-	invalidNodes sets.Set[string]
-	cause        error
-	err          error
-}
-
-// Error exposes the underlying generation failure for status reporting.
-func (e *incompleteVTEPConfigurationError) Error() string { return e.err.Error() }
-
-// Unwrap preserves classification of configuration and operational failures.
-func (e *incompleteVTEPConfigurationError) Unwrap() error { return e.err }
 
 // Controller reconciles RouteAdvertisements
 type Controller struct {
@@ -123,6 +127,8 @@ type Controller struct {
 	// selecting that network
 	raNetworksLock sync.RWMutex
 	raNetworks     map[string]sets.Set[string]
+
+	pendingFRR, pendingNAD *pendingWrites
 }
 
 // networkRefReconcilerFunc adapts a function to the
@@ -181,35 +187,21 @@ func NewController(
 		nm:              nm,
 		raNetworks:      map[string]sets.Set[string]{},
 	}
+	c.pendingFRR = newPendingWrites(wf.FRRConfigurationsInformer().Informer().GetStore())
+	c.pendingNAD = newPendingWrites(wf.NADInformer().Informer().GetStore())
 	if util.IsUplinkEnabled() {
 		c.uplinkStateLister = wf.UplinkStateInformer().Lister()
-	}
-
-	handleError := func(ctx context.Context, key string, errorstatus error) error {
-		ra, err := c.raLister.Get(key)
-		if apierrors.IsNotFound(err) {
-			return nil
-		}
-		if err != nil {
-			return fmt.Errorf("cannot get RouteAdvertisements %q to report error %v in status: %v",
-				key,
-				errorstatus,
-				err,
-			)
-		}
-
-		return c.updateRAStatus(ctx, ra, false, errorstatus)
 	}
 
 	raConfig := &controllerutil.ControllerConfig[ratypes.RouteAdvertisements]{
 		RateLimiter:    workqueue.DefaultTypedControllerRateLimiter[string](),
 		Reconcile:      c.reconcile,
-		Threadiness:    1,
+		Threadiness:    4,
 		Informer:       wf.RouteAdvertisementsInformer().Informer(),
 		Lister:         wf.RouteAdvertisementsInformer().Lister().List,
 		ObjNeedsUpdate: c.raNeedsUpdate,
 		OnDelete:       c.onRADelete,
-		HandleError:    handleError,
+		HandleError:    c.handleReconcileError,
 	}
 	c.raController = controllerutil.NewController("clustermanager routeadvertisements controller", raConfig)
 
@@ -219,7 +211,7 @@ func NewController(
 		Threadiness:    1,
 		Informer:       wf.FRRConfigurationsInformer().Informer(),
 		Lister:         wf.FRRConfigurationsInformer().Lister().List,
-		ObjNeedsUpdate: frrConfigurationNeedsUpdate,
+		ObjNeedsUpdate: c.frrConfigurationNeedsUpdate,
 	}
 	c.frrController = controllerutil.NewController("clustermanager routeadvertisements frrconfiguration controller", frrConfig)
 
@@ -229,7 +221,7 @@ func NewController(
 		Threadiness:    1,
 		Informer:       wf.NADInformer().Informer(),
 		Lister:         wf.NADInformer().Lister().List,
-		ObjNeedsUpdate: nadNeedsUpdate,
+		ObjNeedsUpdate: c.nadNeedsUpdate,
 	}
 	c.nadController = controllerutil.NewController("clustermanager routeadvertisements nad controller", nadConfig)
 
@@ -363,6 +355,37 @@ func (c *Controller) ReconcileNetwork(_ string, old, new util.NetInfo) {
 	}
 }
 
+// reportedReconcileError carries a retryable failure whose status was already
+// published. A node error alone does not prove this: cleanup can fail before
+// reconciliation reaches the status update.
+type reportedReconcileError struct {
+	error
+}
+
+func (e *reportedReconcileError) Unwrap() error { return e.error }
+
+func (c *Controller) handleReconcileError(ctx context.Context, key string, errorstatus error) error {
+	// Preserve the published acceptance/degradation decision instead of
+	// replacing it with a global failure when retries are exhausted.
+	var reported *reportedReconcileError
+	if errors.As(errorstatus, &reported) {
+		return nil
+	}
+	ra, err := c.raLister.Get(key)
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("cannot get RouteAdvertisements %q to report error %v in status: %v",
+			key,
+			errorstatus,
+			err,
+		)
+	}
+
+	return c.updateRAStatus(ctx, ra, false, frrGenerationResult{err: errorstatus})
+}
+
 // Reconcile RouteAdvertisements. For each selected FRRConfiguration and node,
 // another FRRConfiguration might be generated:
 //
@@ -391,110 +414,191 @@ func (c *Controller) ReconcileNetwork(_ string, old, new util.NetInfo) {
 // The controller processes selected events of RouteAdvertisements,
 // FRRConfigurations, Nodes, EgressIPs, NADs and namespaces.
 func (c *Controller) reconcile(ctx context.Context, name string) error {
+	// The cache must show this RA's own last writes before we compare it
+	// with the desired state again. Their events requeue the RA.
+	if c.pendingFRR.waiting(name) || c.pendingNAD.waiting(name) {
+		// A relist may skip an event. Recheck even if no handler wakes us.
+		c.raController.ReconcileAfter(name, cacheRecheckInterval)
+		return nil
+	}
 	startTime := time.Now()
+	result := reconcileResultSuccess
+	deleted := false
 	klog.V(5).Infof("Syncing routeadvertisements %q", name)
 	defer func() {
+		if deleted {
+			// drop the per-resource timeseries last: the cleanup reconcile
+			// below still records against them
+			metrics.DeleteRouteAdvertisementMetrics(name)
+		} else {
+			metrics.RecordRouteAdvertisementReconcile(name, result, time.Since(startTime))
+		}
 		klog.V(4).Infof("Finished syncing routeadvertisements %q, took %v", name, time.Since(startTime))
 	}()
 
 	ra, err := c.raLister.Get(name)
 	if err != nil && !apierrors.IsNotFound(err) {
+		result = reconcileResultError
 		return fmt.Errorf("failed to get RouteAdvertisements %q: %w", name, err)
 	}
 
 	if ra == nil {
-		metrics.DeleteRouteAdvertisementCondition(name)
+		deleted = true
 		c.deleteRANetworks(name)
 	}
 
-	hadUpdates, err := c.reconcileRouteAdvertisements(ctx, name, ra)
-	if err != nil && !errors.Is(err, errConfig) && !errors.Is(err, errPending) {
+	generated := c.generateFRRConfigurations(ctx, ra)
+	hadUpdates, err := c.reconcileRouteAdvertisements(ctx, name, ra, &generated)
+	if err != nil {
+		result = reconcileResultError
 		return fmt.Errorf("failed to reconcile RouteAdvertisements %q: %w", name, err)
 	}
-
-	return c.updateRAStatus(ctx, ra, hadUpdates, err)
+	switch failure := generated.failureError(); {
+	case failure == nil:
+	case errors.Is(failure, errConfig):
+		result = reconcileResultConfigError
+	case errors.Is(failure, errPending):
+		result = reconcileResultPending
+	default:
+		result = reconcileResultError
+	}
+	if err := c.updateRAStatus(ctx, ra, hadUpdates, generated); err != nil {
+		result = reconcileResultError
+		return err
+	}
+	// Pending or invalid input on one node must not suppress another node's
+	// transient failure. Keep all diagnostics when returning for retry.
+	if generated.hasRetryableNodeError() {
+		result = reconcileResultError
+		return &reportedReconcileError{generated.failureError()}
+	}
+	return nil
 }
 
-// reconcileRouteAdvertisements applies sanitized advertisements and withdraws
-// rejected nodes even when generation cannot produce a complete desired state.
-func (c *Controller) reconcileRouteAdvertisements(ctx context.Context, name string, ra *ratypes.RouteAdvertisements) (bool, error) {
-	// generate FRRConfigurations
-	frrConfigs, nads, cfgErr := c.generateFRRConfigurations(ctx, ra)
-	if cfgErr != nil {
-		cfgErr = fmt.Errorf("failed generating FRRConfigurations for RouteAdvertisements %q: %w", name, cfgErr)
-	}
-	var incomplete *incompleteVTEPConfigurationError
-	if errors.As(cfgErr, &incomplete) {
-		// The generated state is incomplete. Preserve existing configurations
-		// for other nodes unless upstream input validation also rejects them.
-		unsafeInput := errors.Is(cfgErr, errUnsafeFRRInput)
-		hadUpdates, remaining, err := c.deleteIncompleteVTEPConfigurations(ctx, name, incomplete.invalidNodes, unsafeInput)
-		if err != nil {
-			// Return only operational errors so failed deletions are retried.
-			return hadUpdates, fmt.Errorf("failed cleaning incomplete VTEP configurations for RouteAdvertisements %q: %w", name, err)
+// A template that failed generation has no desired object on that node. Withdraw
+// its old routes while continuing to publish the other templates. A rejected RA
+// withdraws all its generated objects before dropping its NAD references.
+func (c *Controller) reconcileRouteAdvertisements(ctx context.Context, name string, ra *ratypes.RouteAdvertisements, result *frrGenerationResult) (bool, error) {
+	cfgErr := result.failureError()
+	if result.err != nil && !errors.Is(result.err, errConfig) && !errors.Is(result.err, errPending) {
+		if len(result.invalidVTEPNodes) == 0 {
+			return false, result.err
 		}
-		// Unsafe input also requires upstream's cleanup of unvalidated
-		// configurations, including those on otherwise valid VTEP nodes.
-		if unsafeInput && remaining == 0 {
-			hadNADUpdates, err := c.updateNADs(ctx, name, nil)
-			if err != nil {
-				return hadUpdates || hadNADUpdates, fmt.Errorf("failed clearing NAD references for RouteAdvertisements %q: %w", name, err)
-			}
-			hadUpdates = hadUpdates || hadNADUpdates
-		}
-		if !errors.Is(incomplete.cause, errConfig) && !errors.Is(incomplete.cause, errPending) {
-			// Do not let the joined validation error suppress operational retries.
-			return hadUpdates, fmt.Errorf("failed generating FRRConfigurations for RouteAdvertisements %q: %w", name, incomplete.cause)
-		}
-		return hadUpdates, cfgErr
+		// A shared read failed after we identified invalid VTEPs. Withdraw
+		// those nodes and leave the others in place until generation succeeds.
+		changed, err := c.deleteIncompleteVTEPConfigurations(ctx, name, result.invalidVTEPNodes)
+		return changed, errors.Join(result.err, err)
 	}
-	if cfgErr != nil && errors.Is(cfgErr, errUnsafeFRRInput) {
-		// FRRConfigurations generated before the input was validated may
-		// carry the rejected value: delete them
-		deleted, remaining, err := c.deleteUnvalidatedFRRConfigurations(ctx, name)
-		if err != nil {
-			// not a configuration error, so that the reconcile is retried
-			return deleted, fmt.Errorf("failed deleting FRRConfigurations for RouteAdvertisements %q rejected with %v: %w", name, cfgErr, err)
+	if result.err != nil {
+		// Invalid RA input and missing shared inputs withdraw the entire RA.
+		result.frrConfigs, result.nads = nil, nil
+	}
+	if len(result.invalidVTEPNodes) > 0 && len(result.frrConfigs) == 0 {
+		result.nads = nil
+	}
+	var updates []nadUpdate
+	var nadErr error
+	intent := util.NewRouteAdvertisementsIntent(ra)
+	if len(result.nads) > 0 {
+		updates, nadErr = c.getNADUpdates(name, intent, result.nads)
+	}
+	hadFRRUpdates, frrErr := c.updateFRRConfigurations(ctx, name, result)
+	if frrErr != nil {
+		local, ok := frrErr.(*nodeGenerationError)
+		if !ok || len(result.nads) == 0 || result.vtepErr != nil || nadErr != nil {
+			return hadFRRUpdates, fmt.Errorf("failed updating FRRConfigurations for RouteAdvertisements %q (generation: %v): %w", name, cfgErr, errors.Join(frrErr, nadErr))
 		}
-		if remaining > 0 {
-			return deleted, cfgErr
-		}
-		// a network stays advertised while its NAD references this
-		// RouteAdvertisements: drop the references once no generated
-		// FRRConfiguration is left for it
-		hadNADUpdates, err := c.updateNADs(ctx, name, nil)
-		if err != nil {
-			return deleted || hadNADUpdates, fmt.Errorf("failed annotating NADs for RouteAdvertisements %q rejected with %v: %w", name, cfgErr, err)
-		}
-		return deleted || hadNADUpdates, cfgErr
+		// A failed delete can leave blue advertised on one node while green
+		// is ready on another. Keep blue's intent and let green publish its own.
+		result.nodeErrors = append(result.nodeErrors, local.errs...)
 	}
-	if cfgErr != nil && !errors.Is(cfgErr, errPending) && !errors.Is(cfgErr, errInvalidVTEP) {
-		return false, cfgErr
+	if len(result.nads) == 0 {
+		// Drop the NAD references only once the FRR cleanup succeeded.
+		updates, nadErr = c.getNADUpdates(name, nil, nil)
+	} else if frrErr != nil || result.failedFRRUpdate {
+		var err error
+		updates, err = c.independentNADUpdates(name, intent, updates)
+		nadErr = errors.Join(nadErr, err)
 	}
-
-	// update them
-	// VTEP validation errors still apply the sanitized desired state, so a bad
-	// annotation cannot preserve advertisements from the last reconciliation.
-	hadFRRConfigUpdates, err := c.updateFRRConfigurations(ctx, name, frrConfigs)
-	if err != nil {
-		return false, fmt.Errorf("failed updating FRRConfigurations for RouteAdvertisements %q: %w", name, err)
+	hadNADUpdates, err := c.applyNADUpdates(ctx, name, updates)
+	if err := errors.Join(nadErr, err); err != nil {
+		return hadFRRUpdates || hadNADUpdates, fmt.Errorf("failed annotating NADs for RouteAdvertisements %q (generation: %v): %w", name, cfgErr, errors.Join(frrErr, err))
 	}
-
-	// annotate NADs
-	hadNADUpdates, err := c.updateNADs(ctx, name, nads)
-	if err != nil {
-		return false, fmt.Errorf("failed annotating NADs for RouteAdvertisements %q: %w", name, err)
-	}
-
-	return hadFRRConfigUpdates || hadNADUpdates, cfgErr
+	return hadFRRUpdates || hadNADUpdates, nil
 }
+
+// frrGenerationResult holds the configurations we can publish and the reasons
+// other routes could not be generated.
+type frrGenerationResult struct {
+	frrConfigs []*frrtypes.FRRConfiguration
+	// Selected NADs keep their RA references during partial failures. An empty
+	// set withdraws this RA's references after its FRR cleanup succeeds.
+	nads []*nadtypes.NetworkAttachmentDefinition
+	// A shared error affects the whole RA. Invalid or pending input withdraws
+	// its exports. A failed read leaves them in place except on invalid VTEP nodes.
+	err error
+	// Node and template failures leave independent exports eligible to publish.
+	// On their own they degrade the RA while it remains accepted.
+	nodeErrors []error
+	// A rejected update leaves the old export installed. Hold NAD withdrawals
+	// that depend on that export changing. A failed create has no old export.
+	failedFRRUpdate bool
+	// A VTEP conflict affects RA acceptance. Keep the invalid nodes separately
+	// so their exports can be withdrawn even if a later shared read fails.
+	invalidVTEPNodes sets.Set[string]
+	vtepErr          error
+	// Wait for the old owner to withdraw before advertising a moved EgressIP.
+	// Non-nil whenever EgressIP is enabled, even before an address is assigned.
+	egressIPOwners map[netip.Prefix]string
+}
+
+func (r frrGenerationResult) failureError() error {
+	var nodeErr error
+	if len(r.nodeErrors) > 0 {
+		nodeErr = &nodeGenerationError{errs: r.nodeErrors}
+	}
+	return errors.Join(r.vtepErr, r.err, nodeErr)
+}
+
+func (r frrGenerationResult) partialNodeFailure() bool {
+	return len(r.nodeErrors) > 0 && r.err == nil && r.vtepErr == nil
+}
+
+func (r frrGenerationResult) hasRetryableNodeError() bool {
+	return slices.ContainsFunc(r.nodeErrors, func(err error) bool {
+		return !errors.Is(err, errConfig) && !errors.Is(err, errPending)
+	})
+}
+
+// nodeGenerationError bounds diagnostics without losing the underlying errors.
+// Reconciliation state belongs to frrGenerationResult, not this error wrapper.
+type nodeGenerationError struct {
+	errs []error
+}
+
+// Limit status and log text without discarding failures used for retries.
+const maxReportedNodeErrors = 10
+
+func (e *nodeGenerationError) Error() string {
+	if len(e.errs) <= maxReportedNodeErrors {
+		joined := errors.Join(e.errs...)
+		if joined == nil {
+			return ""
+		}
+		return joined.Error()
+	}
+	return fmt.Sprintf("%v\n... and %d more node errors",
+		errors.Join(e.errs[:maxReportedNodeErrors]...), len(e.errs)-maxReportedNodeErrors)
+}
+func (e *nodeGenerationError) Unwrap() []error { return e.errs }
 
 // selectedNetworks is a helper struct that stores information about networks
 // that have been selected by a RouteAdvertisements. It is important that prefix
 // lists are ordered to generate consistent FRRConfigurations.
 type selectedNetworks struct {
 	// networks is an ordered list of selected network names
-	networks []string
+	networks    []string
+	networkInfo map[string]util.NetInfo
 	// vrfs is an ordered list of selected networks VRF's
 	vrfs []string
 	// networkVRFs is a mapping of VRF to corresponding network
@@ -520,14 +624,12 @@ type selectedNetworks struct {
 	hostNetworkSubnets map[string][]string
 	// prefixLength is a map of selected network to their prefix length
 	prefixLength map[string]uint32
-	// networkType is a map of selected network to their topology
-	networkTopology map[string]string
 	// macVRFConfigs is an ordered list of MAC-VRF EVPN configurations for selected networks
 	macVRFConfigs []*vrfConfig
 	// ipVRFConfigs is an ordered list of IP-VRF EVPN configurations for selected networks
 	ipVRFConfigs []*ipVRFConfig
-	// networkTransport is a map of selected network to their transport mode
-	networkTransport map[string]string
+	// Every router uses these network-wide pod subnets for no-overlay receive filters.
+	noOverlayPodSubnets []string
 	// networkUplinks is a map of selected network to its Uplink name.
 	networkUplinks map[string]string
 }
@@ -556,22 +658,22 @@ type ipVRFConfig struct {
 }
 
 // generateFRRConfigurations generates FRRConfigurations for the route
-// advertisements. Also returns the selected network NADs.
-func (c *Controller) generateFRRConfigurations(ctx context.Context, ra *ratypes.RouteAdvertisements) ([]*frrtypes.FRRConfiguration, []*nadtypes.NetworkAttachmentDefinition, error) {
+// advertisements, including selection and generation failures.
+func (c *Controller) generateFRRConfigurations(ctx context.Context, ra *ratypes.RouteAdvertisements) (result frrGenerationResult) {
 	if ra == nil {
-		return nil, nil, nil
+		return frrGenerationResult{}
 	}
 
 	advertisements := sets.New(ra.Spec.Advertisements...)
 	if advertisements.Has(ratypes.EgressIP) && !config.OVNKubernetesFeature.EnableEgressIP {
-		return nil, nil, fmt.Errorf("%w: advertising EgressIP requires EgressIP feature to be enabled", errConfig)
+		return frrGenerationResult{err: fmt.Errorf("%w: advertising EgressIP requires EgressIP feature to be enabled", errConfig)}
 	}
 	if advertisements.Has(ratypes.EgressIP) && ra.Spec.TargetVRF == "auto" {
-		return nil, nil, fmt.Errorf("%w: advertising EgressIP not supported with TargetVRF set to 'auto'", errConfig)
+		return frrGenerationResult{err: fmt.Errorf("%w: advertising EgressIP not supported with TargetVRF set to 'auto'", errConfig)}
 	}
 	if ra.Spec.TargetVRF != "" && ra.Spec.TargetVRF != "auto" {
 		if err := validateInterfaceName(ra.Spec.TargetVRF); err != nil {
-			return nil, nil, fmt.Errorf("%w: invalid TargetVRF %s: %w", errUnsafeFRRInput, quoteForError(ra.Spec.TargetVRF), err)
+			return frrGenerationResult{err: fmt.Errorf("%w: invalid TargetVRF %s: %w", errUnsafeFRRInput, quoteForError(ra.Spec.TargetVRF), err)}
 		}
 	}
 
@@ -579,10 +681,10 @@ func (c *Controller) generateFRRConfigurations(ctx context.Context, ra *ratypes.
 	// internal nad for it if it doesn't exist
 	nads, err := c.getSelectedNADs(ctx, ra.Spec.NetworkSelectors)
 	if err != nil {
-		return nil, nil, err
+		return frrGenerationResult{err: err}
 	}
 	if len(nads) == 0 {
-		return nil, nil, fmt.Errorf("%w: no networks selected", errPending)
+		return frrGenerationResult{err: fmt.Errorf("%w: no networks selected", errPending)}
 	}
 	// ordered, so that processing and error messages are deterministic across
 	// reconciles regardless of lister iteration order
@@ -594,12 +696,11 @@ func (c *Controller) generateFRRConfigurations(ctx context.Context, ra *ratypes.
 	networkSet := sets.New[string]()
 	vtepNames := sets.New[string]()
 	selectedNetworks := &selectedNetworks{
-		networkVRFs:      map[string]string{},
-		networkSubnets:   map[string][]string{},
-		prefixLength:     map[string]uint32{},
-		networkTopology:  map[string]string{},
-		networkTransport: map[string]string{},
-		networkUplinks:   map[string]string{},
+		networkInfo:    map[string]util.NetInfo{},
+		networkVRFs:    map[string]string{},
+		networkSubnets: map[string][]string{},
+		prefixLength:   map[string]uint32{},
+		networkUplinks: map[string]string{},
 	}
 	for _, nad := range nads {
 		networkName := util.GetAnnotatedNetworkName(nad)
@@ -612,28 +713,27 @@ func (c *Controller) generateFRRConfigurations(ctx context.Context, ra *ratypes.
 			continue
 		}
 		if !network.IsDefault() && !network.IsPrimaryNetwork() {
-			return nil, nil, fmt.Errorf("%w: selected network %q is not the default nor a primary network", errConfig, networkName)
+			return frrGenerationResult{err: fmt.Errorf("%w: selected network %q is not the default nor a primary network", errConfig, networkName)}
 		}
 		if network.TopologyType() != types.Layer3Topology && network.TopologyType() != types.Layer2Topology {
-			return nil, nil, fmt.Errorf("%w: selected network %q has unsupported topology %q", errConfig, networkName, network.TopologyType())
+			return frrGenerationResult{err: fmt.Errorf("%w: selected network %q has unsupported topology %q", errConfig, networkName, network.TopologyType())}
 		}
 
 		if advertisements.Has(ratypes.EgressIP) && network.TopologyType() == types.Layer2Topology {
-			return nil, nil, fmt.Errorf("%w: EgressIP advertisement is currently not supported for Layer2 networks, network: %s", errConfig, network.GetNetworkName())
+			return frrGenerationResult{err: fmt.Errorf("%w: EgressIP advertisement is currently not supported for Layer2 networks, network: %s", errConfig, network.GetNetworkName())}
 		}
 
 		vrf := util.GetNetworkVRFName(network)
 		if err := validateNetworkVRFName(networkName, vrf); err != nil {
-			return nil, nil, fmt.Errorf("%w: %w", errUnsafeFRRInput, err)
+			return frrGenerationResult{err: fmt.Errorf("%w: %w", errUnsafeFRRInput, err)}
 		}
 		if vfrNet, hasVFR := selectedNetworks.networkVRFs[vrf]; hasVFR && vfrNet != networkName {
-			return nil, nil, fmt.Errorf("%w: vrf %q found to be mapped to multiple networks %v", errConfig, vrf, []string{vfrNet, networkName})
+			return frrGenerationResult{err: fmt.Errorf("%w: vrf %q found to be mapped to multiple networks %v", errConfig, vrf, []string{vfrNet, networkName})}
 		}
 		networkSet.Insert(networkName)
+		selectedNetworks.networkInfo[networkName] = network
 		selectedNetworks.vrfs = append(selectedNetworks.vrfs, vrf)
 		selectedNetworks.networkVRFs[vrf] = networkName
-		selectedNetworks.networkTopology[networkName] = network.TopologyType()
-		selectedNetworks.networkTransport[networkName] = network.Transport()
 		selectedNetworks.networkUplinks[networkName] = network.Uplink()
 
 		// MAC-VRF configuration. Zero means no MAC-VRF; any other value,
@@ -641,7 +741,7 @@ func (c *Controller) generateFRRConfigurations(ctx context.Context, ra *ratypes.
 		if macVNI := network.EVPNMACVRFVNI(); macVNI != 0 {
 			cfg, err := newVRFConfig("MAC-VRF", networkName, macVNI, network.EVPNMACVRFRouteTarget())
 			if err != nil {
-				return nil, nil, fmt.Errorf("%w: %w", errUnsafeFRRInput, err)
+				return frrGenerationResult{err: fmt.Errorf("%w: %w", errUnsafeFRRInput, err)}
 			}
 			selectedNetworks.macVRFConfigs = append(selectedNetworks.macVRFConfigs, cfg)
 		}
@@ -659,7 +759,7 @@ func (c *Controller) generateFRRConfigurations(ctx context.Context, ra *ratypes.
 			}
 			cfg, err := newIPVRFConfig(networkName, vrf, ipVNI, network.EVPNIPVRFRouteTarget(), hasIPv4, hasIPv6)
 			if err != nil {
-				return nil, nil, fmt.Errorf("%w: %w", errUnsafeFRRInput, err)
+				return frrGenerationResult{err: fmt.Errorf("%w: %w", errUnsafeFRRInput, err)}
 			}
 			selectedNetworks.ipVRFConfigs = append(selectedNetworks.ipVRFConfigs, cfg)
 		}
@@ -668,8 +768,8 @@ func (c *Controller) generateFRRConfigurations(ctx context.Context, ra *ratypes.
 			vtepNames.Insert(vtepName)
 		}
 		if hasEVPNConfig && ra.Spec.TargetVRF != "auto" && ra.Spec.TargetVRF != vrf {
-			return nil, nil, fmt.Errorf("%w: EVPN network %q with VRF %q requires TargetVRF to be 'auto' or %q, got %q",
-				errConfig, networkName, vrf, vrf, ra.Spec.TargetVRF)
+			return frrGenerationResult{err: fmt.Errorf("%w: EVPN network %q with VRF %q requires TargetVRF to be 'auto' or %q, got %q",
+				errConfig, networkName, vrf, vrf, ra.Spec.TargetVRF)}
 		}
 		// TODO check overlaps?
 		for _, cidr := range network.Subnets() {
@@ -688,6 +788,11 @@ func (c *Controller) generateFRRConfigurations(ctx context.Context, ra *ratypes.
 	slices.SortFunc(selectedNetworks.macVRFConfigs, func(a, b *vrfConfig) int { return int(a.vni - b.vni) })
 	slices.SortFunc(selectedNetworks.ipVRFConfigs, func(a, b *ipVRFConfig) int { return int(a.vni - b.vni) })
 	selectedNetworks.networks = sets.List(networkSet)
+	for _, name := range selectedNetworks.networks {
+		if selectedNetworks.networkInfo[name].Transport() == types.NetworkTransportNoOverlay {
+			selectedNetworks.noOverlayPodSubnets = append(selectedNetworks.noOverlayPodSubnets, selectedNetworks.networkSubnets[name]...)
+		}
+	}
 	// cache the selected networks so that network activity changes only
 	// reconcile the RouteAdvertisements selecting them. Returning early above
 	// keeps the previous entry, which matches the FRRConfigurations still
@@ -699,40 +804,68 @@ func (c *Controller) generateFRRConfigurations(ctx context.Context, ra *ratypes.
 	// gather selected nodes
 	nodeSelector, err := metav1.LabelSelectorAsSelector(&ra.Spec.NodeSelector)
 	if err != nil {
-		return nil, nil, err
+		return frrGenerationResult{err: fmt.Errorf("%w: invalid nodeSelector: %w", errConfig, err)}
 	}
 	if !nodeSelector.Empty() && advertisements.Has(ratypes.PodNetwork) {
-		return nil, nil, fmt.Errorf("%w: node selector has to select all nodes if pod network is advertised", errConfig)
+		return frrGenerationResult{err: fmt.Errorf("%w: node selector has to select all nodes if pod network is advertised", errConfig)}
 	}
-	nodes, err := c.nodeLister.List(nodeSelector)
+	allNodes, err := c.nodeLister.List(labels.Everything())
 	if err != nil {
-		return nil, nil, err
+		return frrGenerationResult{err: fmt.Errorf("failed to list nodes for RouteAdvertisements %q: %w", ra.Name, err)}
+	}
+	// FRR matches the generated hostname selector on every node, including
+	// nodes outside this RA or its peering templates.
+	hostnameCounts := make(map[string]int, len(allNodes))
+	var nodes []*corev1.Node
+	for _, node := range allNodes {
+		hostnameCounts[node.Labels[corev1.LabelHostname]]++
+		if nodeSelector.Matches(labels.Set(node.Labels)) {
+			nodes = append(nodes, node)
+		}
 	}
 	if len(nodes) == 0 {
-		return nil, nil, fmt.Errorf("%w: no nodes selected", errPending)
+		return frrGenerationResult{err: fmt.Errorf("%w: no nodes selected", errPending)}
 	}
 	// ordered, so that processing and error messages are deterministic across
 	// reconciles regardless of lister iteration order
 	slices.SortFunc(nodes, func(a, b *corev1.Node) int { return strings.Compare(a.Name, b.Name) })
 	// prepare a map of selected nodes to the FRRConfigurations that apply to
 	// them
-	nodeToFRRConfig := map[string][]*frrtypes.FRRConfiguration{}
+	nodeTemplates := map[string][]*frrTemplate{}
+	// Use one activity snapshot for both template validation and generation.
+	nodeToNetworks := make(map[string][]string, len(nodes))
 	for _, node := range nodes {
-		nodeToFRRConfig[node.Name] = nil
+		for _, network := range selectedNetworks.networks {
+			if !c.nm.NodeHasNetwork(node.Name, network) {
+				// only advertise a network on nodes where it is active, that
+				// is, with pods or EgressIPs attached to it; NodeHasNetwork
+				// returns false only with dynamic UDN allocation enabled.
+				// The network manager notifies us when a network goes active
+				// or inactive on a node.
+				continue
+			}
+			nodeToNetworks[node.Name] = append(nodeToNetworks[node.Name], network)
+		}
 	}
 
 	// gather selected FRRConfigurations, map them to the selected nodes
 	frrSelector, err := metav1.LabelSelectorAsSelector(&ra.Spec.FRRConfigurationSelector)
 	if err != nil {
-		return nil, nil, err
+		return frrGenerationResult{err: fmt.Errorf("%w: invalid frrConfigurationSelector: %w", errConfig, err)}
 	}
 	frrConfigs, err := c.frrLister.List(frrSelector)
 	if err != nil {
-		return nil, nil, err
+		return frrGenerationResult{err: err}
 	}
 	if len(frrConfigs) == 0 {
-		return nil, nil, fmt.Errorf("%w: no FRRConfigurations selected", errPending)
+		return frrGenerationResult{err: fmt.Errorf("%w: no FRRConfigurations selected", errPending)}
 	}
+	// Drop generated configurations before sorting. With an empty or broad
+	// selector they can vastly outnumber the user-provided sources, and only
+	// the sources need to be ordered below.
+	frrConfigs = slices.DeleteFunc(frrConfigs, func(frrConfig *frrtypes.FRRConfiguration) bool {
+		return strings.HasPrefix(frrConfig.Name, generateName)
+	})
 	// ordered, so that processing and error messages are deterministic across
 	// reconciles regardless of lister iteration order
 	slices.SortFunc(frrConfigs, func(a, b *frrtypes.FRRConfiguration) int {
@@ -740,52 +873,52 @@ func (c *Controller) generateFRRConfigurations(ctx context.Context, ra *ratypes.
 	})
 
 	frrRouterVRFs := sets.New[string]()
+	var templates []*frrTemplate
+	hasDefaultRouter := false
 	for _, frrConfig := range frrConfigs {
-		if strings.HasPrefix(frrConfig.Name, generateName) {
-			klog.V(4).Infof("Skipping FRRConfiguration %q selected by RouteAdvertisements %q as it was generated by ovn-kubernetes", frrConfig.Name, ra.Name)
-			continue
-		}
 		nodeSelector, err := metav1.LabelSelectorAsSelector(&frrConfig.Spec.NodeSelector)
 		if err != nil {
-			return nil, nil, err
+			result.nodeErrors = append(result.nodeErrors, fmt.Errorf("%w: FRRConfiguration %s/%s has an invalid node selector: %w",
+				errConfig, frrConfig.Namespace, frrConfig.Name, err))
+			continue
 		}
-		nodes, err := c.nodeLister.List(nodeSelector)
-		if err != nil {
-			return nil, nil, err
-		}
+		var template *frrTemplate
+		var usable bool
 		for _, node := range nodes {
-			if _, selected := nodeToFRRConfig[node.Name]; !selected {
-				// this RouteAdvertisements does not select this node, skip
+			networks := nodeToNetworks[node.Name]
+			if len(networks) == 0 || !nodeSelector.Matches(labels.Set(node.Labels)) {
 				continue
 			}
-			nodeToFRRConfig[node.Name] = append(nodeToFRRConfig[node.Name], frrConfig)
+			if template == nil {
+				template = prepareFRRTemplate(ra.Spec.TargetVRF, frrConfig, selectedNetworks)
+				templates = append(templates, template)
+			}
+			nodeTemplates[node.Name] = append(nodeTemplates[node.Name], template)
+			usable = usable || template.validationError(ra.Spec.TargetVRF, networks) == nil
 		}
-		for _, router := range frrConfig.Spec.BGP.Routers {
-			frrRouterVRFs.Insert(router.VRF)
+		for i, router := range frrConfig.Spec.BGP.Routers {
+			hasDefaultRouter = hasDefaultRouter || router.VRF == ""
+			// An explicit router takes precedence even when its template selects
+			// other nodes. A rejected router cannot supply the EVPN tenant ASN.
+			if template == nil || (usable && template.routerErrors[i] == nil) {
+				frrRouterVRFs.Insert(router.VRF)
+			}
 		}
 	}
 
 	// Validate EVPN configuration requirements
 	hasEVPNConfig := len(selectedNetworks.macVRFConfigs) > 0 || len(selectedNetworks.ipVRFConfigs) > 0
 	if hasEVPNConfig && !config.OVNKubernetesFeature.EnableEVPN {
-		return nil, nil, fmt.Errorf("%w: EVPN networks selected but EVPN feature is not enabled", errConfig)
+		return frrGenerationResult{err: fmt.Errorf("%w: EVPN networks selected but EVPN feature is not enabled", errConfig)}
 	}
 	if hasEVPNConfig && config.Gateway.Mode != config.GatewayModeLocal {
-		return nil, nil, fmt.Errorf("%w: EVPN networks selected but EVPN feature is only supported in local gateway mode", errConfig)
+		return frrGenerationResult{err: fmt.Errorf("%w: EVPN networks selected but EVPN feature is only supported in local gateway mode", errConfig)}
 	}
 	// Require a router with default VRF for any EVPN configuration, since the
 	// global EVPN section with advertise-all-vni is required for EVPN to work properly.
-	if hasEVPNConfig && !frrRouterVRFs.Has("") {
-		return nil, nil, fmt.Errorf("%w: EVPN requires a router with default VRF but none were found in selected FRRConfigurations", errConfig)
+	if hasEVPNConfig && !hasDefaultRouter {
+		return frrGenerationResult{err: fmt.Errorf("%w: EVPN requires a router with default VRF but none were found in selected FRRConfigurations", errConfig)}
 	}
-	// Validate IP-VRF networks: each needs either an existing VRF router or
-	// the default VRF router to create one from.
-	for _, cfg := range selectedNetworks.ipVRFConfigs {
-		if !frrRouterVRFs.Has(cfg.vrfName) && !frrRouterVRFs.Has("") {
-			return nil, nil, fmt.Errorf("%w: IP-VRF EVPN network %q requires a router with VRF %q or a router with default VRF, but none were found in selected FRRConfigurations", errConfig, cfg.networkName, cfg.vrfName)
-		}
-	}
-
 	// Read per-node VTEP IPs from the k8s.ovn.org/vteps annotation written by
 	// ovnkube-node. This runs after EVPN validation so c.vtepLister (only
 	// initialized when EVPN is enabled) is safe to dereference.
@@ -794,18 +927,18 @@ func (c *Controller) generateFRRConfigurations(ctx context.Context, ra *ratypes.
 	for _, vtepName := range sets.List(vtepNames) {
 		vtep, err := c.vtepLister.Get(vtepName)
 		if err != nil {
-			return nil, nil, fmt.Errorf("%w: VTEP %q referenced by EVPN network not found: %w", errConfig, vtepName, err)
+			return frrGenerationResult{err: fmt.Errorf("%w: VTEP %q referenced by EVPN network not found: %w", errConfig, vtepName, err)}
 		}
 		for _, cidr := range vtep.Spec.CIDRs {
 			vtepCIDRSet.Insert(string(cidr))
 		}
 		vtepCIDRs[vtepName], err = util.ParseIPNets(vtep.Spec.CIDRs)
 		if err != nil {
-			return nil, nil, fmt.Errorf("%w: failed to parse VTEP %q CIDRs: %w", errConfig, vtepName, err)
+			return frrGenerationResult{err: fmt.Errorf("%w: failed to parse VTEP %q CIDRs: %w", errConfig, vtepName, err)}
 		}
 	}
 	vtepIPsByNode := map[string]sets.Set[string]{}
-	invalidVTEPNodes := sets.New[string]()
+	result.invalidVTEPNodes = sets.New[string]()
 	var vtepErrors []error
 	if len(vtepNames) > 0 {
 		for _, node := range nodes {
@@ -814,118 +947,51 @@ func (c *Controller) generateFRRConfigurations(ctx context.Context, ra *ratypes.
 				if util.IsAnnotationNotSetError(validationErr) {
 					continue
 				}
-				invalidVTEPNodes.Insert(node.Name)
+				result.invalidVTEPNodes.Insert(node.Name)
 				vtepErrors = append(vtepErrors, fmt.Errorf("%w: %w", errInvalidVTEP, validationErr))
 				continue
 			}
 			vtepIPsByNode[node.Name] = prefixes
 		}
 	}
-	generationError := func(err error) error {
-		if len(invalidVTEPNodes) == 0 {
-			return err
-		}
-		return &incompleteVTEPConfigurationError{
-			invalidNodes: invalidVTEPNodes,
-			cause:        err,
-			err:          errors.Join(errors.Join(vtepErrors...), err),
-		}
-	}
+	result.vtepErr = errors.Join(vtepErrors...)
 
 	if len(vtepIPsByNode) > 0 {
 		existing, listErr := c.frrLister.List(labels.Everything())
 		if listErr != nil {
-			return nil, nil, generationError(fmt.Errorf("failed listing existing FRRConfigurations for VTEP conflict detection in RouteAdvertisements %q: %w", ra.Name, listErr))
+			result.err = fmt.Errorf("failed listing existing FRRConfigurations for VTEP conflict detection in RouteAdvertisements %q: %w", ra.Name, listErr)
+			return result
 		}
 		claims, err := c.vtepClaimsByRA(ctx, ra.Name, vtepIPsByNode, existing)
 		if err != nil {
-			return nil, nil, generationError(err)
+			result.err = err
+			return result
 		}
 		rejected, conflictErr := conflictingVTEPNodes(ra.Name, claims, existing)
-		invalidVTEPNodes.Insert(rejected.UnsortedList()...)
-		if conflictErr != nil {
-			vtepErrors = append(vtepErrors, conflictErr)
-		}
+		result.invalidVTEPNodes.Insert(rejected.UnsortedList()...)
+		result.vtepErr = errors.Join(result.vtepErr, conflictErr)
 	}
 	selectedNetworks.vtepIPsByNode = make(map[string][]string, len(vtepIPsByNode))
 	for node, ips := range vtepIPsByNode {
 		selectedNetworks.vtepIPsByNode[node] = sets.List(ips)
 	}
 	selectedNetworks.vtepCIDRs = sets.List(vtepCIDRSet)
-	vtepValidationErr := errors.Join(vtepErrors...)
 
-	// helper to gather host subnets and cache during reconcile
-	// TODO perhaps cache across reconciles as well
-	hostSubnets := map[string]map[string][]string{}
-	getHostSubnets := func(nodeName string, network string) ([]string, error) {
-		if _, parsed := hostSubnets[nodeName]; !parsed {
-			node, err := c.nodeLister.Get(nodeName)
-			if err != nil {
-				return nil, err
-			}
-			subnets, err := util.ParseNodeHostSubnetsAnnotation(node)
-			if err != nil {
-				return nil, fmt.Errorf("%w: waiting for subnet annotation to be set for node %q: %w", errConfig, nodeName, err)
-			}
-			hostSubnets[nodeName] = make(map[string][]string, len(subnets))
-			for network, subnet := range subnets {
-				hostSubnets[nodeName][network] = util.StringSlice(subnet)
-			}
-		}
-		return hostSubnets[nodeName][network], nil
+	for _, template := range templates {
+		template.resolveEVPNRouters(selectedNetworks, frrRouterVRFs)
 	}
 
-	// helper to gather egress ips and cache during reconcile
-	// TODO perhaps cache across reconciles as well
+	// EgressIP assignments are shared by every node. A lookup failure must
+	// abort before applying any changes, rather than remove configurations
+	// as if each node had independently failed generation.
 	var eipsByNodesByNetworks map[string]map[string]sets.Set[string]
-	getEgressIPsByNode := func(nodeName string) (map[string]sets.Set[string], error) {
-		if eipsByNodesByNetworks == nil {
-			eipsByNodesByNetworks, err = c.getEgressIPsByNodesByNetworks(networkSet)
-			if err != nil {
-				return nil, err
-			}
+	if advertisements.Has(ratypes.EgressIP) {
+		result.egressIPOwners = map[netip.Prefix]string{}
+		eipsByNodesByNetworks, err = c.getEgressIPsByNodesByNetworks(networkSet)
+		if err != nil {
+			result.err = fmt.Errorf("failed to collect EgressIP assignments: %w", err)
+			return result
 		}
-		return eipsByNodesByNetworks[nodeName], nil
-	}
-
-	// helper to gather the following prefixes:
-	//  - EgressIPs
-	//  - host subnets for networks with networkTopology layer3
-	//  - network subnets for networks with networkTopology layer2
-	getPrefixes := func(nodeName, network, networkTopology string, networkSubnets []string) ([]string, error) {
-		// gather host subnets
-		var subnets []string
-		if advertisements.Has(ratypes.PodNetwork) {
-			if networkTopology == types.Layer2Topology {
-				subnets = networkSubnets
-				if len(subnets) == 0 {
-					return nil, fmt.Errorf("%w: no layer2 subnets found", errConfig)
-				}
-			} else {
-				subnets, err = getHostSubnets(nodeName, network)
-				if err != nil {
-					return nil, fmt.Errorf("%w: will wait for subnet annotation to be set for node %q and network %q: %w", errConfig, nodeName, network, err)
-				}
-				if len(subnets) == 0 {
-					return nil, fmt.Errorf("%w: will wait for subnet annotation to be set for node %q and network %q", errConfig, nodeName, network)
-				}
-			}
-
-		}
-		// gather EgressIPs
-		var eips []string
-		if advertisements.Has(ratypes.EgressIP) {
-			eipsByNode, err := getEgressIPsByNode(nodeName)
-			if err != nil {
-				return nil, err
-			}
-			eips = eipsByNode[network].UnsortedList()
-		}
-
-		prefixes := make([]string, 0, len(subnets)+len(eips))
-		prefixes = append(prefixes, subnets...)
-		prefixes = append(prefixes, eips...)
-		return prefixes, nil
 	}
 
 	generated := []*frrtypes.FRRConfiguration{}
@@ -934,93 +1000,134 @@ func (c *Controller) generateFRRConfigurations(ctx context.Context, ra *ratypes.
 	for _, node := range nodes {
 		nodeName := node.Name
 		// Exclude invalid nodes from desired state so previously generated
-		// advertisements are withdrawn instead of retained on validation errors.
-		if invalidVTEPNodes.Has(nodeName) {
+		// advertisements are removed instead of retained on validation errors.
+		if result.invalidVTEPNodes.Has(nodeName) {
 			continue
 		}
-		frrConfigs := nodeToFRRConfig[nodeName]
-		// reset node specific information
-		selectedNetworks.hostNetworkSubnets = map[string][]string{}
-		selectedNetworks.hostSubnets = []string{}
-
-		// gather node specific information
-		nodeNetworks := make([]string, 0, len(selectedNetworks.networks))
-		for _, network := range selectedNetworks.networks {
-			if !c.nm.NodeHasNetwork(nodeName, network) {
-				// only advertise a network on nodes where it is active, that
-				// is, with pods or EgressIPs attached to it; NodeHasNetwork
-				// returns false only with dynamic UDN allocation enabled.
-				// The network manager notifies us when a network goes active
-				// or inactive on a node.
-				continue
-			}
-			if config.OVNKubernetesFeature.EnableDynamicUDNAllocation &&
-				!config.Layer2UsesTransitRouter &&
-				selectedNetworks.networkTopology[network] == types.Layer2Topology &&
-				!c.nodeHasLayer2Allocation(nodeName, network) {
-				// Legacy layer2 topology uses the tunnel ID allocation as a
-				// signal that the network is rendered on the node. The allocation
-				// is stored as a node annotation whose update triggers this
-				// reconcile. Transit-router topology intentionally has no such
-				// allocation, so NodeHasNetwork above is the available signal there.
-				// TODO: replace with a per-node network status once
-				// available, to know when the network is actually rendered.
-				continue
-			}
-			nodeNetworks = append(nodeNetworks, network)
-			selectedNetworks.hostNetworkSubnets[network], err = getPrefixes(nodeName, network,
-				selectedNetworks.networkTopology[network], selectedNetworks.networkSubnets[network])
-			if err != nil {
-				return nil, nil, generationError(err)
-			}
-			selectedNetworks.hostSubnets = append(selectedNetworks.hostSubnets, selectedNetworks.hostNetworkSubnets[network]...)
-			// ordered
-			slices.Sort(selectedNetworks.hostNetworkSubnets[network])
+		nodeNetworks := nodeToNetworks[nodeName]
+		if len(nodeNetworks) == 0 {
+			continue
 		}
-		// order, dedup
-		selectedNetworks.hostSubnets = sets.List(sets.New(selectedNetworks.hostSubnets...))
-
-		// if there is no prefixes to advertise for this node, skip it
-		if len(selectedNetworks.hostSubnets) == 0 {
+		nodeEgressIPs := eipsByNodesByNetworks[nodeName]
+		hasEgressIPs := len(nodeEgressIPs) > 0 && slices.ContainsFunc(nodeNetworks, func(name string) bool {
+			return len(nodeEgressIPs[name]) > 0
+		})
+		if !advertisements.Has(ratypes.PodNetwork) && !hasEgressIPs {
 			continue
 		}
 
-		matchedNetworks := sets.New[string]()
-		for _, frrConfig := range frrConfigs {
-			// generate FRRConfiguration for each source FRRConfiguration/node combination
-			new, err := c.generateFRRConfiguration(
-				ra,
-				frrConfig,
-				nodeName,
-				selectedNetworks,
-				matchedNetworks,
-				frrRouterVRFs,
-			)
-			if err != nil {
-				return nil, nil, generationError(err)
-			}
-			if new == nil {
-				// if we got nil, we didn't match any VRF
-				if ra.Spec.TargetVRF == "auto" && frrConfigOnlyMatchesInactiveNetworks(frrConfig, selectedNetworks, nodeNetworks) {
-					// this FRRConfiguration only carries routers for VRFs of
-					// selected networks that are not active on this node:
-					// skip it for this node instead of failing, mirroring the
-					// per-network skip above.
+		if hasEgressIPs && len(nodeTemplates[nodeName]) == 0 {
+			result.nodeErrors = append(result.nodeErrors, fmt.Errorf("node %q: %w: no peering template selects the assigned EgressIP owner", nodeName, errConfig))
+		}
+
+		// Auto requires template coverage for every active network. An explicit
+		// target only needs prefixes on nodes where a template will use them.
+		valid, errs := selectNodeTemplates(ra, nodeTemplates[nodeName], selectedNetworks, nodeNetworks)
+		for _, err := range errs {
+			result.nodeErrors = append(result.nodeErrors, fmt.Errorf("node %q: %w", nodeName, err))
+		}
+		var podPrefixes map[string][]string
+		var subnetErr error
+		if len(valid) > 0 && advertisements.Has(ratypes.PodNetwork) {
+			podPrefixes, subnetErr = selectedNetworks.podPrefixesForNode(node, nodeNetworks)
+			if subnetErr != nil {
+				result.nodeErrors = append(result.nodeErrors, fmt.Errorf("node %q: %w", nodeName, subnetErr))
+				// A shared target imports every selected network. In auto mode
+				// each VRF can keep advertising its own allocated prefixes.
+				if ra.Spec.TargetVRF != "auto" || len(podPrefixes) == 0 {
 					continue
 				}
-				return nil, nil, generationError(fmt.Errorf("%w: FRRConfiguration %q selected for node %q has no VRF matching the RouteAdvertisements target VRF or any selected network",
-					errConfig, frrConfig.Name, nodeName))
+				nodeNetworks = slices.Sorted(maps.Keys(podPrefixes))
 			}
-			generated = append(generated, new)
 		}
-		// check that we matched all the networks selected for this node on 'auto'
-		if ra.Spec.TargetVRF == "auto" && !matchedNetworks.HasAll(nodeNetworks...) {
-			return nil, nil, generationError(fmt.Errorf("%w: selected FRRConfigurations for node %q don't match all selected networks with target VRF 'auto'", errConfig, nodeName))
+		selectedNetworks.hostNetworkSubnets = make(map[string][]string, len(nodeNetworks))
+		allPrefixes := sets.New[string]()
+		for _, network := range nodeNetworks {
+			egressPrefixes := nodeEgressIPs[network].UnsortedList()
+			for _, eip := range egressPrefixes {
+				if prefix, err := netip.ParsePrefix(eip); err == nil {
+					result.egressIPOwners[prefix] = nodeName
+				}
+			}
+			prefixes := append(egressPrefixes, podPrefixes[network]...)
+			slices.Sort(prefixes)
+			selectedNetworks.hostNetworkSubnets[network] = prefixes
+			allPrefixes.Insert(prefixes...)
+		}
+		selectedNetworks.hostSubnets = sets.List(allPrefixes)
+		hostname := node.Labels[corev1.LabelHostname]
+		if count := hostnameCounts[hostname]; len(valid) > 0 && hostname != "" && count > 1 {
+			result.nodeErrors = append(result.nodeErrors, fmt.Errorf("%w: node %q: %s=%s matches %d nodes", errNodeNotReady, nodeName, corev1.LabelHostname, hostname, count))
+			continue
+		}
+		nodeHasEVPNPeers := false
+		var covered sets.Set[string]
+		if ra.Spec.TargetVRF == "auto" {
+			covered = sets.New[string]()
+		}
+		for _, template := range valid {
+			cfg, err := c.generateFRRConfiguration(ra, template, node, selectedNetworks, covered)
+			if err == nil && cfg == nil {
+				// A template dedicated to a missing subnet can be valid and
+				// empty. The subnet error already explains its withdrawal.
+				if subnetErr != nil && frrConfigOnlyMatchesInactiveNetworks(template.source, selectedNetworks, nodeNetworks) {
+					continue
+				}
+				err = fmt.Errorf("%w: no routes or peers match the target VRF", errConfig)
+			}
+			if err != nil {
+				result.nodeErrors = append(result.nodeErrors, fmt.Errorf("node %q, FRRConfiguration %s/%s: %w",
+					nodeName, template.source.Namespace, template.source.Name, err))
+				continue
+			}
+			generated = append(generated, cfg)
+			nodeHasEVPNPeers = nodeHasEVPNPeers || template.hasEVPNPeers()
+		}
+		// FRR merges templates on the same node. A tenant router may come
+		// from a different template than its EVPN peers, but peers on another
+		// node cannot advertise this node's tenant routes.
+		if !nodeHasEVPNPeers && slices.ContainsFunc(selectedNetworks.ipVRFConfigs, func(cfg *ipVRFConfig) bool {
+			return len(selectedNetworks.hostNetworkSubnets[cfg.networkName]) > 0
+		}) {
+			result.nodeErrors = append(result.nodeErrors, fmt.Errorf("node %q: %w: EVPN IP-VRF requires a default-VRF router with EVPN peers on this node", nodeName, errConfig))
+		}
+		if covered != nil && !covered.HasAll(nodeNetworks...) {
+			result.nodeErrors = append(result.nodeErrors, fmt.Errorf("node %q: %w: selected FRRConfigurations don't match all selected networks with target VRF 'auto': missing %v",
+				nodeName, errConfig, sets.List(sets.New(nodeNetworks...).Difference(covered))))
 		}
 	}
+	result.frrConfigs = generated
+	result.nads = nads
+	return result
+}
 
-	// Validation alone leaves a complete, sanitized desired state to apply.
-	return generated, nads, vtepValidationErr
+// A layer 2 network uses the same pod subnets on every node. Layer 3 networks
+// share one node annotation, so read it once for all selected networks.
+func (s *selectedNetworks) podPrefixesForNode(node *corev1.Node, networks []string) (map[string][]string, error) {
+	prefixes := make(map[string][]string, len(networks))
+	var layer3 []string
+	var errs []error
+	for _, name := range networks {
+		if s.networkInfo[name].TopologyType() == types.Layer3Topology {
+			layer3 = append(layer3, name)
+			continue
+		}
+		if len(s.networkSubnets[name]) == 0 {
+			errs = append(errs, fmt.Errorf("%w: no layer2 subnets found for network %q", errConfig, name))
+			continue
+		}
+		prefixes[name] = s.networkSubnets[name]
+	}
+	if len(layer3) > 0 {
+		hostSubnets, err := util.ParseNodeHostSubnetsForNetworks(node, layer3)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%w: waiting for subnet annotation on node %q: %w", errNodeNotReady, node.Name, err))
+		}
+		for name, subnets := range hostSubnets {
+			prefixes[name] = util.StringSlice(subnets)
+		}
+	}
+	return prefixes, errors.Join(errs...)
 }
 
 // vtepClaimsByRA collects claims only from nodes selected by an EVPN RA with
@@ -1054,6 +1161,9 @@ func (c *Controller) vtepClaimsByRA(ctx context.Context, current string, current
 			continue
 		}
 		nads, err := c.getSelectedNADs(ctx, ra.Spec.NetworkSelectors)
+		if errors.Is(err, errConfig) {
+			continue
+		}
 		if err != nil {
 			return nil, fmt.Errorf("failed selecting networks for RouteAdvertisements %q during VTEP conflict detection: %w", ra.Name, err)
 		}
@@ -1152,10 +1262,11 @@ func conflictingVTEPNodes(ra string, claimsByRA map[string]map[string]sets.Set[s
 			continue
 		}
 		key := strings.Split(cfg.Annotations[types.OvnRouteAdvertisementsKey], "/")
-		node := cfg.Spec.NodeSelector.MatchLabels["kubernetes.io/hostname"]
-		if len(key) != 3 || key[0] == "" || key[0] != cfg.Labels[types.OvnRouteAdvertisementsKey] || key[1] == "" || node == "" || key[2] != node {
+		if len(key) != 3 || key[0] == "" || key[0] != cfg.Labels[types.OvnRouteAdvertisementsKey] || key[1] == "" || key[2] == "" {
 			continue
 		}
+		// The annotation identifies the node; its hostname selector may differ.
+		node := key[2]
 		for _, router := range cfg.Spec.BGP.Routers {
 			if router.VRF != "" {
 				continue
@@ -1227,14 +1338,195 @@ func getNodeVTEPPrefixes(node *corev1.Node, vtepCIDRs map[string][]*net.IPNet) (
 	return prefixes, nil
 }
 
-// nodeHasLayer2Allocation reports whether the node has a gateway router LRP
-// tunnel ID allocated for the layer2 network.
-func (c *Controller) nodeHasLayer2Allocation(nodeName, network string) bool {
-	node, err := c.nodeLister.Get(nodeName)
-	if err != nil {
-		return false
+// After a failed write, one peer can still have the old prefix while another
+// has the new one. Count the RA's cached objects instead of the desired ones.
+// The retry picks up any writes from this pass that reach the cache later.
+func (c *Controller) recordFRRConfigurationMetrics(ra string, generated []*frrtypes.FRRConfiguration, writeFailed bool) {
+	if !config.Metrics.EnableScaleMetrics {
+		return
 	}
-	return util.HasUDNLayer2NodeGRLRPTunnelID(node, network)
+	if writeFailed {
+		persisted, err := c.listExistingFRRConfigurations(ra)
+		if err != nil {
+			klog.V(4).Infof("Could not refresh FRR configuration metrics for RouteAdvertisements %q: %v", ra, err)
+			return
+		}
+		generated = persisted
+	}
+	metrics.RecordRouteAdvertisementFRRConfigurations(ra, len(generated))
+	v4, v6 := countAdvertisedPrefixes(generated)
+	metrics.RecordRouteAdvertisementAdvertisedPrefixes(ra, "ipv4", v4)
+	metrics.RecordRouteAdvertisementAdvertisedPrefixes(ra, "ipv6", v6)
+}
+
+// countAdvertisedPrefixes counts the distinct prefixes across the generated
+// FRRConfigurations, by IP family. The same prefix advertised from several
+// nodes, or by several routers, counts once.
+func countAdvertisedPrefixes(generated []*frrtypes.FRRConfiguration) (v4, v6 int) {
+	prefixes := sets.New[string]()
+	for _, frrConfig := range generated {
+		for _, router := range frrConfig.Spec.BGP.Routers {
+			prefixes.Insert(router.Prefixes...)
+		}
+	}
+	for prefix := range prefixes {
+		if utilnet.IsIPv6CIDRString(prefix) {
+			v6++
+			continue
+		}
+		v4++
+	}
+	return v4, v6
+}
+
+// frrTemplate holds node-independent selection and validated peers. The same
+// router and EVPN choices are used before prefix allocation and during rendering.
+type frrTemplate struct {
+	source         *frrtypes.FRRConfiguration
+	routerErrors   map[int]error
+	routerNetworks map[int]string
+	peers          map[int][]frrNeighbor
+	globalRouter   *frrtypes.Router
+	globalPeers    []frrNeighbor
+	ipVRFRouters   []templateIPVRF
+	macVRFNetworks []string
+}
+
+type templateIPVRF struct {
+	config    *ipVRFConfig
+	asn       uint32
+	inherited bool
+}
+
+func prepareFRRTemplate(targetVRF string, source *frrtypes.FRRConfiguration, selected *selectedNetworks) *frrTemplate {
+	template := &frrTemplate{source: source, routerNetworks: map[int]string{}, peers: map[int][]frrNeighbor{}}
+	hasEVPN := len(selected.ipVRFConfigs) > 0 || len(selected.macVRFConfigs) > 0
+	for i := range source.Spec.BGP.Routers {
+		router := &source.Spec.BGP.Routers[i]
+		network, matches := matchingRouterNetwork(targetVRF, router.VRF, selected)
+		if matches {
+			template.routerNetworks[i] = network
+		}
+		if !matches && !(hasEVPN && router.VRF == "") {
+			continue
+		}
+		peers, err := validateRouterPeers(source, router.Neighbors)
+		if err != nil {
+			if template.routerErrors == nil {
+				template.routerErrors = map[int]error{}
+			}
+			template.routerErrors[i] = err
+			continue
+		}
+		template.peers[i] = peers
+		if hasEVPN && router.VRF == "" && template.globalRouter == nil {
+			template.globalRouter = router
+			template.globalPeers = peers
+		}
+	}
+	return template
+}
+
+func validateRouterPeers(source *frrtypes.FRRConfiguration, neighbors []frrtypes.Neighbor) ([]frrNeighbor, error) {
+	peers := make([]frrNeighbor, 0, len(neighbors))
+	for _, neighbor := range neighbors {
+		if neighborKey(neighbor) == "" {
+			return nil, fmt.Errorf("%w: neighbor with neither address nor interface on FRRConfiguration %s/%s",
+				errConfig, source.Namespace, source.Name)
+		}
+		peer, err := newFRRNeighbor(neighbor)
+		if err != nil {
+			return nil, fmt.Errorf("%w: invalid neighbor on FRRConfiguration %s/%s: %w",
+				errUnsafeFRRInput, source.Namespace, source.Name, err)
+		}
+		// Dual-stack sessions can choose the masquerade IPv6 next hop
+		// over an IPv4 session. Require address-family-specific sessions.
+		if neighbor.DualStackAddressFamily {
+			return nil, fmt.Errorf("%w: DualStackAddressFamily==true not supported, seen on FRRConfiguration %s/%s neighbor %s",
+				errConfig, source.Namespace, source.Name, neighbor.Address)
+		}
+		peers = append(peers, peer)
+	}
+	return peers, nil
+}
+
+// In auto mode, blue's bad peer only affects nodes that use blue's router.
+// An EVPN underlay router is shared even when the RA only selects tenants.
+func (template *frrTemplate) validationError(targetVRF string, networks []string) error {
+	if len(template.routerErrors) == 0 {
+		return nil
+	}
+	for i, router := range template.source.Spec.BGP.Routers {
+		err := template.routerErrors[i]
+		if err == nil {
+			continue
+		}
+		if targetVRF != "auto" || router.VRF == "" || slices.Contains(networks, template.routerNetworks[i]) {
+			return err
+		}
+	}
+	return nil
+}
+
+func (template *frrTemplate) hasEVPNPeers() bool {
+	return template.globalRouter != nil && template.globalRouter.ASN > 0 && len(template.globalPeers) > 0
+}
+
+func (template *frrTemplate) resolveEVPNRouters(selected *selectedNetworks, frrRouterVRFs sets.Set[string]) {
+	ipVRFNetworks := sets.New[string]()
+	for _, cfg := range selected.ipVRFConfigs {
+		ipVRFNetworks.Insert(cfg.networkName)
+		if frrRouterVRFs.Has(cfg.vrfName) {
+			// An explicit router in any source prevents global ASN fallback.
+			for i, router := range template.source.Spec.BGP.Routers {
+				if router.VRF == cfg.vrfName && template.routerErrors[i] == nil {
+					template.ipVRFRouters = append(template.ipVRFRouters, templateIPVRF{config: cfg, asn: router.ASN})
+					break
+				}
+			}
+		} else if template.globalRouter != nil && template.globalRouter.ASN > 0 {
+			template.ipVRFRouters = append(template.ipVRFRouters, templateIPVRF{config: cfg, asn: template.globalRouter.ASN, inherited: true})
+		}
+	}
+	if template.hasEVPNPeers() {
+		for _, cfg := range selected.macVRFConfigs {
+			if !ipVRFNetworks.Has(cfg.networkName) {
+				template.macVRFNetworks = append(template.macVRFNetworks, cfg.networkName)
+			}
+		}
+	}
+}
+
+// Select applicable templates before looking up pod subnets. A node outside
+// the peering selectors can have no subnet yet and still need no configuration.
+func selectNodeTemplates(ra *ratypes.RouteAdvertisements, templates []*frrTemplate, selected *selectedNetworks, networks []string) ([]*frrTemplate, []error) {
+	var valid []*frrTemplate
+	var errs []error
+	for _, template := range templates {
+		source := template.source
+		if err := template.validationError(ra.Spec.TargetVRF, networks); err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		// EVPN may use a global router in one template and an IP-VRF in another.
+		matched := template.hasEVPNPeers() ||
+			slices.ContainsFunc(template.ipVRFRouters, func(r templateIPVRF) bool {
+				return r.inherited && slices.Contains(networks, r.config.networkName)
+			})
+		for _, network := range template.routerNetworks {
+			if ra.Spec.TargetVRF != "auto" || slices.Contains(networks, network) {
+				matched = true
+				break
+			}
+		}
+		if matched {
+			valid = append(valid, template)
+		} else if ra.Spec.TargetVRF != "auto" || !frrConfigOnlyMatchesInactiveNetworks(source, selected, networks) {
+			errs = append(errs, fmt.Errorf("%w: FRRConfiguration %s/%s has no VRF matching the RouteAdvertisements target VRF or any selected network",
+				errConfig, source.Namespace, source.Name))
+		}
+	}
+	return valid, errs
 }
 
 // frrConfigOnlyMatchesInactiveNetworks helps decide whether an
@@ -1263,18 +1555,39 @@ func frrConfigOnlyMatchesInactiveNetworks(frrConfig *frrtypes.FRRConfiguration, 
 	return referencesSelected
 }
 
+// matchingRouterNetwork selects routers independently of node readiness so
+// validation and generation agree even before node prefixes are available.
+func matchingRouterNetwork(targetVRF, routerVRF string, selected *selectedNetworks) (string, bool) {
+	if targetVRF == "auto" {
+		if routerVRF == "" {
+			return types.DefaultNetworkName, slices.Contains(selected.networks, types.DefaultNetworkName)
+		}
+		network, found := selected.networkVRFs[routerVRF]
+		return network, found
+	}
+	if targetVRF != routerVRF {
+		return "", false
+	}
+	if targetVRF == "" {
+		return types.DefaultNetworkName, true
+	}
+	return selected.networkVRFs[targetVRF], true
+}
+
 // generateFRRConfiguration generates a FRRConfiguration from a source for a
-// specific node. Also fills matchedNetworks with the networks that have a VRF
-// that matched any router VRF of the FRRConfiguration.
+// specific node using the already validated template selection.
 func (c *Controller) generateFRRConfiguration(
 	ra *ratypes.RouteAdvertisements,
-	source *frrtypes.FRRConfiguration,
-	nodeName string,
+	template *frrTemplate,
+	node *corev1.Node,
 	selectedNetworks *selectedNetworks,
-	matchedNetworks sets.Set[string],
-	frrRouterVRFs sets.Set[string],
+	covered sets.Set[string],
 ) (*frrtypes.FRRConfiguration, error) {
+	// The source lives in the informer cache and is reused for every node, so copy it before appending.
+	source := template.source.DeepCopy()
+	nodeName := node.Name
 	var routers []frrtypes.Router
+	var renderedNetworks []string
 
 	// track neighbors and ASNs to generate raw config later on
 	vrfNeighbors := map[string][]frrNeighbor{}
@@ -1283,62 +1596,17 @@ func (c *Controller) generateFRRConfiguration(
 	// go over the source routers
 	for i, router := range source.Spec.BGP.Routers {
 
-		targetVRF := ra.Spec.TargetVRF
-		var matchedVRF, matchedNetwork string
-		var advertisePrefixes []string
-
-		// We will use the router if:
-		// - the router VRF matches the target VRF
-		// - if the target VRF is 'auto', the router VRF is that of a selected network
-		// Prepare each scenario with a switch statement and check after that
-		switch {
-		case targetVRF == "auto" && router.VRF == "":
-			// match on default network/VRF, advertise node prefixes
-			matchedVRF = ""
-			matchedNetwork = types.DefaultNetworkName
-			advertisePrefixes = selectedNetworks.hostNetworkSubnets[matchedNetwork]
-		case targetVRF == "auto":
-			// match router.VRF to network.VRF, advertise node prefixes
-			matchedVRF = router.VRF
-			var ok bool
-			matchedNetwork, ok = selectedNetworks.networkVRFs[matchedVRF]
-			if !ok {
-				// router.VRF is written to the FRR config as the VRF name, so
-				// only the validated VRF name of a selected network may be used
-				continue
-			}
-			advertisePrefixes = selectedNetworks.hostNetworkSubnets[matchedNetwork]
-		case targetVRF == "":
-			// match on default network/VRF, advertise node prefixes
-			matchedVRF = ""
-			matchedNetwork = types.DefaultNetworkName
-			advertisePrefixes = selectedNetworks.hostSubnets
-		default:
-			// match router.VRF to network.VRF, advertise node prefixes
-			matchedVRF = targetVRF
-			matchedNetwork = selectedNetworks.networkVRFs[matchedVRF]
-			advertisePrefixes = selectedNetworks.hostSubnets
-		}
-		// a router is only used when router.VRF equals matchedVRF: the empty
-		// default VRF, the validated target VRF, or the validated VRF name of
-		// a selected network
-		if matchedVRF != router.VRF || len(advertisePrefixes) == 0 {
-			// either this router VRF does not match the target VRF or we don't
-			// have prefixes for it (which might be due to this RA not selecting
-			// this network, but not just)
+		matchedNetwork, matches := template.routerNetworks[i]
+		if !matches {
 			continue
 		}
-		matchedNetworks.Insert(matchedNetwork)
-
-		// Collect pod subnets from all selected no-overlay networks
-		var allNoOverlayPodSubnets []string
-		for _, networkName := range selectedNetworks.networks {
-			if selectedNetworks.networkTransport[networkName] == types.NetworkTransportNoOverlay {
-				// Get the pod subnets for this network (the network subnets, not host subnets)
-				if podSubnets := selectedNetworks.networkSubnets[networkName]; len(podSubnets) > 0 {
-					allNoOverlayPodSubnets = append(allNoOverlayPodSubnets, podSubnets...)
-				}
-			}
+		matchedVRF := router.VRF
+		advertisePrefixes := selectedNetworks.hostSubnets
+		if ra.Spec.TargetVRF == "auto" {
+			advertisePrefixes = selectedNetworks.hostNetworkSubnets[matchedNetwork]
+		}
+		if len(advertisePrefixes) == 0 {
+			continue
 		}
 
 		// if this router's VRF matches the target VRF, copy it and set the
@@ -1346,10 +1614,6 @@ func (c *Controller) generateFRRConfiguration(
 		targetRouter := router
 		targetRouter.Prefixes = advertisePrefixes
 
-		node, err := c.nodeLister.Get(nodeName)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get node %s: %w", nodeName, err)
-		}
 		// The managed full-mesh template uses Kubernetes InternalIPs. Filter
 		// against that same source, not the primary interface annotation.
 		// User-provided templates own their peer lists, which may use other
@@ -1364,7 +1628,7 @@ func (c *Controller) generateFRRConfiguration(
 			}
 			if len(nodeAddrs) == 0 {
 				// errPending applies an empty desired set in the caller. Retry instead
-				// so one initializing node cannot withdraw existing advertisements.
+				// so one initializing node cannot remove existing advertisements.
 				return nil, fmt.Errorf("waiting for InternalIP addresses for node %q", nodeName)
 			}
 		}
@@ -1375,48 +1639,10 @@ func (c *Controller) generateFRRConfiguration(
 		}
 
 		targetRouter.Neighbors = make([]frrtypes.Neighbor, 0, len(source.Spec.BGP.Routers[i].Neighbors))
-		for _, neighbor := range source.Spec.BGP.Routers[i].Neighbors {
-			// Validate the neighbor identifier upfront, before any filtering
-			// might skip the neighbor, so that an invalid neighbor is
-			// consistently reported as a configuration error
-			key := neighborKey(neighbor)
-			if key == "" {
-				return nil, fmt.Errorf("%w: neighbor with neither address nor interface on FRRConfiguration %s/%s",
-					errConfig,
-					source.Namespace,
-					source.Name,
-				)
-			}
-			peer, err := newFRRNeighbor(neighbor)
-			if err != nil {
-				return nil, fmt.Errorf("%w: invalid neighbor on FRRConfiguration %s/%s: %w",
-					errUnsafeFRRInput,
-					source.Namespace,
-					source.Name,
-					err,
-				)
-			}
-
-			// Skip neighbors that are the node itself
+		for j, neighbor := range source.Spec.BGP.Routers[i].Neighbors {
+			peer := template.peers[i][j]
 			if slices.ContainsFunc(nodeAddrs, peer.is) {
 				continue
-			}
-
-			// If the dual-stack address family is enabled then a BGP session
-			// carries prefixes of both IPv4 and IPv6 families. Our problem is
-			// that with an IPv4 session, FRR can incorrectly pick the
-			// masquerade IPv6 address (instead of the real address) as next
-			// hop for IPv6 prefixes and that won't work. Note that with a
-			// dedicated IPv6 session that can't happen since FRR will use the
-			// same address that was used to establish the session. Enforce
-			// address-family-specific sessions for now.
-			if neighbor.DualStackAddressFamily {
-				return nil, fmt.Errorf("%w: DualStackAddressFamily==true not supported, seen on FRRConfiguration %s/%s neighbor %s",
-					errConfig,
-					source.Namespace,
-					source.Name,
-					neighbor.Address,
-				)
 			}
 
 			// FRR establishes an unnumbered session over an IPv4 address
@@ -1453,12 +1679,12 @@ func (c *Controller) generateFRRConfiguration(
 
 			// For no-overlay networks, add routes to pod subnets to the accepted routes list
 			// frr-k8s will merge the prefixes from both the generated and the base FRRConfiguration
-			if len(allNoOverlayPodSubnets) > 0 {
+			if len(selectedNetworks.noOverlayPodSubnets) > 0 {
 				// Filter pod subnets by IP family to match the neighbor;
 				// unnumbered neighbors carry both families
-				filteredPodSubnets := allNoOverlayPodSubnets
+				filteredPodSubnets := selectedNetworks.noOverlayPodSubnets
 				if !isUnnumbered {
-					filteredPodSubnets = util.MatchAllIPNetsStringFamily(isIPV6, allNoOverlayPodSubnets)
+					filteredPodSubnets = util.MatchAllIPNetsStringFamily(isIPV6, filteredPodSubnets)
 				}
 				if len(filteredPodSubnets) > 0 {
 					neighbor.ToReceive = frrtypes.Receive{
@@ -1492,7 +1718,8 @@ func (c *Controller) generateFRRConfiguration(
 		targetRouterIndex := len(routers) - 1
 
 		// VRFs are isolated in "auto" so no need to handle imports
-		if targetVRF == "auto" {
+		if ra.Spec.TargetVRF == "auto" {
+			renderedNetworks = append(renderedNetworks, matchedNetwork)
 			continue
 		}
 
@@ -1529,82 +1756,24 @@ func (c *Controller) generateFRRConfiguration(
 		}
 	}
 
-	hasEVPN := len(selectedNetworks.macVRFConfigs) > 0 || len(selectedNetworks.ipVRFConfigs) > 0
-	if hasEVPN && vrfASNs[""] == 0 {
-		// Look for global router in the source FRRConfiguration, not in the filtered routers
-		for _, router := range source.Spec.BGP.Routers {
-			if router.VRF == "" { // default VRF
-				vrfASNs[""] = router.ASN
-				vrfNeighbors[""] = make([]frrNeighbor, 0, len(router.Neighbors))
-				for _, neighbor := range router.Neighbors {
-					key := neighborKey(neighbor)
-					if key == "" {
-						return nil, fmt.Errorf("%w: neighbor with neither address nor interface on FRRConfiguration %s/%s",
-							errConfig,
-							source.Namespace,
-							source.Name,
-						)
-					}
-					peer, err := newFRRNeighbor(neighbor)
-					if err != nil {
-						return nil, fmt.Errorf("%w: invalid neighbor on FRRConfiguration %s/%s: %w",
-							errUnsafeFRRInput,
-							source.Namespace,
-							source.Name,
-							err,
-						)
-					}
-					vrfNeighbors[""] = append(vrfNeighbors[""], peer)
-				}
-				break
-			}
-		}
+	if template.globalRouter != nil && vrfASNs[""] == 0 {
+		vrfASNs[""] = template.globalRouter.ASN
+		vrfNeighbors[""] = template.globalPeers
 	}
 
-	// For IP-VRF: Find or create routers for each EVPN network's VRF.
-	// IP-VRF routers don't need neighbors for EVPN (they use the global router's neighbors).
-	ipVRFNetworks := sets.New[string]()
-	for _, cfg := range selectedNetworks.ipVRFConfigs {
-		ipVRFNetworks.Insert(cfg.networkName)
-		if frrRouterVRFs.Has(cfg.vrfName) {
-			// VRF router exists somewhere - check if it's in the current source
-			for _, router := range source.Spec.BGP.Routers {
-				if router.VRF == cfg.vrfName {
-					vrfASNs[cfg.vrfName] = router.ASN
-					if !slices.ContainsFunc(routers, func(r frrtypes.Router) bool { return r.VRF == cfg.vrfName }) {
-						routers = append(routers, frrtypes.Router{
-							ASN:      router.ASN,
-							VRF:      cfg.vrfName,
-							Prefixes: selectedNetworks.hostNetworkSubnets[cfg.networkName],
-						})
-					}
-					break
-				}
-			}
-			// If not in current source, another source will handle it
-		} else if vrfASNs[""] > 0 {
-			// VRF router doesn't exist anywhere - create with global ASN
-			klog.Infof("Creating router for EVPN network %q VRF %q with ASN=%d, prefixes=%v",
-				cfg.networkName, cfg.vrfName, vrfASNs[""], selectedNetworks.hostNetworkSubnets[cfg.networkName])
-			matchedNetworks.Insert(cfg.networkName)
-			vrfASNs[cfg.vrfName] = vrfASNs[""]
+	// IP-VRF routers either use an explicit source router or inherit the
+	// default router's ASN, as resolved during template validation.
+	for _, planned := range template.ipVRFRouters {
+		cfg := planned.config
+		if covered != nil && planned.asn != 0 && len(selectedNetworks.hostNetworkSubnets[cfg.networkName]) > 0 {
+			renderedNetworks = append(renderedNetworks, cfg.networkName)
+		}
+		vrfASNs[cfg.vrfName] = planned.asn
+		if planned.inherited || !slices.ContainsFunc(routers, func(r frrtypes.Router) bool { return r.VRF == cfg.vrfName }) {
 			routers = append(routers, frrtypes.Router{
-				ASN:      vrfASNs[""],
-				VRF:      cfg.vrfName,
+				ASN: planned.asn, VRF: cfg.vrfName,
 				Prefixes: selectedNetworks.hostNetworkSubnets[cfg.networkName],
 			})
-		}
-	}
-
-	// MAC-VRF only EVPN networks with targetVRF == "auto" are handled
-	// by the global router's EVPN raw config (advertise-all-vni) rather
-	// than by a VRF-specific router. Mark them as matched when a global
-	// router with neighbors is present.
-	if ra.Spec.TargetVRF == "auto" && vrfASNs[""] > 0 && len(vrfNeighbors[""]) > 0 {
-		for _, cfg := range selectedNetworks.macVRFConfigs {
-			if !ipVRFNetworks.Has(cfg.networkName) {
-				matchedNetworks.Insert(cfg.networkName)
-			}
 		}
 	}
 
@@ -1665,14 +1834,6 @@ func (c *Controller) generateFRRConfiguration(
 				vtepRouter.Prefixes = vtepIPs
 				vtepRouter.Neighbors = nil // will rebuild below
 				for _, neighbor := range router.Neighbors {
-					if neighbor.DualStackAddressFamily {
-						return nil, fmt.Errorf("%w: DualStackAddressFamily==true not supported, seen on FRRConfiguration %s/%s neighbor %s",
-							errConfig,
-							source.Namespace,
-							source.Name,
-							neighbor.Address,
-						)
-					}
 					// unnumbered neighbors carry both families
 					isUnnumbered := isUnnumberedNeighbor(neighbor)
 					isIPV6 := utilnet.IsIPv6String(neighbor.Address)
@@ -1716,6 +1877,13 @@ func (c *Controller) generateFRRConfiguration(
 		return nil, nil
 	}
 
+	// FRR matches labels. Even a short node name cannot select a node whose
+	// hostname label is missing.
+	hostname := node.Labels[corev1.LabelHostname]
+	if hostname == "" {
+		return nil, fmt.Errorf("%w: waiting for %s label on node %q", errNodeNotReady, corev1.LabelHostname, nodeName)
+	}
+
 	new := &frrtypes.FRRConfiguration{}
 	new.GenerateName = generateName
 	new.Namespace = source.Namespace
@@ -1723,11 +1891,9 @@ func (c *Controller) generateFRRConfiguration(
 	// existing set of FRRConfigurations that need to be reconciled for a given
 	// RA
 	new.Labels = map[string]string{
-		types.OvnRouteAdvertisementsKey: ra.Name,
+		types.OvnRouteAdvertisementsKey:     ra.Name,
+		types.OvnRouteAdvertisementsNodeKey: util.RouteAdvertisementsNodeLabel(nodeName),
 	}
-	// annotate each generated FRRConfiguration with a unique key
-	// (ra/source/node) which is used in the reconciliation to know whether an
-	// existing FRRConfiguration should be deleted or not.
 	new.Annotations = map[string]string{
 		types.OvnRouteAdvertisementsKey: fmt.Sprintf("%s/%s/%s", ra.Name, source.Name, nodeName),
 		// every value written below was validated when read
@@ -1737,7 +1903,7 @@ func (c *Controller) generateFRRConfiguration(
 	new.Spec.BGP.Routers = routers
 	new.Spec.NodeSelector = metav1.LabelSelector{
 		MatchLabels: map[string]string{
-			"kubernetes.io/hostname": nodeName,
+			corev1.LabelHostname: hostname,
 		},
 	}
 	if rawConfig != "" {
@@ -1747,6 +1913,13 @@ func (c *Controller) generateFRRConfiguration(
 		}
 	}
 
+	// A matching VRF can lose all its peers during rendering. Count only
+	// configurations we can publish. MAC-only EVPN uses the global peers
+	// and has no per-network unicast router to count.
+	if covered != nil {
+		covered.Insert(renderedNetworks...)
+		covered.Insert(template.macVRFNetworks...)
+	}
 	return new, nil
 }
 
@@ -1760,7 +1933,7 @@ func getDPUHostGatewayNextHops(node *corev1.Node) (map[bool]string, error) {
 				errPending, node.Name, err)
 		}
 		return nil, fmt.Errorf("%w: failed to parse chassis ID annotation for DPU host node %q: %w",
-			errConfig, node.Name, err)
+			errNodeNotReady, node.Name, err)
 	}
 
 	gatewayConfig, err := util.ParseNodeL3GatewayAnnotation(node)
@@ -1770,7 +1943,7 @@ func getDPUHostGatewayNextHops(node *corev1.Node) (map[bool]string, error) {
 				errPending, node.Name, err)
 		}
 		return nil, fmt.Errorf("%w: failed to parse L3 gateway annotation for DPU host node %q: %w",
-			errConfig, node.Name, err)
+			errNodeNotReady, node.Name, err)
 	}
 	nextHops := map[bool]string{}
 	for _, ipNet := range gatewayConfig.IPAddresses {
@@ -1780,7 +1953,7 @@ func getDPUHostGatewayNextHops(node *corev1.Node) (map[bool]string, error) {
 		nextHops[ipNet.IP.To4() == nil] = ipNet.IP.String()
 	}
 	if len(nextHops) == 0 {
-		return nil, fmt.Errorf("%w: no shared gateway IP addresses found for DPU host node %q", errConfig, node.Name)
+		return nil, fmt.Errorf("%w: no shared gateway IP addresses found for DPU host node %q", errNodeNotReady, node.Name)
 	}
 	return nextHops, nil
 }
@@ -1798,13 +1971,17 @@ func (c *Controller) getDPUHostGatewayNextHops(
 			return nil, nil
 		}
 		return nil, fmt.Errorf("%w: failed to parse primary DPU host address annotation for node %q: %w",
-			errConfig, node.Name, err)
+			errNodeNotReady, node.Name, err)
 	}
 
 	uplinkName := selectedNetworks.networkUplinks[networkName]
 	if uplinkName == "" || c.uplinkStateLister == nil {
 		return getDPUHostGatewayNextHops(node)
 	}
+	// This network uses an explicit uplink, so an unresolved UplinkState must
+	// not fall back to the primary gateway's address: that would generate a
+	// next hop on the wrong uplink. Treat it as a node readiness failure;
+	// UplinkState status changes requeue the RA when resolution completes.
 	stateName := uplinkutil.StateName(uplinkName, node.Name)
 	state, err := uplinkutil.GetState(c.uplinkStateLister, uplinkName, node.Name)
 	if err != nil {
@@ -1813,7 +1990,7 @@ func (c *Controller) getDPUHostGatewayNextHops(
 				errPending, stateName, node.Name)
 		}
 		return nil, fmt.Errorf("%w: failed to get UplinkState %q for DPU host node %q: %w",
-			errConfig, stateName, node.Name, err)
+			errNodeNotReady, stateName, node.Name, err)
 	}
 	if !meta.IsStatusConditionTrue(state.Status.Conditions, uplinkv1alpha1.UplinkStateConditionResolved) {
 		return nil, fmt.Errorf("%w: waiting for UplinkState %q to become resolved for DPU host node %q",
@@ -1825,13 +2002,13 @@ func (c *Controller) getDPUHostGatewayNextHops(
 		ip, _, err := net.ParseCIDR(string(ipCIDR))
 		if err != nil {
 			return nil, fmt.Errorf("%w: failed to parse UplinkState %q IP address %q: %w",
-				errConfig, stateName, ipCIDR, err)
+				errNodeNotReady, stateName, ipCIDR, err)
 		}
 		nextHops[ip.To4() == nil] = ip.String()
 	}
 	if len(nextHops) == 0 {
 		return nil, fmt.Errorf("%w: no IP addresses found in UplinkState %q for DPU host node %q",
-			errConfig, stateName, node.Name)
+			errNodeNotReady, stateName, node.Name)
 	}
 	return nextHops, nil
 }
@@ -1852,109 +2029,185 @@ func vtepCIDRPrefixSelectors(cidrs []string) []frrtypes.PrefixSelector {
 	return selectors
 }
 
+// A reconcile only runs once the informer has delivered this RA's own writes,
+// so the cache is current with respect to them.
+func (c *Controller) listExistingFRRConfigurations(ra string) ([]*frrtypes.FRRConfiguration, error) {
+	configs, err := c.frrLister.List(labels.Set{types.OvnRouteAdvertisementsKey: ra}.AsSelector())
+	if err != nil {
+		return nil, fmt.Errorf("failed to list FRRConfigurations for RouteAdvertisements %q: %w", ra, err)
+	}
+	// The label alone does not make an object one we generated.
+	return slices.DeleteFunc(configs, func(cfg *frrtypes.FRRConfiguration) bool {
+		return cfg.Annotations[types.OvnRouteAdvertisementsKey] == ""
+	}), nil
+}
+
 // deleteIncompleteVTEPConfigurations removes rejected generated configurations
 // while retaining other nodes' validated configurations on incomplete generation.
-func (c *Controller) deleteIncompleteVTEPConfigurations(ctx context.Context, name string, invalidNodes sets.Set[string], unsafeInput bool) (bool, int, error) {
-	existing, err := c.frrLister.List(labels.SelectorFromSet(labels.Set{types.OvnRouteAdvertisementsKey: name}))
+func (c *Controller) deleteIncompleteVTEPConfigurations(ctx context.Context, name string, invalidNodes sets.Set[string]) (bool, error) {
+	existing, err := c.listExistingFRRConfigurations(name)
 	if err != nil {
-		return false, 0, fmt.Errorf("failed listing incomplete VTEP configurations for RouteAdvertisements %q: %w", name, err)
+		return false, err
 	}
 	var hadUpdates bool
 	var errs []error
-	remaining := 0
+	var remaining []*frrtypes.FRRConfiguration
 	for _, config := range existing {
-		if config.Annotations[types.OvnRouteAdvertisementsKey] == "" {
-			continue
+		key := strings.Split(config.Annotations[types.OvnRouteAdvertisementsKey], "/")
+		nodeName := ""
+		if len(key) == 3 {
+			nodeName = key[2]
 		}
-		if !invalidNodes.Has(config.Spec.NodeSelector.MatchLabels["kubernetes.io/hostname"]) &&
-			(!unsafeInput || config.Annotations[types.OvnRouteAdvertisementsValidatedKey] == "true") {
-			remaining++
+		if !invalidNodes.Has(nodeName) {
+			remaining = append(remaining, config)
 			continue
 		}
 		err = c.frrClient.ApiV1beta1().FRRConfigurations(config.Namespace).Delete(ctx, config.Name, metav1.DeleteOptions{})
 		if err != nil && !apierrors.IsNotFound(err) {
 			errs = append(errs, fmt.Errorf("failed withdrawing FRRConfiguration %s/%s: %w", config.Namespace, config.Name, err))
-			remaining++
 			continue
 		}
+		c.pendingFRR.deleted(name, config)
 		hadUpdates = true
 	}
-	return hadUpdates, remaining, errors.Join(errs...)
+	c.recordFRRConfigurationMetrics(name, remaining, len(errs) > 0)
+	return hadUpdates, errors.Join(errs...)
 }
 
-// deleteUnvalidatedFRRConfigurations deletes the FRRConfigurations generated
-// for a RouteAdvertisements that don't carry the
-// OvnRouteAdvertisementsValidatedKey annotation. Returns whether any was
-// deleted and how many generated FRRConfigurations remain; a failed deletion
-// doesn't stop the others and is reported in the joined error.
-func (c *Controller) deleteUnvalidatedFRRConfigurations(ctx context.Context, ra string) (deleted bool, remaining int, err error) {
-	selector, err := metav1.LabelSelectorAsSelector(&metav1.LabelSelector{
-		MatchLabels: map[string]string{types.OvnRouteAdvertisementsKey: ra},
-	})
-	if err != nil {
-		return false, 0, err
+// A node can keep advertising pod subnets after an EgressIP moves away.
+// Remove the moved addresses from its existing objects before allowing any
+// new owner to publish. Starting with the old spec also handles two nodes
+// swapping addresses: neither withdrawal can introduce the incoming address.
+func (c *Controller) withdrawMovedEgressIPs(ctx context.Context, configs []*frrtypes.FRRConfiguration, node string, owners map[netip.Prefix]string) (bool, error) {
+	moved := func(cidr string) bool {
+		prefix, err := netip.ParsePrefix(cidr)
+		owner, assigned := owners[prefix]
+		return err == nil && assigned && owner != node
 	}
-	frrConfigs, err := c.frrLister.List(selector)
-	if err != nil {
-		return false, 0, err
-	}
+	var changed bool
 	var errs []error
-	for _, frrConfig := range frrConfigs {
-		if frrConfig.Annotations[types.OvnRouteAdvertisementsKey] == "" {
+	for i, cfg := range configs {
+		if !slices.ContainsFunc(cfg.Spec.BGP.Routers, func(r frrtypes.Router) bool {
+			return slices.ContainsFunc(r.Prefixes, moved)
+		}) {
 			continue
 		}
-		if frrConfig.Annotations[types.OvnRouteAdvertisementsValidatedKey] == "true" {
-			remaining++
+		withdrawal := cfg.DeepCopy()
+		for j := range withdrawal.Spec.BGP.Routers {
+			router := &withdrawal.Spec.BGP.Routers[j]
+			router.Prefixes = slices.DeleteFunc(router.Prefixes, moved)
+			for k := range router.Neighbors {
+				allowed := &router.Neighbors[k].ToAdvertise.Allowed
+				allowed.Prefixes = slices.DeleteFunc(allowed.Prefixes, moved)
+			}
+		}
+		updated, err := c.frrClient.ApiV1beta1().FRRConfigurations(cfg.Namespace).Update(ctx, withdrawal, metav1.UpdateOptions{FieldManager: fieldManager})
+		if err != nil {
+			errs = append(errs, fmt.Errorf("failed withdrawing moved EgressIPs from FRRConfiguration %s/%s: %w", cfg.Namespace, cfg.Name, err))
 			continue
 		}
-		err := c.frrClient.ApiV1beta1().FRRConfigurations(frrConfig.Namespace).Delete(ctx, frrConfig.Name, metav1.DeleteOptions{})
-		if err != nil && !apierrors.IsNotFound(err) {
-			errs = append(errs, fmt.Errorf("failed deleting FRRConfiguration %s/%s: %w", frrConfig.Namespace, frrConfig.Name, err))
-			continue
-		}
-		deleted = true
+		configs[i] = updated
+		c.pendingFRR.written(cfg.Labels[types.OvnRouteAdvertisementsKey], updated)
+		metrics.RecordRouteAdvertisementFRRConfigurationProcess(cfg.Labels[types.OvnRouteAdvertisementsKey], frrConfigOpUpdate)
+		changed = true
 	}
-	return deleted, remaining, errors.Join(errs...)
+	return changed, errors.Join(errs...)
 }
 
-// updateFRRConfigurations updates the FRRConfigurations that apply for a
-// RouteAdvertisements. It fetches existing FRRConfigurations by label and
-// indexes them by the annotated key. Then compares this state with desired
-// state and creates, updates or deletes the FRRConfigurations accordingly.
-func (c *Controller) updateFRRConfigurations(ctx context.Context, ra string, frrConfigurations []*frrtypes.FRRConfiguration) (bool, error) {
+// updateFRRConfigurations withdraws old objects for any missing desired key,
+// including failed templates on nodes where another template still works.
+// A failed withdrawal blocks replacements on that node. An EgressIP can move
+// between two healthy nodes right after the old owner's object was written.
+// The reconcile waits for that write to reach the cache, so its withdrawal
+// can block publication on the new owner.
+func (c *Controller) updateFRRConfigurations(ctx context.Context, ra string, result *frrGenerationResult) (bool, error) {
 	var hadUpdates bool
-
-	// fetch the currently existing FRRConfigurations for this
-	// RouteAdvertisements
-	selector, err := metav1.LabelSelectorAsSelector(&metav1.LabelSelector{
-		MatchLabels: map[string]string{types.OvnRouteAdvertisementsKey: ra},
-	})
+	frrConfigs, err := c.listExistingFRRConfigurations(ra)
 	if err != nil {
-		return hadUpdates, err
+		return false, err
 	}
-	frrConfigs, err := c.frrLister.List(selector)
-	if err != nil {
-		return hadUpdates, err
+	// Same-named templates can share an RA/template/node annotation. Each
+	// generated object inherits its template's namespace, so use both to match it.
+	keyFor := func(cfg *frrtypes.FRRConfiguration) cache.ObjectName {
+		return cache.NewObjectName(cfg.Namespace, cfg.Annotations[types.OvnRouteAdvertisementsKey])
 	}
-	// map them by our internal unique key
-	existing := make(map[string][]*frrtypes.FRRConfiguration, len(frrConfigs))
+	existing := make(map[cache.ObjectName][]*frrtypes.FRRConfiguration, len(frrConfigs))
 	for _, frrConfig := range frrConfigs {
-		key := frrConfig.Annotations[types.OvnRouteAdvertisementsKey]
-		if key == "" {
+		key := keyFor(frrConfig)
+		if key.Name == "" {
 			continue
 		}
 		existing[key] = append(existing[key], frrConfig)
 	}
 
+	// Delete obsolete configurations before publishing replacements, particularly
+	// when an EgressIP moves away from a node whose configuration cannot be generated.
+	// FRR applies these changes asynchronously; deletion does not confirm BGP
+	// route withdrawal.
+	desiredKeys := sets.New[cache.ObjectName]()
+	for _, cfg := range result.frrConfigs {
+		desiredKeys.Insert(keyFor(cfg))
+	}
+	var withdrawalErrors []error
+	generationErrors := len(result.nodeErrors)
+	defer func() {
+		writeFailed := len(withdrawalErrors) > 0 || len(result.nodeErrors) > generationErrors
+		c.recordFRRConfigurationMetrics(ra, result.frrConfigs, writeFailed)
+	}()
+	blockedNodes := sets.New[string]()
+	unknownNode := false
+	for key, configs := range existing {
+		if desiredKeys.Has(key) {
+			if len(result.egressIPOwners) > 0 {
+				node := key.Name[strings.LastIndexByte(key.Name, '/')+1:]
+				changed, err := c.withdrawMovedEgressIPs(ctx, configs, node, result.egressIPOwners)
+				hadUpdates = hadUpdates || changed
+				if err != nil {
+					withdrawalErrors = append(withdrawalErrors, err)
+				}
+			}
+			continue
+		}
+		for _, cfg := range configs {
+			if err := c.frrClient.ApiV1beta1().FRRConfigurations(cfg.Namespace).Delete(
+				ctx, cfg.Name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+				withdrawalErrors = append(withdrawalErrors, fmt.Errorf("failed to delete FRRConfiguration %s/%s for %s: %w", cfg.Namespace, cfg.Name, key.Name, err))
+				parts := strings.Split(key.Name, "/")
+				if len(parts) != 3 || parts[0] != ra || parts[1] == "" || parts[2] == "" {
+					unknownNode = true
+				} else {
+					blockedNodes.Insert(parts[2])
+				}
+				continue
+			}
+			c.pendingFRR.deleted(ra, cfg)
+			metrics.RecordRouteAdvertisementFRRConfigurationProcess(ra, frrConfigOpDelete)
+			hadUpdates = true
+		}
+		delete(existing, key)
+	}
+	// Pod-only writes on other nodes are independent of these withdrawals.
+	// EgressIP replacements must wait for the old owner; an unreadable node
+	// key also prevents us from establishing that the writes are independent.
+	if len(withdrawalErrors) > 0 && (len(result.egressIPOwners) > 0 || unknownNode) {
+		return hadUpdates, errors.Join(withdrawalErrors...)
+	}
 	// go through the FRRConfigurations that should exist for this
 	// RouteAdvertisements
-	for _, newFRRConfig := range frrConfigurations {
-		key := newFRRConfig.Annotations[types.OvnRouteAdvertisementsKey]
+	for _, newFRRConfig := range result.frrConfigs {
+		key := keyFor(newFRRConfig)
+		node := key.Name[strings.LastIndexByte(key.Name, '/')+1:]
+		if blockedNodes.Has(node) {
+			// FRR merges templates targeting one node. Keep that node's current
+			// set, including duplicates, until its obsolete template is removed.
+			delete(existing, key)
+			continue
+		}
 		oldFRRConfigs := existing[key]
 
 		if len(oldFRRConfigs) == 0 {
 			// does not exist, create
-			_, err := c.frrClient.ApiV1beta1().FRRConfigurations(newFRRConfig.Namespace).Create(
+			created, err := c.frrClient.ApiV1beta1().FRRConfigurations(newFRRConfig.Namespace).Create(
 				ctx,
 				newFRRConfig,
 				metav1.CreateOptions{
@@ -1962,8 +2215,11 @@ func (c *Controller) updateFRRConfigurations(ctx context.Context, ra string, frr
 				},
 			)
 			if err != nil {
-				return hadUpdates, err
+				result.nodeErrors = append(result.nodeErrors, fmt.Errorf("failed to create FRRConfiguration for %s: %w", key, err))
+				continue
 			}
+			c.pendingFRR.written(ra, created)
+			metrics.RecordRouteAdvertisementFRRConfigurationProcess(ra, frrConfigOpCreate)
 			hadUpdates = true
 			continue
 		}
@@ -1976,14 +2232,16 @@ func (c *Controller) updateFRRConfigurations(ctx context.Context, ra string, frr
 
 		// no changes needed so skip
 		if reflect.DeepEqual(newFRRConfig.Spec, oldFRRConfig.Spec) &&
-			oldFRRConfig.Annotations[types.OvnRouteAdvertisementsValidatedKey] == newFRRConfig.Annotations[types.OvnRouteAdvertisementsValidatedKey] {
+			oldFRRConfig.Annotations[types.OvnRouteAdvertisementsValidatedKey] == newFRRConfig.Annotations[types.OvnRouteAdvertisementsValidatedKey] &&
+			oldFRRConfig.Labels[types.OvnRouteAdvertisementsNodeKey] == newFRRConfig.Labels[types.OvnRouteAdvertisementsNodeKey] {
+			metrics.RecordRouteAdvertisementFRRConfigurationProcess(ra, frrConfigOpUnchanged)
 			continue
 		}
 
 		// otherwise update
 		newFRRConfig.Name = oldFRRConfig.Name
 		newFRRConfig.ResourceVersion = oldFRRConfig.ResourceVersion
-		_, err := c.frrClient.ApiV1beta1().FRRConfigurations(newFRRConfig.Namespace).Update(
+		updated, err := c.frrClient.ApiV1beta1().FRRConfigurations(newFRRConfig.Namespace).Update(
 			ctx,
 			newFRRConfig,
 			metav1.UpdateOptions{
@@ -1991,13 +2249,19 @@ func (c *Controller) updateFRRConfigurations(ctx context.Context, ra string, frr
 			},
 		)
 		if err != nil {
-			return hadUpdates, err
+			err = fmt.Errorf("failed to update FRRConfiguration for %s: %w", key, err)
+			result.nodeErrors = append(result.nodeErrors, err)
+			result.failedFRRUpdate = true
+			delete(existing, key) // Keep duplicates until an update succeeds.
+			continue
 		}
+		c.pendingFRR.written(ra, updated)
+		metrics.RecordRouteAdvertisementFRRConfigurationProcess(ra, frrConfigOpUpdate)
 		hadUpdates = true
 	}
 
-	// delete FRRConfigurations that should not exist
-	for _, obsoleteFRRConfigs := range existing {
+	// Remove duplicate objects for keys that were updated above.
+	for key, obsoleteFRRConfigs := range existing {
 		for _, obsoleteFRRConfig := range obsoleteFRRConfigs {
 			err := c.frrClient.ApiV1beta1().FRRConfigurations(obsoleteFRRConfig.Namespace).Delete(
 				ctx,
@@ -2005,110 +2269,211 @@ func (c *Controller) updateFRRConfigurations(ctx context.Context, ra string, frr
 				metav1.DeleteOptions{},
 			)
 			if err != nil && !apierrors.IsNotFound(err) {
-				return hadUpdates, err
+				withdrawalErrors = append(withdrawalErrors, fmt.Errorf("failed to delete duplicate FRRConfiguration %s/%s for %s: %w", obsoleteFRRConfig.Namespace, obsoleteFRRConfig.Name, key.Name, err))
+				continue
 			}
+			c.pendingFRR.deleted(ra, obsoleteFRRConfig)
+			metrics.RecordRouteAdvertisementFRRConfigurationProcess(ra, frrConfigOpDelete)
 			hadUpdates = true
 		}
 	}
 
-	return hadUpdates, nil
+	if len(withdrawalErrors) > 0 && len(result.egressIPOwners) == 0 {
+		return hadUpdates, &nodeGenerationError{errs: withdrawalErrors}
+	}
+	return hadUpdates, errors.Join(withdrawalErrors...)
 }
 
-// updateNADs updates the annotation of the NADs that apply for a
-// RouteAdvertisements. It iterates all the existing NADs updating the
-// annotation accordingly, adding or removing the RouteAdvertisements reference
-// as needed.
-func (c *Controller) updateNADs(ctx context.Context, ra string, nads []*nadtypes.NetworkAttachmentDefinition) (bool, error) {
-	var hadUpdates bool
+type nadUpdate struct {
+	nad         *nadtypes.NetworkAttachmentDefinition
+	annotations map[string]string
+	waitForFRR  bool
+}
+
+func intentDependsOnFRR(ra string, refs []string, intents map[string]util.RouteAdvertisementsIntent, next *util.RouteAdvertisementsIntent) bool {
+	old, known := intents[ra]
+	if !known {
+		// A legacy reference names the RA but omits its VRF. Its first
+		// intent could move an existing export to a different VRF.
+		return slices.Contains(refs, ra)
+	}
+	return next == nil || old.TargetVRF != next.TargetVRF || (old.EgressIP && !next.EgressIP)
+}
+
+// A network can have NADs in several namespaces. Advancing even one to a
+// newer generation can switch the entire network's VRF or clear its EgressIP
+// intent while FRR still has the old export. Independent networks can proceed.
+func (c *Controller) independentNADUpdates(ra string, intent *util.RouteAdvertisementsIntent, updates []nadUpdate) ([]nadUpdate, error) {
+	updates = slices.DeleteFunc(updates, func(u nadUpdate) bool { return u.waitForFRR })
+	pendingCUDNs := sets.New[string]()
+	for _, update := range updates {
+		if name := owningCUDN(update.nad); name != "" {
+			pendingCUDNs.Insert(name)
+		}
+	}
+	if intent == nil || len(pendingCUDNs) == 0 {
+		return updates, nil
+	}
+
+	// A sibling NAD has its own resource version, so the conditional patch
+	// does not cover it. The cache has this RA's last patch to it.
+	nads, err := c.nadLister.List(labels.Everything())
+	if err != nil {
+		return nil, fmt.Errorf("failed to list NADs before advancing intent for RouteAdvertisements %q: %w", ra, err)
+	}
+	held := sets.New[string]()
+	for _, nad := range nads {
+		name := owningCUDN(nad)
+		if !pendingCUDNs.Has(name) {
+			continue
+		}
+		refs, intents, err := parseNADAdvertisements(nad.Annotations)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read RouteAdvertisements references on NAD %s/%s: %w", nad.Namespace, nad.Name, err)
+		}
+		if intentDependsOnFRR(ra, refs, intents, intent) {
+			held.Insert(name)
+		}
+	}
+	return slices.DeleteFunc(updates, func(u nadUpdate) bool { return held.Has(owningCUDN(u.nad)) }), nil
+}
+
+func (c *Controller) getNADUpdates(ra string, intent *util.RouteAdvertisementsIntent, nads []*nadtypes.NetworkAttachmentDefinition) ([]nadUpdate, error) {
+	var updates []nadUpdate
 	selected := sets.New[string]()
 	for _, nad := range nads {
 		selected.Insert(nad.Namespace + "/" + nad.Name)
 	}
 
+	// An RA can be deleted right after its last NAD patch. The reconcile
+	// waited for that patch, so the cache cannot leave its intent behind.
 	nads, err := c.nadLister.List(labels.Everything())
 	if err != nil {
-		return hadUpdates, err
+		return nil, fmt.Errorf("failed to list NADs for RouteAdvertisements %q: %w", ra, err)
 	}
 
-	k := kube.KubeOVN{
-		NADClient: c.nadClient,
-	}
-
-	// go through all the NADs and update the annotation adding or removing the
-	// reference to this RouteAdvertisements as required
 	for _, nad := range nads {
-		var ras []string
-
-		if nad.Annotations[types.OvnRouteAdvertisementsKey] != "" {
-			err := json.Unmarshal([]byte(nad.Annotations[types.OvnRouteAdvertisementsKey]), &ras)
-			if err != nil {
-				return hadUpdates, err
-			}
+		ras, intents, err := parseNADAdvertisements(nad.Annotations)
+		if err != nil {
+			return updates, fmt.Errorf("failed to read RouteAdvertisements references on NAD %s/%s: %w", nad.Namespace, nad.Name, err)
 		}
-
 		raSet := sets.New(ras...)
 		nadName := nad.Namespace + "/" + nad.Name
+		next := intent
 		if selected.Has(nadName) {
 			raSet.Insert(ra)
 			selected.Delete(nadName)
 		} else {
 			raSet.Delete(ra)
+			next = nil
 		}
-
-		if len(ras) == raSet.Len() {
-			continue
+		waitForFRR := intentDependsOnFRR(ra, ras, intents, next)
+		oldIntent, hadIntent := intents[ra]
+		if next != nil {
+			intents[ra] = *next
+		} else {
+			delete(intents, ra)
 		}
+		newIntent, hasIntent := intents[ra]
 
-		nadRAjson, err := json.Marshal(raSet.UnsortedList())
-		if err != nil {
-			return hadUpdates, err
+		annotations := map[string]string{}
+		if len(ras) != raSet.Len() {
+			nadRAjson, err := json.Marshal(raSet.UnsortedList())
+			if err != nil {
+				return updates, err
+			}
+			annotations[types.OvnRouteAdvertisementsKey] = string(nadRAjson)
 		}
+		if hadIntent != hasIntent || oldIntent != newIntent {
+			intentJSON, err := json.Marshal(intents)
+			if err != nil {
+				return updates, err
+			}
+			annotations[types.OvnRouteAdvertisementsIntentKey] = string(intentJSON)
+		}
+		if len(annotations) > 0 {
+			updates = append(updates, nadUpdate{
+				nad:         nad,
+				annotations: annotations,
+				waitForFRR:  waitForFRR,
+			})
+		}
+	}
+	if selected.Len() != 0 {
+		return updates, fmt.Errorf("failed to annotate NADs that were not found %v", selected.UnsortedList())
+	}
+	return updates, nil
+}
 
-		err = k.SetAnnotationsOnNAD(
+func (c *Controller) applyNADUpdates(ctx context.Context, ra string, updates []nadUpdate) (bool, error) {
+	k := kube.KubeOVN{NADClient: c.nadClient}
+	for i, update := range updates {
+		// Two RAs can select the same NAD before the informer sees the first
+		// patch. Retry from a newer version to preserve the other RA's entry.
+		nad := update.nad
+		patched, err := k.SetAnnotationsOnNADAtVersion(
 			ctx,
 			nad.Namespace,
 			nad.Name,
-			map[string]string{
-				types.OvnRouteAdvertisementsKey: string(nadRAjson),
-			},
+			nad.ResourceVersion,
+			update.annotations,
 			fieldManager,
 		)
 		if err != nil {
-			return hadUpdates, fmt.Errorf("failed to annotate NAD %q: %w", nad.Name, err)
+			return i > 0, fmt.Errorf("failed to annotate NAD %q: %w", nad.Name, err)
 		}
-
-		hadUpdates = true
+		c.pendingNAD.written(ra, patched)
+		metrics.RecordRouteAdvertisementNADUpdate(ra)
 	}
-	if selected.Len() != 0 {
-		return hadUpdates, fmt.Errorf("failed to annotate NADs that were not found %v", selected.UnsortedList())
-	}
-
-	return hadUpdates, nil
+	return len(updates) > 0, nil
 }
 
-// updateRAStatus update the RouteAdvertisements 'Accepted' status according to
-// the error provided
-func (c *Controller) updateRAStatus(ctx context.Context, ra *ratypes.RouteAdvertisements, hadUpdates bool, err error) error {
+func parseNADAdvertisements(annotations map[string]string) ([]string, map[string]util.RouteAdvertisementsIntent, error) {
+	var refs []string
+	if raw := annotations[types.OvnRouteAdvertisementsKey]; raw != "" {
+		if err := json.Unmarshal([]byte(raw), &refs); err != nil {
+			return nil, nil, err
+		}
+	}
+	intents := map[string]util.RouteAdvertisementsIntent{}
+	if raw := annotations[types.OvnRouteAdvertisementsIntentKey]; raw != "" {
+		// A selected pod advertisement can replace malformed intent when it writes its entry.
+		if err := json.Unmarshal([]byte(raw), &intents); err != nil || intents == nil {
+			intents = map[string]util.RouteAdvertisementsIntent{}
+		}
+	}
+	return refs, intents, nil
+}
+
+// updateRAStatus reports input acceptance separately from programming failures.
+func (c *Controller) updateRAStatus(ctx context.Context, ra *ratypes.RouteAdvertisements, hadUpdates bool, result frrGenerationResult) error {
 	if ra == nil {
 		return nil
 	}
 
+	err := result.failureError()
+	partial := result.partialNodeFailure()
 	cstatus := metav1.ConditionTrue
-	if err != nil {
+	if err != nil && !partial {
 		cstatus = metav1.ConditionFalse
 	}
 
 	status := "Accepted"
 	reason := "Accepted"
 	msg := "ovn-kubernetes cluster-manager validated the resource and requested the necessary configuration changes"
-	if err != nil {
+	if partial {
+		msg = "ovn-kubernetes cluster-manager accepted the resource; some node configurations are incomplete (see Degraded)"
+	}
+	if err != nil && !partial {
 		status = fmt.Sprintf("Not Accepted: %v", err)
 		msg = err.Error()
 		switch {
-		case errors.Is(err, errPending):
-			reason = "ConfigurationPending"
+		case result.hasRetryableNodeError():
+			reason = "InternalError"
 		case errors.Is(err, errConfig):
 			reason = "ConfigurationError"
+		case errors.Is(err, errPending):
+			reason = "ConfigurationPending"
 		default:
 			reason = "InternalError"
 		}
@@ -2126,16 +2491,35 @@ func (c *Controller) updateRAStatus(ctx context.Context, ra *ratypes.RouteAdvert
 		Message:            msg,
 		ObservedGeneration: ra.Generation,
 	})
-	updateStatus := changed || hadUpdates
+	degradedStatus := metav1.ConditionFalse
+	degradedReason := "ConfigurationSucceeded"
+	degradedMessage := "All requested node configurations were applied"
+	if err != nil {
+		degradedStatus = metav1.ConditionTrue
+		degradedReason = "ReconciliationFailed"
+		degradedMessage = err.Error()
+		if partial {
+			degradedReason = "NodeConfigurationFailed"
+		}
+	}
+	degraded, degradedChanged := util.MergeStatusCondition(ra.Status.Conditions, metav1.Condition{
+		Type:               conditionTypeDegraded,
+		Status:             degradedStatus,
+		Reason:             degradedReason,
+		Message:            degradedMessage,
+		ObservedGeneration: ra.Generation,
+	})
+	updateStatus := changed || degradedChanged || hadUpdates
 	if !updateStatus {
 		// Record the metric from the existing API-confirmed condition so it is
 		// populated after controller restarts, where the informer fires synthetic
 		// creates for all RAs but the condition hasn't changed.
 		metrics.RecordRouteAdvertisementCondition(ra.Name, conditionTypeAccepted, cstatus)
+		metrics.RecordRouteAdvertisementCondition(ra.Name, conditionTypeDegraded, degradedStatus)
 		return nil
 	}
 
-	if changed && err != nil {
+	if (changed || degradedChanged) && err != nil {
 		// errConfig/errPending are not retried, so make them visible in the
 		// logs and not just in the status; log only when the condition changes
 		// to avoid repeating the same warning on every reconcile of a steady
@@ -2149,6 +2533,7 @@ func (c *Controller) updateRAStatus(ctx context.Context, ra *ratypes.RouteAdvert
 		raapply.RouteAdvertisements(ra.Name).WithStatus(
 			raapply.RouteAdvertisementsStatus().WithStatus(status).WithConditions(
 				util.ConditionToApply(condition),
+				util.ConditionToApply(degraded),
 			),
 		),
 		metav1.ApplyOptions{
@@ -2159,8 +2544,17 @@ func (c *Controller) updateRAStatus(ctx context.Context, ra *ratypes.RouteAdvert
 		return fmt.Errorf("failed to apply status for RouteAdvertisements %q: %w", ra.Name, err)
 	}
 	metrics.RecordRouteAdvertisementCondition(ra.Name, conditionTypeAccepted, cstatus)
+	metrics.RecordRouteAdvertisementCondition(ra.Name, conditionTypeDegraded, degradedStatus)
 
 	return nil
+}
+
+func owningCUDN(nad *nadtypes.NetworkAttachmentDefinition) string {
+	owner := metav1.GetControllerOfNoCopy(nad)
+	if owner != nil && owner.Kind == cudnController.Kind && owner.APIVersion == cudnController.GroupVersion().String() {
+		return owner.Name
+	}
+	return ""
 }
 
 func (c *Controller) getSelectedNADs(ctx context.Context, networkSelectors apitypes.NetworkSelectors) ([]*nadtypes.NetworkAttachmentDefinition, error) {
@@ -2178,20 +2572,16 @@ func (c *Controller) getSelectedNADs(ctx context.Context, networkSelectors apity
 		case apitypes.ClusterUserDefinedNetworks:
 			nadSelector, err := metav1.LabelSelectorAsSelector(&networkSelector.ClusterUserDefinedNetworkSelector.NetworkSelector)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("%w: invalid clusterUserDefinedNetworkSelector.networkSelector: %w", errConfig, err)
 			}
 			nads, err := c.nadLister.List(nadSelector)
 			if err != nil {
 				return nil, err
 			}
 			for _, nad := range nads {
-				// check this NAD is controlled by a CUDN
-				controller := metav1.GetControllerOfNoCopy(nad)
-				isCUDN := controller != nil && controller.Kind == cudnController.Kind && controller.APIVersion == cudnController.GroupVersion().String()
-				if !isCUDN {
-					continue
+				if owningCUDN(nad) != "" {
+					selected = append(selected, nad)
 				}
-				selected = append(selected, nad)
 			}
 		default:
 			return nil, fmt.Errorf("%w: unsupported network selection type %s", errConfig, networkSelector.NetworkSelectionType)
@@ -2272,14 +2662,22 @@ func isOwnUpdate(managedFields []metav1.ManagedFieldsEntry) bool {
 	return util.IsLastUpdatedByManager(fieldManager, managedFields)
 }
 
-// raNeedsUpdate propagates selection changes to other RAs sharing the underlay.
-// Status-only writes must not cause another reconciliation cycle.
 func (c *Controller) raNeedsUpdate(oldObj, newObj *ratypes.RouteAdvertisements) bool {
-	changed := raNeedsUpdate(oldObj, newObj)
-	if changed && util.IsEVPNEnabled() {
-		c.raController.ReconcileAll()
+	if raSelectionChanged(oldObj, newObj) {
+		if util.IsEVPNEnabled() {
+			c.raController.ReconcileAll()
+		}
+		return true
 	}
-	return changed
+	// Recovery can precede the watch event for Degraded=True. Once the
+	// cache sees the transition, recheck this RA. Changes to an error
+	// message alone follow the normal retry backoff.
+	for _, kind := range []string{conditionTypeAccepted, conditionTypeDegraded} {
+		if meta.IsStatusConditionTrue(oldObj.Status.Conditions, kind) != meta.IsStatusConditionTrue(newObj.Status.Conditions, kind) {
+			return true
+		}
+	}
+	return false
 }
 
 // onRADelete releases claims even when the deleted RA had no generated config.
@@ -2289,35 +2687,92 @@ func (c *Controller) onRADelete(_ *ratypes.RouteAdvertisements) {
 	}
 }
 
-func raNeedsUpdate(oldObj, newObj *ratypes.RouteAdvertisements) bool {
+func raSelectionChanged(oldObj, newObj *ratypes.RouteAdvertisements) bool {
 	return oldObj == nil || newObj == nil || oldObj.Generation != newObj.Generation
 }
 
-// frrConfigurationNeedsUpdate includes generated configuration changes because
-// other RAs use their prefixes as evidence of an established VTEP advertiser.
-func frrConfigurationNeedsUpdate(oldObj, newObj *frrtypes.FRRConfiguration) bool {
-	// Generated underlay prefixes are ownership evidence for other RAs. Their
-	// changes must reconcile consumers even when this controller wrote them.
+func (c *Controller) frrConfigurationNeedsUpdate(oldObj, newObj *frrtypes.FRRConfiguration) bool {
 	generated := (oldObj != nil && strings.HasPrefix(oldObj.Name, generateName)) ||
 		(newObj != nil && strings.HasPrefix(newObj.Name, generateName))
-	if newObj != nil && isOwnUpdate(newObj.ManagedFields) && !(util.IsEVPNEnabled() && generated) {
-		return false
+	// With EVPN, other RAs use generated prefixes to identify the VTEP owner.
+	sharedUnderlay := generated && util.IsEVPNEnabled()
+	if newObj != nil {
+		// Our own write coming back needs no reconcile, unless its RA was
+		// held back until the cache had it.
+		ra, held, own := c.pendingFRR.observed(newObj)
+		if held {
+			c.raController.Reconcile(ra)
+		}
+		if own && !sharedUnderlay {
+			return false
+		}
+	}
+	if newObj != nil && !sharedUnderlay {
+		own := isOwnUpdate(newObj.ManagedFields)
+		// The RA may have dropped a template or prefix while the informer
+		// still showed the spec from before this write.
+		ra := newObj.Labels[types.OvnRouteAdvertisementsKey]
+		if generated && ra != "" && (oldObj == nil || own && oldObj.Generation != newObj.Generation) {
+			c.raController.Reconcile(ra)
+			return false
+		}
+		if own {
+			return false
+		}
 	}
 	return oldObj == nil || newObj == nil || oldObj.Generation != newObj.Generation ||
 		!reflect.DeepEqual(oldObj.Labels, newObj.Labels) ||
 		oldObj.Annotations[types.OvnRouteAdvertisementsKey] != newObj.Annotations[types.OvnRouteAdvertisementsKey]
 }
 
-func nadNeedsUpdate(oldObj, newObj *nadtypes.NetworkAttachmentDefinition) bool {
-	// ignore if it updated by ourselves
-	if newObj != nil && isOwnUpdate(newObj.ManagedFields) {
+func (c *Controller) nadNeedsUpdate(oldObj, newObj *nadtypes.NetworkAttachmentDefinition) bool {
+	var patchOwner string
+	if newObj != nil {
+		ra, held, own := c.pendingNAD.observed(newObj)
+		if held {
+			c.raController.Reconcile(ra)
+		}
+		if own {
+			patchOwner = ra
+		}
+	}
+	if newObj != nil && (patchOwner != "" || isOwnUpdate(newObj.ManagedFields)) && (oldObj == nil || reflect.DeepEqual(oldObj.Labels, newObj.Labels)) {
+		var oldAnnotations map[string]string
+		if oldObj != nil {
+			oldAnnotations = oldObj.Annotations
+		}
+		if oldAnnotations[types.OvnRouteAdvertisementsKey] == newObj.Annotations[types.OvnRouteAdvertisementsKey] &&
+			oldAnnotations[types.OvnRouteAdvertisementsIntentKey] == newObj.Annotations[types.OvnRouteAdvertisementsIntentKey] {
+			return false
+		}
+		// An RA can drop this NAD before its last patch reaches the cache.
+		// Other RAs sharing the NAD only need a pass if their entry changed.
+		oldRefs, oldIntents, oldErr := parseNADAdvertisements(oldAnnotations)
+		newRefs, newIntents, newErr := parseNADAdvertisements(newObj.Annotations)
+		if oldErr != nil || newErr != nil {
+			return true
+		}
+		changed := sets.New(oldRefs...).SymmetricDifference(sets.New(newRefs...))
+		for ra := range sets.KeySet(oldIntents).Union(sets.KeySet(newIntents)) {
+			before, wasPresent := oldIntents[ra]
+			after, isPresent := newIntents[ra]
+			if wasPresent != isPresent || before != after {
+				changed.Insert(ra)
+			}
+		}
+		// A relist can combine our patch with an earlier change to another
+		// RA's entry. Only our own entry is already accounted for.
+		changed.Delete(patchOwner)
+		for ra := range changed {
+			c.raController.Reconcile(ra)
+		}
 		return false
 	}
 	nadSupported := func(nad *nadtypes.NetworkAttachmentDefinition) bool {
 		if nad == nil {
 			return false
 		}
-		network, err := util.ParseNADInfo(newObj)
+		network, err := util.ParseNADInfo(nad)
 		if err != nil {
 			return true
 		}
@@ -2331,7 +2786,8 @@ func nadNeedsUpdate(oldObj, newObj *nadtypes.NetworkAttachmentDefinition) bool {
 
 	return oldObj == nil || newObj == nil ||
 		!reflect.DeepEqual(oldObj.Labels, newObj.Labels) ||
-		oldObj.Annotations[types.OvnRouteAdvertisementsKey] != newObj.Annotations[types.OvnRouteAdvertisementsKey]
+		oldObj.Annotations[types.OvnRouteAdvertisementsKey] != newObj.Annotations[types.OvnRouteAdvertisementsKey] ||
+		oldObj.Annotations[types.OvnRouteAdvertisementsIntentKey] != newObj.Annotations[types.OvnRouteAdvertisementsIntentKey]
 }
 
 // nodeNeedsUpdate tracks inputs to advertisement generation, including the
@@ -2341,9 +2797,6 @@ func nodeNeedsUpdate(oldObj, newObj *corev1.Node) bool {
 		!reflect.DeepEqual(oldObj.Labels, newObj.Labels) ||
 		!reflect.DeepEqual(oldObj.Status.Addresses, newObj.Status.Addresses) ||
 		util.NodeSubnetAnnotationChanged(oldObj, newObj) ||
-		// With dynamic UDN allocation in legacy layer2 topology, the tunnel
-		// ID allocation determines which nodes advertise the network.
-		oldObj.Annotations[types.UDNLayer2NodeGRLRPTunnelIDAnnotation] != newObj.Annotations[types.UDNLayer2NodeGRLRPTunnelIDAnnotation] ||
 		util.NodePrimaryDPUHostAddrAnnotationChanged(oldObj, newObj) ||
 		util.NodeL3GatewayAnnotationChanged(oldObj, newObj) ||
 		util.NodeChassisIDAnnotationChanged(oldObj, newObj) ||
@@ -2376,7 +2829,7 @@ func nsNeedsUpdate(oldObj, newObj *corev1.Namespace) bool {
 func (c *Controller) reconcileFRRConfiguration(_ context.Context, key string) error {
 	namespace, name, err := cache.SplitMetaNamespaceKey(key)
 	if err != nil {
-		klog.Errorf("Failed spliting FRFConfiguration reconcile key %q: %v", key, err)
+		klog.Errorf("Failed splitting FRFConfiguration reconcile key %q: %v", key, err)
 		return nil
 	}
 
@@ -2385,9 +2838,21 @@ func (c *Controller) reconcileFRRConfiguration(_ context.Context, key string) er
 		return err
 	}
 
-	// safest approach is to reconcile all existing RouteAdvertisements (could
-	// be potentially avoided with additional caching but let's hold it until we
-	// know we need it)
+	// A configuration we deleted ourselves affects no other RA, unless EVPN
+	// RAs use its prefixes to identify the VTEP owner.
+	if frrConfig == nil {
+		ra, held, own := c.pendingFRR.deletionObserved(key)
+		if held {
+			c.raController.Reconcile(ra)
+		}
+		if own && !util.IsEVPNEnabled() {
+			return nil
+		}
+	}
+
+	// A template label or node-selector edit can affect both RAs that used it
+	// before and RAs that match it now. Requeue all RAs so each recomputes its
+	// selection and removes obsolete generated objects as well as adding new ones.
 	c.raController.ReconcileAll()
 
 	// on startup, we might be syncing a FRRConfiguration generated by us for a
@@ -2403,7 +2868,7 @@ func (c *Controller) reconcileFRRConfiguration(_ context.Context, key string) er
 func (c *Controller) reconcileNAD(_ context.Context, key string) error {
 	namespace, name, err := cache.SplitMetaNamespaceKey(key)
 	if err != nil {
-		klog.Errorf("Failed spliting NAD reconcile key %q: %v", key, err)
+		klog.Errorf("Failed splitting NAD reconcile key %q: %v", key, err)
 		return nil
 	}
 
@@ -2411,10 +2876,15 @@ func (c *Controller) reconcileNAD(_ context.Context, key string) error {
 	if err != nil && !apierrors.IsNotFound(err) {
 		return err
 	}
+	if nad == nil {
+		if ra, held, _ := c.pendingNAD.deletionObserved(key); held {
+			c.raController.Reconcile(ra)
+		}
+	}
 
-	// safest approach is to reconcile all existing RouteAdvertisements (could be potentially
-	// avoided with additional caching but let's hold it until we know we need
-	// it)
+	// A network can enter or leave an RA's selection without an RA spec edit.
+	// Requeue all RAs so creation, deletion, and relabeling of NADs trigger both
+	// generation for new matches and cleanup of advertisements that lost a match.
 	c.raController.ReconcileAll()
 
 	// on startup, we might be syncing a NAD annotated by us with a

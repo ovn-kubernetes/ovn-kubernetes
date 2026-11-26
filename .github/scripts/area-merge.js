@@ -32,10 +32,28 @@ module.exports = async ({ github, context, core }) => {
     }
     pullNumbers.push(context.payload.issue.number);
     commenter = comment.user.login.toLowerCase();
-  } else if (context.eventName === 'check_suite') {
-    const suite = context.payload.check_suite;
-    for (const pr of (suite.pull_requests || [])) {
+  } else if (context.eventName === 'check_suite' || context.eventName === 'workflow_run') {
+    const source = context.payload[context.eventName];
+    for (const pr of (source.pull_requests || [])) {
       pullNumbers.push(pr.number);
+    }
+    // A workflow run for a fork PR lists no pull requests. Find the open PR
+    // from the run's source branch and require it to still be at the SHA
+    // that was tested.
+    if (pullNumbers.length === 0 && context.eventName === 'workflow_run' &&
+        source.head_repository?.owner?.login && source.head_branch) {
+      const candidates = await github.paginate(github.rest.pulls.list, {
+        owner: context.repo.owner,
+        repo: context.repo.repo,
+        state: 'open',
+        head: `${source.head_repository.owner.login}:${source.head_branch}`,
+        per_page: 100,
+      });
+      // The head query is owner:branch, so also verify the repository identity.
+      pullNumbers = candidates.filter(pr =>
+        pr.head.repo?.id === source.head_repository.id &&
+        pr.head.ref === source.head_branch && pr.head.sha === source.head_sha
+      ).map(pr => pr.number);
     }
   }
 
@@ -115,6 +133,7 @@ module.exports = async ({ github, context, core }) => {
   }
 
   // --- Process each PR ---
+  let rechecked = false;
   for (const prNumber of pullNumbers) {
     core.info(`Processing PR #${prNumber}`);
 
@@ -143,7 +162,7 @@ module.exports = async ({ github, context, core }) => {
       continue;
     }
 
-    // For check_suite retries, find who previously ran /area-maintainer-approved
+    // For CI completion retries, find who previously ran /area-maintainer-approved
     let requester = commenter;
     let allComments = null;
     if (!requester) {
@@ -163,10 +182,10 @@ module.exports = async ({ github, context, core }) => {
       continue;
     }
 
-    // For check_suite, verify the bot posted a "waiting" comment for the current head SHA.
+    // For CI completion retries, verify the bot posted a "waiting" comment for the current head SHA.
     // If new commits were pushed after approval, the SHA won't match and we skip
     // to prevent merging code the area maintainer never reviewed.
-    if (context.eventName === 'check_suite') {
+    if (context.eventName !== 'issue_comment') {
       if (!allComments) allComments = await fetchAllComments(prNumber);
       const waitingMarker = `<!-- area-merge-sha:${pr.head.sha} -->`;
       const isWaiting = allComments.some(c =>
@@ -277,6 +296,8 @@ module.exports = async ({ github, context, core }) => {
     // Gate on the aggregate state first — it covers ALL commit statuses
     // regardless of pagination, so we never miss a failure or pending status.
     // Then iterate the (possibly partial) statuses array for detailed names.
+    // GitHub reports state "pending" with total_count 0 for a commit that has
+    // no commit statuses at all, only check runs: nothing is pending then.
     if (combinedStatus.state === 'failure') {
       for (const status of combinedStatus.statuses) {
         if (status.state === 'failure' || status.state === 'error') {
@@ -286,7 +307,7 @@ module.exports = async ({ github, context, core }) => {
       if (failedChecks.length === 0) {
         failedChecks.push('(commit status failure — details may be on a later page)');
       }
-    } else if (combinedStatus.state === 'pending') {
+    } else if (combinedStatus.state === 'pending' && combinedStatus.total_count > 0) {
       for (const status of combinedStatus.statuses) {
         if (status.state === 'pending') {
           pendingChecks.push(status.context);
@@ -297,6 +318,17 @@ module.exports = async ({ github, context, core }) => {
       if (pendingChecks.length === 0 && failedChecks.length === 0) {
         pendingChecks.push('(commit status pending — details may be on a later page)');
       }
+    }
+
+    // With no commit statuses, wait until CI has reported a check run (e.g.
+    // right after a push) rather than merge untested code. The bot's own
+    // check, the label and review helper jobs, and checks of other Apps such
+    // as CodeRabbit or DCO can all exist before CI has started.
+    const helperChecks = new Set(['area-merge', 'labeler', 'approval-labeler', 'review']);
+    const ciReported = checkRuns.some(run =>
+      run.app?.slug === 'github-actions' && !helperChecks.has(run.name));
+    if (combinedStatus.total_count === 0 && !ciReported) {
+      pendingChecks.push('(no CI results reported yet)');
     }
 
     if (failedChecks.length > 0) {
@@ -331,6 +363,13 @@ module.exports = async ({ github, context, core }) => {
             `Pending checks:\n` +
             pendingChecks.map(c => `- \`${c}\``).join('\n'),
         });
+        // CI may have completed while this comment was not visible yet; the
+        // completion retry then skipped the PR and nothing else will merge
+        // it. Process the PR once more now that the comment exists.
+        if (!rechecked) {
+          rechecked = true;
+          pullNumbers.push(prNumber);
+        }
       }
       continue;
     }

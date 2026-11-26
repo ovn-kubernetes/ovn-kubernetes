@@ -76,8 +76,8 @@ const (
 type UserDefinedNetworkGateway struct {
 	// network information
 	util.NetInfo
-	// node that its programming things on
-	node          *corev1.Node
+	// node on which the gateway is programmed
+	nodeName      string
 	nodeInformer  coreinformers.NodeInformer
 	nodeLister    listers.NodeLister
 	kubeInterface kube.Interface
@@ -157,7 +157,7 @@ type UserDefinedNetworkGateway struct {
 	isNetworkAdvertised             bool
 }
 
-func NewUserDefinedNetworkGateway(netInfo util.NetInfo, node *corev1.Node, nodeInformer coreinformers.NodeInformer,
+func NewUserDefinedNetworkGateway(netInfo util.NetInfo, nodeName string, nodeInformer coreinformers.NodeInformer,
 	kubeInterface kube.Interface, vrfManager *vrfmanager.Controller, ruleManager iprulemanager.Interface,
 	defaultNetworkGateway Gateway, ovsClient libovsdbclient.Client, uplinkStateInformer uplinkinformers.UplinkStateInformer,
 	uplinkStateGatewayStatusController *UplinkStateGatewayStatusController) (*UserDefinedNetworkGateway, error) {
@@ -224,7 +224,7 @@ func NewUserDefinedNetworkGateway(netInfo util.NetInfo, node *corev1.Node, nodeI
 	}
 	udng := &UserDefinedNetworkGateway{
 		NetInfo:                            netInfo,
-		node:                               node,
+		nodeName:                           nodeName,
 		nodeInformer:                       nodeInformer,
 		nodeLister:                         nodeInformer.Lister(),
 		kubeInterface:                      kubeInterface,
@@ -345,7 +345,7 @@ func uplinkGatewayFingerprintFromState(
 func (udng *UserDefinedNetworkGateway) uplinkStateNeedsUpdate(
 	oldState, newState *uplinkv1alpha1.UplinkState,
 ) bool {
-	if newState == nil || newState.Name != uplinkutil.StateName(udng.Uplink(), udng.node.Name) {
+	if newState == nil || newState.Name != uplinkutil.StateName(udng.Uplink(), udng.nodeName) {
 		return false
 	}
 	return oldState == nil || !uplinkGatewayInputsEqual(oldState, newState)
@@ -409,14 +409,14 @@ func (udng *UserDefinedNetworkGateway) configureResolvedUplinkGateway(
 	}
 	if resolved.bridgeName == "" {
 		return nil, fmt.Errorf("uplink state for uplink %s on node %s has no OVS bridge",
-			udng.Uplink(), udng.node.Name)
+			udng.Uplink(), udng.nodeName)
 	}
 
 	bridge, err := bridgeconfig.NewUnmanagedBridgeConfiguration(
 		udng.ovsClient,
 		resolved.bridgeName,
 		resolved.hostInterfaceName,
-		udng.node.Name,
+		udng.nodeName,
 		physicalNetworkName(udng.NetInfo),
 		resolved.ipAddresses,
 		resolved.macAddress,
@@ -455,12 +455,12 @@ func configureUplinkStaticFDBEntry(bridge *bridgeconfig.BridgeConfiguration) err
 }
 
 func (udng *UserDefinedNetworkGateway) getUplinkState() (*uplinkv1alpha1.UplinkState, error) {
-	stateName := uplinkutil.StateName(udng.Uplink(), udng.node.Name)
-	state, err := uplinkutil.GetState(udng.uplinkStateLister, udng.Uplink(), udng.node.Name)
+	stateName := uplinkutil.StateName(udng.Uplink(), udng.nodeName)
+	state, err := uplinkutil.GetState(udng.uplinkStateLister, udng.Uplink(), udng.nodeName)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil, fmt.Errorf("waiting for UplinkState %s for uplink %q on node %q: %w",
-				stateName, udng.Uplink(), udng.node.Name, err)
+				stateName, udng.Uplink(), udng.nodeName, err)
 		}
 		return nil, fmt.Errorf("failed to get UplinkState %s: %w", stateName, err)
 	}
@@ -627,7 +627,7 @@ func (udng *UserDefinedNetworkGateway) Start() error {
 	err := controllerutil.StartWithInitialSync(
 		func() error {
 			return udng.reconcileUplinkState(
-				uplinkutil.StateName(udng.Uplink(), udng.node.Name),
+				uplinkutil.StateName(udng.Uplink(), udng.nodeName),
 			)
 		},
 		udng.uplinkStateController,
@@ -660,8 +660,7 @@ func (udng *UserDefinedNetworkGateway) addNetworkWithResolvedUplink(
 			udng.GetNetworkName(), err)
 	}
 
-	// TBD-merge udng.node.Name, needs lower case?
-	udng.mgmtPortController, err = managementport.NewUDNManagementPortController(udng.ovsClient, udng.nodeInformer, udng.node.Name, nodeSubnets, udng.NetInfo)
+	udng.mgmtPortController, err = managementport.NewUDNManagementPortController(udng.ovsClient, udng.nodeInformer, udng.nodeName, nodeSubnets, udng.NetInfo)
 	if err != nil {
 		return fmt.Errorf("could not create management port for network %s, UDN management port controller init failure: %v",
 			udng.GetNetworkName(), err)
@@ -704,7 +703,7 @@ func (udng *UserDefinedNetworkGateway) addNetworkWithResolvedUplink(
 		udng.vrfTableId = vrfTableId
 
 		vrfDeviceName := util.GetNetworkVRFName(udng.NetInfo)
-		routes, err := udng.computeRoutesForUDN(mplink)
+		routes, err := udng.computeRoutesForUDN(mplink, nodeSubnets)
 		if err != nil {
 			return fmt.Errorf("failed to compute routes for network %s, err: %v", udng.GetNetworkName(), err)
 		}
@@ -724,7 +723,7 @@ func (udng *UserDefinedNetworkGateway) addNetworkWithResolvedUplink(
 					udng.gwInterfaceName, udng.GetNetworkName(), err)
 			}
 		}
-		if err = udng.addUDNManagementPortIPs(mplink); err != nil {
+		if err = udng.addUDNManagementPortIPs(mplink, nodeSubnets); err != nil {
 			return fmt.Errorf("unable to add management port IP(s) for link %s, for network %s: %w", mplink.Attrs().Name, udng.GetNetworkName(), err)
 		}
 		if err = udng.vrfManager.AddVRFRoutes(vrfDeviceName, routes); err != nil {
@@ -904,7 +903,7 @@ func (udng *UserDefinedNetworkGateway) reconcileUplinkConfiguration() (
 	}
 	observedFingerprint := uplinkGatewayFingerprintFromState(state)
 	resolved, err := resolvedUplinkGatewayFromState(
-		state, udng.Uplink(), udng.node.Name,
+		state, udng.Uplink(), udng.nodeName,
 		config.IsModeDPU() || config.IsModeFull())
 	if err != nil {
 		unconfigureErr := udng.unconfigureUplinkGateway()
@@ -1008,7 +1007,7 @@ func (udng *UserDefinedNetworkGateway) managedDefaultRouteKey(isV6 bool) netlink
 // programming or cleaning up the gateway retry. operationMutex serializes
 // each attempt with initial setup, advertised-state reconciliation, and cleanup.
 func (udng *UserDefinedNetworkGateway) reconcileUplinkState(key string) error {
-	if key != uplinkutil.StateName(udng.Uplink(), udng.node.Name) {
+	if key != uplinkutil.StateName(udng.Uplink(), udng.nodeName) {
 		return nil
 	}
 
@@ -1166,10 +1165,17 @@ func (udng *UserDefinedNetworkGateway) getLocalSubnets() ([]*net.IPNet, error) {
 
 	// fetch subnets which we will use to get management port IP(s)
 	if udng.TopologyType() == types.Layer3Topology {
-		networkLocalSubnets, err = util.ParseNodeHostSubnetAnnotation(udng.node, udng.GetNetworkName())
+		// The cluster manager may allocate subnets after gateway construction.
+		// Read the informer cache on every attempt to observe the assigned subnets.
+		var node *corev1.Node
+		node, err = udng.nodeLister.Get(udng.nodeName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get node %s for network %s: %w", udng.nodeName, udng.GetNetworkName(), err)
+		}
+		networkLocalSubnets, err = util.ParseNodeHostSubnetAnnotation(node, udng.GetNetworkName())
 		if err != nil {
 			return nil, fmt.Errorf("waiting for node %s to start, no annotation found on node for network %s: %w",
-				udng.node.Name, udng.GetNetworkName(), err)
+				udng.nodeName, udng.GetNetworkName(), err)
 		}
 	} else if udng.TopologyType() == types.Layer2Topology {
 		// NOTE: We don't support L2 networks without subnets as primary UDNs
@@ -1181,12 +1187,7 @@ func (udng *UserDefinedNetworkGateway) getLocalSubnets() ([]*net.IPNet, error) {
 	return networkLocalSubnets, nil
 }
 
-func (udng *UserDefinedNetworkGateway) addUDNManagementPortIPs(mpLink netlink.Link) error {
-	networkLocalSubnets, err := udng.getLocalSubnets()
-	if err != nil {
-		return err
-	}
-
+func (udng *UserDefinedNetworkGateway) addUDNManagementPortIPs(mpLink netlink.Link, networkLocalSubnets []*net.IPNet) error {
 	klog.V(5).Infof("Add management port IPs on interface %s for network %s subnets %+v",
 		mpLink.Attrs().Name, udng.GetNetworkName(), networkLocalSubnets)
 
@@ -1234,7 +1235,7 @@ func (udng *UserDefinedNetworkGateway) useNoPrefixRouteManagementPortIPs() bool 
 
 // computeRoutesForUDN returns a list of routes programmed into a given UDN's VRF
 // when adding new routes please leave a sample comment on how that route looks like
-func (udng *UserDefinedNetworkGateway) computeRoutesForUDN(mpLink netlink.Link) ([]netlink.Route, error) {
+func (udng *UserDefinedNetworkGateway) computeRoutesForUDN(mpLink netlink.Link, networkLocalSubnets []*net.IPNet) ([]netlink.Route, error) {
 	networkMTU := udng.NetInfo.MTU()
 	if networkMTU == 0 {
 		networkMTU = config.Default.MTU
@@ -1324,10 +1325,6 @@ func (udng *UserDefinedNetworkGateway) computeRoutesForUDN(mpLink netlink.Link) 
 	//   100.100.0.0/16 via 100.100.1.1 dev ovn-k8s-mp1
 	// Local-gateway no-overlay Layer3 uses the node-local subnet instead:
 	//   100.100.1.0/24 via 100.100.1.1 dev ovn-k8s-mp1
-	networkLocalSubnets, err := udng.getLocalSubnets()
-	if err != nil {
-		return nil, err
-	}
 	for _, localSubnet := range networkLocalSubnets {
 		gwIP := udng.GetNodeGatewayIP(localSubnet)
 		if gwIP == nil {
@@ -2001,6 +1998,6 @@ func (udng *UserDefinedNetworkGateway) deleteAdvertisedUDNIsolationRules() error
 }
 
 func (udng *UserDefinedNetworkGateway) updateAdvertisementStatus() {
-	udng.isNetworkAdvertised = util.IsPodNetworkAdvertisedAtNode(udng.NetInfo, udng.node.Name)
-	udng.isNetworkAdvertisedToDefaultVRF = util.IsPodNetworkAdvertisedAtNodeDefaultVRF(udng.NetInfo, udng.node.Name)
+	udng.isNetworkAdvertised = util.IsPodNetworkAdvertisedAtNode(udng.NetInfo, udng.nodeName)
+	udng.isNetworkAdvertisedToDefaultVRF = util.IsPodNetworkAdvertisedAtNodeDefaultVRF(udng.NetInfo, udng.nodeName)
 }

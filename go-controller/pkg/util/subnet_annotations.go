@@ -6,6 +6,7 @@ package util
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 
@@ -211,8 +212,35 @@ func HasNodeHostSubnetAnnotation(node *corev1.Node, netName string) bool {
 // ParseNodeHostSubnetAnnotation parses the "k8s.ovn.org/node-subnets" annotation
 // on a node and returns the host subnet for the given network.
 func ParseNodeHostSubnetAnnotation(node *corev1.Node, netName string) ([]*net.IPNet, error) {
+	entries, err := nodeHostSubnetEntries(node)
+	if err != nil {
+		return nil, err
+	}
+	return parseNetworkHostSubnets(entries, node.Name, netName)
+}
+
+// ParseNodeHostSubnetsForNetworks reads the annotation once. If one selected
+// network is missing or malformed, callers also receive the valid allocations.
+func ParseNodeHostSubnetsForNetworks(node *corev1.Node, networks []string) (map[string][]*net.IPNet, error) {
+	entries, err := nodeHostSubnetEntries(node)
+	if err != nil {
+		return nil, err
+	}
+	subnets := make(map[string][]*net.IPNet, len(networks))
+	var errs []error
+	for _, name := range networks {
+		prefixes, err := parseNetworkHostSubnets(entries, node.Name, name)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("network %q: %w", name, err))
+			continue
+		}
+		subnets[name] = prefixes
+	}
+	return subnets, errors.Join(errs...)
+}
+
+func nodeHostSubnetEntries(node *corev1.Node) (map[string]json.RawMessage, error) {
 	var nodeSubnetMap map[string]json.RawMessage
-	var ret []*net.IPNet
 	annotation, ok := node.Annotations[types.NodeSubnetsAnnotation]
 	if !ok {
 		return nil, newAnnotationNotSetError("could not find %q annotation", types.NodeSubnetsAnnotation)
@@ -220,9 +248,13 @@ func ParseNodeHostSubnetAnnotation(node *corev1.Node, netName string) ([]*net.IP
 	if err := json.Unmarshal([]byte(annotation), &nodeSubnetMap); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal %q annotation on node %s: %v", types.NodeSubnetsAnnotation, node.Name, err)
 	}
+	return nodeSubnetMap, nil
+}
+
+func parseNetworkHostSubnets(nodeSubnetMap map[string]json.RawMessage, nodeName, netName string) ([]*net.IPNet, error) {
 	val, ok := nodeSubnetMap[netName]
 	if !ok {
-		return nil, newAnnotationNotSetError("node %q has no %q annotation for network %s", node.Name, types.NodeSubnetsAnnotation, netName)
+		return nil, newAnnotationNotSetError("node %q has no %q annotation for network %s", nodeName, types.NodeSubnetsAnnotation, netName)
 	}
 
 	var subnets, subnetsDual []string
@@ -241,6 +273,7 @@ func ParseNodeHostSubnetAnnotation(node *corev1.Node, netName string) ([]*net.IP
 		return nil, fmt.Errorf("unexpected empty %s annotation for %s network", types.NodeSubnetsAnnotation, netName)
 	}
 
+	var ret []*net.IPNet
 	for _, subnet := range subnets {
 		_, ipnet, err := net.ParseCIDR(subnet)
 		if err != nil {

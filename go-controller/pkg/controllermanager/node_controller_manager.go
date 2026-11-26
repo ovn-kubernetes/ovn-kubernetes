@@ -214,7 +214,7 @@ func (ncm *NodeControllerManager) syncManagementPorts(validNetworks ...util.NetI
 				}
 				err = managementport.TearDownManagementPortLink("unknownNetwork", link, "")
 				if err != nil {
-					errs = append(errs, fmt.Errorf("failed to tear down stale management port intrface %s for unknown network: %w", linkName, err))
+					errs = append(errs, fmt.Errorf("failed to tear down stale management port interface %s for unknown network: %w", linkName, err))
 				}
 			}
 		}

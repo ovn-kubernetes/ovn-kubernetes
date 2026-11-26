@@ -387,6 +387,8 @@ func startOvnKube(ctx *cli.Context, cancel context.CancelFunc) error {
 				}
 				ovnKubeStartWg.Add(1)
 				defer ovnKubeStartWg.Done()
+				// Set leader metric under the stop lock so a concurrent stop cannot miss it.
+				metrics.MetricClusterManagerLeader.Set(1)
 				ovnKubeStopLock.Unlock()
 				klog.Infof("Won leader election; in active mode")
 				if err := runOvnKube(ctx, runMode, ovnClientset, eventRecorder); err != nil {
@@ -399,6 +401,8 @@ func startOvnKube(ctx *cli.Context, cancel context.CancelFunc) error {
 				defer ovnKubeStopLock.Unlock()
 				klog.Infof("No longer leader; exiting")
 				ovnKubeStopped = true
+				// Clear leader metric under the stop lock so a concurrent start cannot miss it.
+				metrics.MetricClusterManagerLeader.Set(0)
 				cancel()
 			},
 			OnNewLeader: func(newLeaderName string) {
@@ -409,7 +413,6 @@ func startOvnKube(ctx *cli.Context, cancel context.CancelFunc) error {
 		},
 	}
 
-	leaderelection.SetProvider(ovnkubeMetricsProvider{runMode})
 	leaderElector, err := leaderelection.NewLeaderElector(lec)
 	if err != nil {
 		return err
@@ -475,6 +478,11 @@ func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util
 			defer cancel()
 			defer wg.Done()
 
+			// Must run before NewClusterManager: it installs the workqueue
+			// metrics provider, and client-go only applies a provider to
+			// queues created after it is set.
+			metrics.RegisterClusterManagerFunctional()
+
 			clusterManager, err := clustermanager.NewClusterManager(
 				ovnClientset.GetClusterManagerClientset(),
 				watchFactory,
@@ -484,8 +492,6 @@ func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util
 				managerErr = fmt.Errorf("failed to create new cluster manager: %w", err)
 				return
 			}
-
-			metrics.RegisterClusterManagerFunctional()
 
 			err = clusterManager.Start(ctx)
 			if err != nil {
@@ -683,30 +689,4 @@ func newWatchFactory(runMode *ovnkubeRunMode, ovnClientset *util.OVNClientset) (
 		err = fmt.Errorf("unsupported ovnkube run mode: %+v", runMode)
 	}
 	return
-}
-
-type leaderMetrics struct {
-	runMode *ovnkubeRunMode
-}
-
-func (m leaderMetrics) On(string) {
-	if m.runMode.clusterManager {
-		metrics.MetricClusterManagerLeader.Set(1)
-	}
-}
-
-func (m leaderMetrics) Off(string) {
-	if m.runMode.clusterManager {
-		metrics.MetricClusterManagerLeader.Set(0)
-	}
-}
-
-func (m leaderMetrics) SlowpathExercised(string) {}
-
-type ovnkubeMetricsProvider struct {
-	runMode *ovnkubeRunMode
-}
-
-func (p ovnkubeMetricsProvider) NewLeaderMetric() leaderelection.LeaderMetric {
-	return &leaderMetrics{p.runMode}
 }

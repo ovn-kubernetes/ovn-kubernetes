@@ -75,7 +75,8 @@ var _ = ginkgo.Describe("Unidling", feature.Unidle, func() {
 
 		// Add a backend pod to the service in one node
 		ginkgo.By("creating a backend pod for the service " + serviceName)
-		serverPodPort := infraprovider.Get().GetK8HostPort()
+		providerCtx := infraprovider.Get().NewTestContext()
+		serverPodPort := infraprovider.Get().GetK8HostPort(f, providerCtx)
 		serverPod := e2epod.NewAgnhostPod(namespace, "pod-backend", nil, nil, []v1.ContainerPort{{ContainerPort: int32(serverPodPort)}}, "serve-hostname")
 		serverPod.Labels = jig.Labels
 		serverPod.Spec.NodeName = nodeName

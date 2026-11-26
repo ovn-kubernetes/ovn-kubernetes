@@ -803,6 +803,11 @@ if [ "$KIND_CREATE" == true ]; then
   if [ "$ENABLE_COREDUMPS" == true ]; then
     setup_coredumps
   fi
+  # the kubeconfig must already point at the control-plane container's IP before
+  # connect_local_registry and coredns_patch call kubectl below.
+  if [ "$RUN_IN_CONTAINER" == true ]; then
+    run_script_in_container
+  fi
   if [[ "${KIND_LOCAL_REGISTRY}" == true ]]; then
     connect_local_registry
   fi
@@ -819,9 +824,9 @@ fi
 if [ "$OVN_UPLINK_BRIDGE" == true ]; then
   docker_create_uplink_interface
 fi
-# when kind-helm.sh is run from inside a container, rewrite the kubeconfig API URL
-# to the control-plane container's IP (127.0.0.1 is not reachable across containers).
-if [ "$RUN_IN_CONTAINER" == true ]; then
+# with --deploy no cluster is created above, so the rewrite done there has not
+# run; the kubeconfig still needs the control-plane container's IP.
+if [ "$KIND_CREATE" == false ] && [ "$RUN_IN_CONTAINER" == true ]; then
   run_script_in_container
 fi
 # when using a non-default cluster name created by this script, fix up the

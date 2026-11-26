@@ -32,7 +32,7 @@ and set the environmental variable `K8S_VERSION` to the same value. Also make su
 your go directory with `export GOPATH=(...)`.
 
 ```
-K8S_VERSION=v1.36.4
+K8S_VERSION=v1.37.0
 git clone --single-branch --branch $K8S_VERSION https://github.com/kubernetes/kubernetes.git $GOPATH/src/k8s.io/kubernetes/
 pushd $GOPATH/src/k8s.io/kubernetes/
 make WHAT="test/e2e/e2e.test vendor/github.com/onsi/ginkgo/ginkgo cmd/kubectl"
@@ -226,9 +226,8 @@ kube-apiserver + etcd started by [envtest](https://pkg.go.dev/sigs.k8s.io/contro
 They verify CRD admission behaviour — defaulting, validation, and CEL rules —
 without requiring a full KinD cluster.
 
-Some scenarios that do not need live pod networking have been migrated to
-`test/crd-integration/testscenario/`. The remaining scenarios are tracked in
-[ovn-kubernetes#6932](https://github.com/ovn-kubernetes/ovn-kubernetes/issues/6932).
+Schema-only scenarios that do not need live pod networking live in
+`test/crd-integration/testscenario/`.
 
 ### Prerequisites
 
@@ -259,7 +258,7 @@ filter by description:
 ```bash
 cd $REPO/test/crd-integration
 KUBEBUILDER_ASSETS="$(go tool setup-envtest \
-    use 1.36.2 --bin-dir /tmp/envtest-bin -p path)" \
+    use 1.37.0 --bin-dir /tmp/envtest-bin -p path)" \
   go test -v ./... -- --focus "fills in the egress-assignable default"
 ```
 
@@ -300,7 +299,7 @@ For example:
 ./e2e/multicast.go:	ginkgo.It("should be able to send multicast UDP traffic between nodes", func() {
 # make control-plane WHAT="should be able to send multicast UDP traffic between nodes"
 (...)
-+ go test -timeout=0 -v . -ginkgo.v -ginkgo.focus 'should\sbe\sable\sto\ssend\smulticast\sUDP\straffic\sbetween\snodes' -ginkgo.flakeAttempts 2 '-ginkgo.skip=Should be allowed to node local cluster-networked endpoints by nodeport services with externalTrafficPolicy=local|e2e ingress to host-networked pods traffic validation|host to host-networked pods traffic validation' -provider skeleton -kubeconfig /root/ovn.conf --num-nodes=2 --report-dir=/root/ovn-kubernetes/test/_artifacts --report-prefix=control-plane_
++ go test -test.timeout 185m -v . -ginkgo.v -ginkgo.focus 'should be able to send multicast UDP traffic between nodes' -ginkgo.fail-on-empty -ginkgo.timeout 180m -ginkgo.flake-attempts 2 '-ginkgo.skip=(...)' '-ginkgo.label-filter=(...)' -provider skeleton -kubeconfig /root/ovn.conf (...)
 I0817 15:26:21.762483 1197731 test_context.go:457] Tolerating taints "node-role.kubernetes.io/control-plane" when considering if nodes are ready
 === RUN   TestE2e
 I0817 15:26:21.762635 1197731 e2e_suite_test.go:67] Saving reports to /root/ovn-kubernetes/test/_artifacts

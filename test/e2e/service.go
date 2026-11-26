@@ -70,10 +70,14 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 
 	f := wrappedTestFramework("services")
 
-	var cs clientset.Interface
+	var (
+		cs          clientset.Interface
+		providerCtx infraapi.Context
+	)
 
 	ginkgo.BeforeEach(func() {
 		cs = f.ClientSet
+		providerCtx = infraprovider.Get().NewTestContext()
 	})
 	cleanupFn := func() {}
 
@@ -127,7 +131,7 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 		jig := e2eservice.NewTestJig(cs, namespace, serviceName)
 
 		ginkgo.By("Creating a ClusterIP service")
-		targetPort := infraprovider.Get().GetK8HostPort()
+		targetPort := infraprovider.Get().GetK8HostPort(f, providerCtx)
 		service, err := jig.CreateUDPService(context.TODO(), func(s *v1.Service) {
 			s.Spec.Ports = []v1.ServicePort{
 				{
@@ -142,7 +146,7 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 
 		ginkgo.By("creating a host-network backend pod")
 
-		httpPort := infraprovider.Get().GetK8HostPort()
+		httpPort := infraprovider.Get().GetK8HostPort(f, providerCtx)
 		serverPod := e2epod.NewAgnhostPod(namespace, "backend", nil, nil, []v1.ContainerPort{{ContainerPort: (int32(targetPort))}, {ContainerPort: (int32(targetPort)), Protocol: "UDP"}},
 			"netexec", fmt.Sprintf("--http-port=%d", httpPort), fmt.Sprintf("--udp-port=%d", targetPort))
 		serverPod.Labels = jig.Labels
@@ -171,7 +175,7 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 		var createdPods []*v1.Pod
 		maxContainerFailures := 0
 		replicas := 3
-		targetPort := infraprovider.Get().GetK8HostPort()
+		targetPort := infraprovider.Get().GetK8HostPort(f, providerCtx)
 		config := testutils.RCConfig{
 			Client:               cs,
 			Image:                images.AgnHost(),
@@ -304,8 +308,8 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 						var serverPodPortTCP, serverPodPortUDP uint16
 						gomega.Eventually(func() error {
 							// May be a host net or cluster net pod but select host port anyway.
-							serverPodPortTCP = infraprovider.Get().GetK8HostPort()
-							serverPodPortUDP = infraprovider.Get().GetK8HostPort()
+							serverPodPortTCP = infraprovider.Get().GetK8HostPort(f, providerCtx)
+							serverPodPortUDP = infraprovider.Get().GetK8HostPort(f, providerCtx)
 							serverPodName = fmt.Sprintf(echoServerPodNameTemplate, serverPodPortTCP)
 							framework.Logf("Creating server pod listening on TCP port %d and UDP port %d",
 								serverPodPortTCP, serverPodPortUDP)
@@ -639,7 +643,7 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 		ginkgo.By("Using node" + nodeName + " and pod " + clientPod.Name)
 
 		ginkgo.By("Creating an empty ClusterIP service")
-		udpHostNsPort := infraprovider.Get().GetK8HostPort()
+		udpHostNsPort := infraprovider.Get().GetK8HostPort(f, providerCtx)
 		service, err := jig.CreateUDPService(context.TODO(), func(s *v1.Service) {
 			s.Spec.Ports = []v1.ServicePort{
 				{
@@ -683,7 +687,7 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 		ginkgo.By("Starting a UDP server listening on the additional IP")
 		// now that 2.2.2.2 exists on the node's lo interface, let's start a server listening on it
 		// we use UDP here since agnhost lets us pick the listen address only for UDP
-		httpPort := infraprovider.Get().GetK8HostPort()
+		httpPort := infraprovider.Get().GetK8HostPort(f, providerCtx)
 		serverPod := e2epod.NewAgnhostPod(namespace, "backend", nil, nil, []v1.ContainerPort{{ContainerPort: int32(udpHostNsPort)}, {ContainerPort: int32(udpHostNsPort), Protocol: "UDP"}},
 			"netexec", fmt.Sprintf("--http-port=%d", httpPort), "--udp-port="+fmt.Sprintf("%d", udpHostNsPort), "--udp-listen-addresses="+extraIP)
 		serverPod.Labels = jig.Labels
@@ -2093,8 +2097,8 @@ spec:
 			portName = "http"
 			svcPort  = int32(80)
 		)
-		port1 := int32(infraprovider.Get().GetK8HostPort())
-		port2 := int32(infraprovider.Get().GetK8HostPort())
+		port1 := int32(infraprovider.Get().GetK8HostPort(f, providerCtx))
+		port2 := int32(infraprovider.Get().GetK8HostPort(f, providerCtx))
 		gomega.Expect(port1).ToNot(gomega.Equal(port2),
 			"allocated host ports must differ")
 
@@ -2265,8 +2269,8 @@ spec:
 			portName = "http"
 			svcPort  = int32(80)
 		)
-		port1 := int32(infraprovider.Get().GetK8HostPort())
-		port2 := int32(infraprovider.Get().GetK8HostPort())
+		port1 := int32(infraprovider.Get().GetK8HostPort(f, providerCtx))
+		port2 := int32(infraprovider.Get().GetK8HostPort(f, providerCtx))
 		gomega.Expect(port1).ToNot(gomega.Equal(port2),
 			"allocated host ports must differ")
 
@@ -2520,12 +2524,14 @@ var _ = ginkgo.Describe("Service Hairpin SNAT", feature.Service, func() {
 		namespaceName   string
 		backendNodeName string
 		nodeIP          string
+		providerCtx     infraapi.Context
 	)
 
 	f := wrappedTestFramework(svcName)
 	hairpinPodSel := map[string]string{"hairpinbackend": "true"}
 
 	ginkgo.BeforeEach(func() {
+		providerCtx = infraprovider.Get().NewTestContext()
 		nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), f.ClientSet, 2)
 		framework.ExpectNoError(err)
 		if len(nodes.Items) < 2 {
@@ -2578,7 +2584,7 @@ var _ = ginkgo.Describe("Service Hairpin SNAT", feature.Service, func() {
 
 		ginkgo.By("creating an host-network backend pod on " + backendNodeName)
 		// create hostNeworkedPods
-		hostNetPort := infraprovider.Get().GetK8HostPort()
+		hostNetPort := infraprovider.Get().GetK8HostPort(f, providerCtx)
 		_, err := createPod(f, backendName, backendNodeName, namespaceName, []string{}, hairpinPodSel, func(p *v1.Pod) {
 			p.Spec.Containers[0].Command = getAgnHostHTTPPortBindFullCMD(hostNetPort)
 			p.Spec.HostNetwork = true
@@ -2683,7 +2689,7 @@ spec:
            claimName: dynamic-claim
       initContainers:
       - name: get-big-file
-        image: ` + images.MetalLBLBService() + `
+        image: ` + images.AgnHost() + `
         command: ['sh', '-c', "dd if=/dev/zero of=/usr/share/nginx/html/big.iso  bs=1024 count=0 seek=102400"]
         volumeMounts:
         - name: data
@@ -2699,17 +2705,13 @@ spec:
           containerPort: 80
       - name: agnhost
         image: ` + images.AgnHost() + `
-        command: ["/agnhost", "netexec", "--http-port=10000"]
+        command: ["/agnhost", "netexec", "--http-port=10000", "--udp-port=10001"]
         ports:
         - name: agnhost
           containerPort: 10000
-      - name: udp-server
-        image: ` + images.UDPServerSrcIPPrinter() + `
-        imagePullPolicy: Always
-        ports:
-        - containerPort: 10001
+        - name: udp
+          containerPort: 10001
           protocol: UDP
-          name: udp
       nodeSelector:
         kubernetes.io/hostname: ` + backendNodeName + `
 
@@ -3185,7 +3187,9 @@ spec:
 		}, 60*time.Second).Should(gomega.BeTrue())
 
 		ginkgo.By("by sending a UDP packet to service " + svcName + " with type=LoadBalancer in namespace " + namespaceName + " with backend pod " + backendName)
-		netcatCmd := fmt.Sprintf("echo hostname | nc -uv -w2 %s %d",
+		// agnhost netexec replies to "clientip" with the observed UDP source address and
+		// also logs it, so either the response or backend logs can verify preservation.
+		netcatCmd := fmt.Sprintf("echo clientip | nc -uv -w2 %s %d",
 			svcLoadBalancerIP,
 			endpointUDPPort,
 		)
@@ -3203,18 +3207,18 @@ spec:
 
 		ginkgo.By("ensure the sourceIP of the external container is preserved!")
 		// Check that sourceIP of the LBService is preserved
-		targetPodLogs, err := e2ekubectl.RunKubectl("default", "logs", "-l", "app=nginx", "--container", "udp-server")
+		targetPodLogs, err := e2ekubectl.RunKubectl("default", "logs", "-l", "app=nginx", "--container", "agnhost")
 		framework.ExpectNoError(err, "failed to inspect logs in backend pods")
-		framework.Logf("Target pod logs (nginx): %q", targetPodLogs)
+		framework.Logf("Target pod logs (agnhost): %q", targetPodLogs)
 		lbClientInf, err := infraprovider.Get().GetExternalContainerNetworkInterface(lbClientExternalContainer, clientNetNetwork)
 		framework.ExpectNoError(err, "failed to get network interface info for network %s within lbclient external container %s", clientNetNetwork.Name(), frrExternalContainer.GetName())
 		framework.Logf("found external container IPv4: %q, IPv6: %q", lbClientInf.IPv4, lbClientInf.IPv6)
-		if strings.Contains(targetPodLogs, lbClientInf.IPv4) {
+		if strings.Contains(targetPodLogs, lbClientInf.IPv4) || strings.Contains(output, lbClientInf.IPv4) {
 			framework.Logf("found the expected srcIP %s!", lbClientInf.IPv4)
-		} else if strings.Contains(targetPodLogs, lbClientInf.IPv6) {
+		} else if strings.Contains(targetPodLogs, lbClientInf.IPv6) || strings.Contains(output, lbClientInf.IPv6) {
 			framework.Logf("found the expected srcIP %s!", lbClientInf.IPv6)
 		} else {
-			framework.Failf("could not get expected srcIP!, target pod logs:\n%q", targetPodLogs)
+			framework.Failf("could not get expected srcIP!, target pod logs:\n%q\nnetcat output:\n%q", targetPodLogs, output)
 		}
 
 		ginkgo.By("patching service " + svcName + " to sessionAffinity=ClientIP at default timeout of 10800")
@@ -3241,7 +3245,7 @@ spec:
 
 		// Check that sourceIP of the LBService is preserved
 		ginkgo.By("ensure the sourceIP of the external container is preserved!")
-		targetPodLogs, err = e2ekubectl.RunKubectl("default", "logs", "-l", "app=nginx", "--container", "udp-server")
+		targetPodLogs, err = e2ekubectl.RunKubectl("default", "logs", "-l", "app=nginx", "--container", "agnhost")
 		framework.ExpectNoError(err, "failed to inspect logs in backend pods")
 		framework.Logf("%v", targetPodLogs)
 		if strings.Count(targetPodLogs, lbClientInf.IPv4) >= 2 {
@@ -3319,7 +3323,7 @@ spec:
 		}, 60*time.Second).Should(gomega.BeTrue())
 
 		ginkgo.By("by sending a UDP packet to service " + svcName + " with type=LoadBalancer in namespace " + namespaceName + " with backend pod " + backendName)
-		netcatCmd := fmt.Sprintf("echo hostname | nc -uv -w2 %s %d",
+		netcatCmd := fmt.Sprintf("echo clientip | nc -uv -w2 %s %d",
 			svcLoadBalancerIP,
 			endpointUDPPort,
 		)
@@ -3337,19 +3341,19 @@ spec:
 
 		ginkgo.By("ensure the sourceIP of the external container is preserved!")
 		// Check that sourceIP of the LBService is preserved
-		targetPodLogs, err := e2ekubectl.RunKubectl("default", "logs", "-l", "app=nginx", "--container", "udp-server")
+		targetPodLogs, err := e2ekubectl.RunKubectl("default", "logs", "-l", "app=nginx", "--container", "agnhost")
 		framework.ExpectNoError(err, "failed to inspect logs in backend pods")
 		framework.Logf("Target pod logs:\n%q", targetPodLogs)
 		lbClientNetworkInterface, err := infraprovider.Get().GetExternalContainerNetworkInterface(lbClientExternalContainer, clientNetNetwork)
 		framework.ExpectNoError(err, "failed to get network interface info for external container %s connected to network %s", frrExternalContainer.Name, clientNetNetwork.Name())
 		lbClientIPv4, lbClientIPv6 := lbClientNetworkInterface.IPv4, lbClientNetworkInterface.IPv6
 		framework.Logf("found external container lbclient IPs: IPv4 %q, IPv6: %q", lbClientIPv4, lbClientIPv6)
-		if strings.Contains(targetPodLogs, lbClientIPv4) {
+		if strings.Contains(targetPodLogs, lbClientIPv4) || strings.Contains(output, lbClientIPv4) {
 			framework.Logf("found the expected srcIP %s!", lbClientIPv4)
-		} else if strings.Contains(targetPodLogs, lbClientIPv6) {
+		} else if strings.Contains(targetPodLogs, lbClientIPv6) || strings.Contains(output, lbClientIPv6) {
 			framework.Logf("found the expected srcIP %s!", lbClientIPv6)
 		} else {
-			framework.Failf("could not get expected srcIP!, target pod logs:\n%q", targetPodLogs)
+			framework.Failf("could not get expected srcIP!, target pod logs:\n%q\nnetcat output:\n%q", targetPodLogs, output)
 		}
 
 		ginkgo.By("label " + nonBackendNodeName + " as egressIP assignable")
@@ -3424,7 +3428,7 @@ spec:
 
 		// Check that sourceIP of the LBService is preserved
 		ginkgo.By("ensure the sourceIP of the external container is preserved!")
-		targetPodLogs, err = e2ekubectl.RunKubectl("default", "logs", "-l", "app=nginx", "--container", "udp-server")
+		targetPodLogs, err = e2ekubectl.RunKubectl("default", "logs", "-l", "app=nginx", "--container", "agnhost")
 		framework.ExpectNoError(err, "failed to inspect logs in backend pods")
 		framework.Logf("%v", targetPodLogs)
 		if strings.Count(targetPodLogs, lbClientIPv4) >= 2 {

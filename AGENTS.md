@@ -87,6 +87,25 @@ Validate changes with the existing builds and relevant test suites as appropriat
 and preserve coverage of existing scenarios. If a PR also changes product code
 outside `test/`, the usual test requirements still apply to those product changes.
 
+### Test organization and reuse
+
+Before adding a test, inspect existing coverage of the behavior. Prefer extending
+an existing test or adding a named table case when the setup, lifecycle, and
+assertions fit naturally. Balance reuse with clear failures and readable tests.
+
+- Give independent scenarios fresh state and descriptive names. Sequential
+  steps are useful for one lifecycle, such as failure followed by recovery.
+- Use a separate test when the behavior needs a distinct setup, lifecycle, or
+  synchronization strategy. Split tests that accumulate unrelated assertions,
+  many mode flags, or conditional setup just to accommodate additional cases.
+- Extract small test-only helpers for repeated setup, cache waits, and result
+  reads. Keep the scenario's important inputs, failure trigger, and behavioral
+  assertions visible. Avoid building a generic test framework for a few cases.
+- Preserve distinct failure reasons, ordering constraints, and recovery checks
+  when consolidating. If several invalid inputs are present, assert which one
+  caused the failure so one cannot mask another. Judge the result by useful
+  coverage and clarity, rather than test count or line count alone.
+
 ## Key Conventions
 
 See `CONTRIBUTING.md` for full details:
@@ -108,6 +127,36 @@ unit tests use partially initialized objects or avoid the normal test harness.
 Use existing fixtures, fakes, and harnesses to construct valid objects, and keep
 test-only helpers in test files. New production injection points or abstractions
 must have a design justification beyond making a particular test easier to write.
+
+### Code comment style
+
+Write comments as short, plain-language explanations for a maintainer who
+has not followed the PR discussion.
+
+- Explain the intent, invariant, or dependency that is difficult to infer
+  from the code. For interacting events or state transitions, describe what
+  changed, what must be preserved or removed, and why ordering matters.
+- Use a small concrete scenario when it makes a corner case clearer, such
+  as two networks sharing a VRF or a node recovering after an uplink change.
+  Connect the scenario to the consequence the code prevents.
+- Put the overall contract and lifecycle at the function boundary; put a
+  branch-specific explanation next to the surprising decision. Explain
+  serialized fields and formats when their meaning is not obvious.
+- Be selective. Prefer improving an existing comment over adding another.
+  Do not narrate obvious operations, paraphrase variable names, repeat the
+  same explanation at several levels, or comment every branch.
+- Check explanations against the current implementation. Describe its real
+  guarantees and limitations, not intended behavior or PR history. Keep
+  comments current when the behavior changes.
+
+Example:
+
+```go
+// Blue also advertises through red's VRF. Removing red's network must
+// remove red's prefixes while keeping the router and imports used by blue.
+```
+
+This is more useful than `// Remove stale configuration` above a delete loop.
 
 ## OKEPs (Enhancement Proposals)
 

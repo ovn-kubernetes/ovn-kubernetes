@@ -1185,9 +1185,9 @@ var CommonFlags = []cli.Flag{
 	},
 	&cli.StringFlag{
 		Name:        "cnilogfile",
-		Usage:       "path of a file to direct log from cni shim to output to",
+		Usage:       "path of a file to direct log from cni shim to output to, must be inside " + CNILogDir,
 		Destination: &cliConfig.Logging.CNIFile,
-		Value:       "/var/log/ovn-kubernetes/ovn-k8s-cni-overlay.log",
+		Value:       CNILogDir + "/ovn-k8s-cni-overlay.log",
 	},
 	&cli.StringFlag{
 		Name:        "libovsdblogfile",
@@ -2973,6 +2973,9 @@ func initConfigWithPath(ctx *cli.Context, exec kexec.Interface, saPath string, d
 	if err := level.Set(strconv.Itoa(Logging.Level)); err != nil {
 		return "", fmt.Errorf("failed to set klog log level %v", err)
 	}
+	if err := ValidateCNILogFile(Logging.CNIFile); err != nil {
+		return "", err
+	}
 	if Logging.File != "" {
 		klogFlags := flag.NewFlagSet("klog", flag.ExitOnError)
 		klog.InitFlags(klogFlags)
@@ -3304,7 +3307,7 @@ func buildOvnKubeNodeConfig(cli, file *config) error {
 	// configure the management port.
 	if OvnKubeNode.MgmtPortNetdev != "" && OvnKubeNode.MgmtPortDPResourceName != "" {
 		klog.Warningf("ovnkube-node-mgmt-port-netdev (%s) and ovnkube-node-mgmt-port-dp-resource-name (%s) "+
-			"both specified. The provided netdev in ovnkube-node-mgmt-port-netdev will be overriden by a netdev "+
+			"both specified. The provided netdev in ovnkube-node-mgmt-port-netdev will be overridden by a netdev "+
 			"chosen by the resource provided by ovnkube-node-mgmt-port-dp-resource-name.",
 			OvnKubeNode.MgmtPortNetdev, OvnKubeNode.MgmtPortDPResourceName)
 	}

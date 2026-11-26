@@ -317,6 +317,7 @@ var _ = Describe("UDN Isolation", func() {
 		mutableNetInfo.SetPodNetworkAdvertisedVRFs(map[string][]string{nodeName: {"vrf"}})
 		Expect(util.ReconcileNetInfo(l3Controller.ReconcilableNetInfo, mutableNetInfo)).To(Succeed())
 		l3Controller.lastNADKeys = sets.New[string](ns + "/" + nadName)
+		Expect(fakeOVN.registerUDNNodeHandler(netInfoBefore.netName)).To(Succeed())
 
 		netInfoAfter := dummyPrimaryLayer3UserDefinedNetwork("192.168.0.0/16,192.169.0.0/16", "192.168.1.0/24")
 		nadAfter, err := newNetworkAttachmentDefinition(ns, nadName, *netInfoAfter.netconf())

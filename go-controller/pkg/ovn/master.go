@@ -20,7 +20,6 @@ import (
 	hotypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/hybrid-overlay/pkg/types"
 	houtil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/hybrid-overlay/pkg/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
-	nodecontroller "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controllers/node"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/generator/udn"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
@@ -47,6 +46,10 @@ type GatewayConfig struct {
 	hostAddrs                  []string
 	externalIPs                []net.IP
 	ovnClusterLRPToJoinIfAddrs []*net.IPNet
+	// isPodNetworkAdvertised is a snapshot of whether the pod network is
+	// advertised at the node, taken once per node sync so that every piece of
+	// configuration done in that sync is consistent.
+	isPodNetworkAdvertised bool
 }
 
 // SetupMaster creates the central router and load-balancers for the network
@@ -98,7 +101,7 @@ func (oc *DefaultNetworkController) syncNodeManagementPortDefault(node *corev1.N
 	return err
 }
 
-func (oc *DefaultNetworkController) nodeGatewayConfig(node *corev1.Node) (*GatewayConfig, error) {
+func (oc *DefaultNetworkController) nodeGatewayConfig(node *corev1.Node, isPodNetworkAdvertised bool) (*GatewayConfig, error) {
 	l3GatewayConfig, err := util.ParseNodeL3GatewayAnnotation(node)
 	if err != nil {
 		return nil, err
@@ -142,6 +145,7 @@ func (oc *DefaultNetworkController) nodeGatewayConfig(node *corev1.Node) (*Gatew
 		hostAddrs:                  hostAddrs,
 		externalIPs:                externalIPs,
 		ovnClusterLRPToJoinIfAddrs: oc.ovnClusterLRPToJoinIfAddrs,
+		isPodNetworkAdvertised:     isPodNetworkAdvertised,
 	}, nil
 }
 
@@ -856,7 +860,6 @@ func (oc *DefaultNetworkController) newGatewayManager(nodeName string) *GatewayM
 		oc.nbClient,
 		oc.GetNetInfo(),
 		oc.watchFactory,
-		nodecontroller.NewNodeAnnotationCache(),
 		oc.addressSetManager,
 		oc.gatewayOptions()...,
 	)

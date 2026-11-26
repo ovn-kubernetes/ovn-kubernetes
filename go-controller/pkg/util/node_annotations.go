@@ -19,6 +19,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/ptr"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
@@ -100,9 +101,6 @@ const (
 
 	// OvnNodeMasqCIDR is the CIDR form representation of the masquerade subnet that is currently configured on this node (i.e. 169.254.169.0/29)
 	OvnNodeMasqCIDR = "k8s.ovn.org/node-masquerade-subnet"
-
-	// OvnNodeEgressLabel is a user assigned node label indicating to ovn-kubernetes that the node is to be used for egress IP assignment
-	ovnNodeEgressLabel = "k8s.ovn.org/egress-assignable"
 
 	// OVNNodeHostCIDRs is used to track the different host IP addresses and subnet masks on the node
 	OVNNodeHostCIDRs = "k8s.ovn.org/host-cidrs"
@@ -703,13 +701,12 @@ func ParseNodePrimaryIfAddr(node *corev1.Node) (*ParsedNodeEgressIPConfiguration
 	if err != nil {
 		return nil, err
 	}
-	unlimited := UnlimitedNodeCapacity
 	nodeEgressIPConfig := nodeEgressIPConfiguration{
 		IFAddr: ifAddr(*nodeIfAddr),
 		Capacity: Capacity{
-			IP:   &unlimited,
-			IPv4: &unlimited,
-			IPv6: &unlimited,
+			IP:   ptr.To(UnlimitedNodeCapacity),
+			IPv4: ptr.To(UnlimitedNodeCapacity),
+			IPv6: ptr.To(UnlimitedNodeCapacity),
 		},
 	}
 	parsedEgressIPConfig, err := parseNodeEgressIPConfig(&nodeEgressIPConfig)
@@ -802,13 +799,12 @@ func ParseCloudEgressIPConfig(node *corev1.Node) (*ParsedNodeEgressIPConfigurati
 	if !ok {
 		return nil, newAnnotationNotSetError("%s annotation not found for node %q", cloudEgressIPConfigAnnotationKey, node.Name)
 	}
-	unlimited := UnlimitedNodeCapacity
 	nodeEgressIPConfig := []nodeEgressIPConfiguration{
 		{
 			Capacity: Capacity{
-				IP:   &unlimited,
-				IPv4: &unlimited,
-				IPv6: &unlimited,
+				IP:   ptr.To(UnlimitedNodeCapacity),
+				IPv4: ptr.To(UnlimitedNodeCapacity),
+				IPv6: ptr.To(UnlimitedNodeCapacity),
 			},
 		},
 	}
@@ -873,11 +869,6 @@ func parseNodeEgressIPConfig(egressIPConfig *nodeEgressIPConfiguration) (*Parsed
 		}
 	}
 	return parsedEgressIPConfig, nil
-}
-
-// GetNodeEgressLabel returns label annotation needed for marking nodes as egress assignable
-func GetNodeEgressLabel() string {
-	return ovnNodeEgressLabel
 }
 
 func SetNodeHostCIDRs(nodeAnnotator kube.Annotator, cidrs sets.Set[string]) error {

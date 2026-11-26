@@ -70,7 +70,7 @@ set_common_default_params() {
   KIND_CREATE=${KIND_CREATE:-true}
   KIND_IMAGE=${KIND_IMAGE:-kindest/node}
   KIND_CLUSTER_NAME=${KIND_CLUSTER_NAME:-ovn}
-  K8S_VERSION=${K8S_VERSION:-v1.36.4}
+  K8S_VERSION=${K8S_VERSION:-v1.37.0}
   KIND_SETTLE_DURATION=${KIND_SETTLE_DURATION:-30}
   KIND_CONFIG=${KIND_CONFIG:-${DIR}/kind.yaml.j2}
   KIND_LOCAL_REGISTRY=${KIND_LOCAL_REGISTRY:-false}
@@ -856,10 +856,10 @@ coredns_patch() {
   # 1. Github CI doesn´t offer IPv6 connectivity, so CoreDNS should be configured
   # to work in an offline environment:
   # https://github.com/coredns/coredns/issues/2494#issuecomment-457215452
-  # 2. Github CI adds following domains to resolv.conf search field:
-  # .net.
-  # CoreDNS should handle those domains and answer with NXDOMAIN instead of SERVFAIL
-  # otherwise pods stops trying to resolve the domain.
+  # 2. GitHub runners add cloud search domains: Azure uses *.internal.cloudapp.net,
+  # while AWS uses <region>.compute.internal or ec2.internal. Handle net and
+  # internal locally so search-expanded queries return NXDOMAIN instead of
+  # timing out upstream, allowing pods to continue to the cluster DNS name.
   # Get the current config
   original_coredns=$(kubectl get -oyaml -n=kube-system configmap/coredns)
   echo "Original CoreDNS config:"
@@ -867,7 +867,7 @@ coredns_patch() {
   # Patch it
   fixed_coredns=$(
     printf '%s' "${original_coredns}" | sed \
-      -e 's/^.*kubernetes cluster\.local/& net/' \
+      -e 's/^.*kubernetes cluster\.local/& net internal/' \
       -e '/^.*upstream$/d' \
       -e '/^.*fallthrough.*$/d' \
       -e 's/^\(.*forward \.\).*$/\1 '"$dns_server"' {/' \
@@ -993,9 +993,12 @@ install_metallb() {
     # Enable IPv6 forwarding in FRR
     $OCI_BIN exec frr sysctl -w net.ipv6.conf.all.forwarding=1
   fi
-  # Note: this image let's us use it also for creating load balancer backends that can send big packets
+  # External MetalLB client: needs iproute and nc. Prefer NETSHOOT_IMAGE when set
+  # so offline/mirrored environments can override the default.
+  NETSHOOT_IMAGE="${NETSHOOT_IMAGE:-ghcr.io/nicolaka/netshoot:v0.16}"
   $OCI_BIN rm -f lbclient
-  $OCI_BIN run  --cap-add NET_ADMIN --user 0  -d --network clientnet  --rm  --name lbclient  quay.io/itssurya/dev-images:metallb-lbservice
+  $OCI_BIN run --cap-add NET_ADMIN --user 0 -d --network clientnet --rm --name lbclient \
+    --entrypoint sleep "${NETSHOOT_IMAGE}" infinity
   popd
   delete_metallb_dir
 
@@ -1057,7 +1060,7 @@ install_plugins() {
   pushd plugins
   CGO_ENABLED=0 ./build_linux.sh
   KIND_NODES=$(kind_get_nodes)
-  # Opted for not overwritting the existing plugins
+  # Opted for not overwriting the existing plugins
   for node in $KIND_NODES; do
     for plugin in bandwidth bridge dhcp dummy firewall host-device ipvlan macvlan sbr static tuning vlan vrf; do
       $OCI_BIN cp ./bin/$plugin $node:/opt/cni/bin/
@@ -1489,7 +1492,7 @@ refresh_ovn_pods() {
 install_image() {
   # If local registry is being used push image there for consumption by kind cluster
   if [ "$KIND_LOCAL_REGISTRY" == true ]; then
-    echo "${1} should already be avaliable in local registry, not loading"
+    echo "${1} should already be available in local registry, not loading"
   else
     # Write the archive under a unique temporary directory per invocation:
     # podman save refuses to write to an existing file, and concurrent or
@@ -1817,7 +1820,7 @@ deploy_bgp_external_server() {
       set_nodes_default_gw "$kind_network_frr_v6"
     fi
   else
-    # disable the default route to make sure the container only routes accross
+    # disable the default route to make sure the container only routes across
     # directly connected or learnt networks (doing this at the very end since
     # docker changes the routing table when a new network is connected)
     $OCI_BIN exec "${FRR_CONTAINER_NAME}" ip route delete default
@@ -1888,7 +1891,7 @@ install_frr_k8s() {
   #
   # In regular PR e2e jobs where nobody sets a custom FRR_K8S_FRR_IMAGE
   # environment variable, both containers use FRR_DEPLOYED_IMAGE.
-  # FRR_K8S_FRR_IMAGE remains overrideable for tests that intentionally need a
+  # FRR_K8S_FRR_IMAGE remains overridable for tests that intentionally need a
   # different in-cluster daemonset image.
   #
   # Match the manifest's current upstream image exactly. If the pinned frr-k8s
@@ -1940,7 +1943,7 @@ wait_for_frr_k8s() {
 }
 
 apply_frr_k8s_receive_config() {
-  # apply a BGP peer configration with the external gateway that does not
+  # apply a BGP peer configuration with the external gateway that does not
   # exchange routes
   pushd "${FRR_TMP_DIR}"/frr-k8s/hack/demo/configs || exit 1
   sed 's/mode: all/mode: filtered/g' receive_all.yaml > receive_filtered.yaml
@@ -1962,7 +1965,7 @@ apply_frr_k8s_receive_config() {
   
   # frr-k8s webhook is declaring readiness before its endpoint is serving.
   # Let's do our own probing. Also will print logs in case of failure so we get
-  # insights on why this is hapenning. In remote mode the host API does not use
+  # insights on why this is happening. In remote mode the host API does not use
   # the DPU-cluster webhook service, so skip this probe.
   local r
   r=0

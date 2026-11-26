@@ -51,16 +51,26 @@ var (
 		Help: "Total number of adds handled by workqueue",
 	}, []string{"name"})
 
+	// 1ms to ~524s. The original base-10 bucketing had six buckets spanning 10ms
+	// to 1000s, which put a 200ms and a 900ms reconcile in the same bucket and
+	// made p99 estimates unusable. Rebucketing at base 2 fixed the resolution
+	// but 16 buckets only reach 32.768s, and the BGP density lane already pins
+	// queue wait there at 40 RouteAdvertisements on 12 nodes: wait grows with
+	// the whole queue rather than with one item, so it outruns work duration by
+	// more than an order of magnitude. 20 buckets keep the same resolution and
+	// move the ceiling out far enough for the scale ladder above that point.
+	queueBuckets = prometheus.ExponentialBuckets(.001, 2, 20)
+
 	latency = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    QueueLatencyKey,
 		Help:    "How long in seconds an item stays in workqueue before being requested.",
-		Buckets: prometheus.ExponentialBuckets(10e-3, 10, 6),
+		Buckets: queueBuckets,
 	}, []string{"name"})
 
 	workDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    WorkDurationKey,
 		Help:    "How long in seconds processing an item from workqueue takes.",
-		Buckets: prometheus.ExponentialBuckets(10e-3, 10, 6),
+		Buckets: queueBuckets,
 	}, []string{"name"})
 
 	unfinished = prometheus.NewGaugeVec(prometheus.GaugeOpts{
