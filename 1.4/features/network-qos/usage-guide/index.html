@@ -1772,6 +1772,8 @@
       
         
       
+        
+      
     
     
     
@@ -1923,6 +1925,34 @@
     
   
     EgressQoS
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api-reference/network-qos-api-spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    NetworkQoS
   
 
     
@@ -5402,20 +5432,22 @@ sudo<span class="w"> </span>nsenter<span class="w"> </span>-t<span class="w"> </
 <td style="text-align: left;">Maximum burst size that can accrue (in kilobits).</td>
 </tr>
 <tr>
-<td style="text-align: left;"><code>classifier.to</code> / <code>classifier.from</code></td>
-<td style="text-align: left;">list <code>TrafficSelector</code></td>
+<td style="text-align: left;"><code>classifier.to</code></td>
+<td style="text-align: left;">list <code>Destination</code></td>
 <td style="text-align: left;">No</td>
-<td style="text-align: left;">CIDRs the packet destination (or source) must match. Each entry is an <code>ipBlock</code> supporting an <code>except</code> list.</td>
+<td style="text-align: left;">Destinations the packet must match, at most 100. An entry is either an <code>ipBlock</code> supporting an <code>except</code> list of at most 25 entries, or a <code>podSelector</code> and/or <code>namespaceSelector</code>. The <code>cidr</code> and each <code>except</code> entry of an <code>ipBlock</code> must be a CIDR or an IP address; the <code>NetworkQoS</code> CRD rejects any other value.</td>
 </tr>
 <tr>
 <td style="text-align: left;"><code>classifier.ports[]</code></td>
 <td style="text-align: left;">list</td>
 <td style="text-align: left;">No</td>
-<td style="text-align: left;">List of <code>{protocol, port}</code> tuples the packet must match; protocol is <code>TCP</code>, <code>UDP</code>, or <code>SCTP</code>.</td>
+<td style="text-align: left;">List of <code>{protocol, port}</code> tuples the packet must match; protocol is exactly <code>TCP</code>, <code>UDP</code>, or <code>SCTP</code>; the <code>NetworkQoS</code> CRD rejects any other value.</td>
 </tr>
 </tbody>
 </table>
 <p>If <strong>all</strong> specified classifier conditions match, the packet gets the DSCP mark and/or bandwidth policer defined above. This allows for fine-grained control over which traffic flows receive QoS treatment.</p>
+<p>A <code>NetworkQoS</code> stored with another protocol or <code>ipBlock</code> value, or with longer lists, admitted by an earlier version of the CRD, is left as it is: Kubernetes CRD validation ratcheting accepts updates that do not touch its <code>egress</code> rules, and a change to the <code>egress</code> rules requires correcting the value.</p>
+<p>While a zone reports a <code>Ready-In-Zone-&lt;node&gt;</code> condition that is <code>False</code>, the <code>STATUS</code> column of <code>kubectl get networkqoses</code> shows <code>NetworkQoS Destinations not correctly applied</code>.</p>
 
 
 

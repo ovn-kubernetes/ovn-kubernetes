@@ -1772,6 +1772,8 @@
       
         
       
+        
+      
     
     
     
@@ -1923,6 +1925,34 @@
     
   
     EgressQoS
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-reference/network-qos-api-spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    NetworkQoS
   
 
     
@@ -5291,7 +5321,6 @@ whether NetworkQoS rules are configured correctly in OVN or not.</p>
 <code>go-controller/pkg/crd/networkqos/v1alpha1</code>. This would be a namespace-scoped CRD:</li>
 </ul>
 <div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="p">(</span>
-<span class="w">    </span><span class="nx">networkingv1</span><span class="w"> </span><span class="s">"k8s.io/api/networking/v1"</span>
 <span class="w">    </span><span class="nx">metav1</span><span class="w"> </span><span class="s">"k8s.io/apimachinery/pkg/apis/meta/v1"</span>
 
 <span class="w">    </span><span class="nx">crdtypes</span><span class="w"> </span><span class="s">"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"</span>
@@ -5366,6 +5395,7 @@ whether NetworkQoS rules are configured correctly in OVN or not.</p>
 
 <span class="kd">type</span><span class="w"> </span><span class="nx">Classifier</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="c1">// +optional</span>
+<span class="w">    </span><span class="c1">// +kubebuilder:validation:MaxItems=100</span>
 <span class="w">    </span><span class="nx">To</span><span class="w"> </span><span class="p">[]</span><span class="nx">Destination</span><span class="w"> </span><span class="s">`json:"to"`</span>
 
 <span class="w">    </span><span class="c1">// +optional</span>
@@ -5393,8 +5423,8 @@ whether NetworkQoS rules are configured correctly in OVN or not.</p>
 <span class="c1">// Port specifies destination protocol and port on which NetworkQoS</span>
 <span class="c1">// rule is applied</span>
 <span class="kd">type</span><span class="w"> </span><span class="nx">Port</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="c1">// protocol (tcp, udp, sctp) that the traffic must match.</span>
-<span class="w">    </span><span class="c1">// +kubebuilder:validation:Pattern=^TCP|UDP|SCTP$</span>
+<span class="w">    </span><span class="c1">// protocol (TCP, UDP, SCTP) that the traffic must match.</span>
+<span class="w">    </span><span class="c1">// +kubebuilder:validation:Enum=TCP;UDP;SCTP</span>
 <span class="w">    </span><span class="c1">// +optional</span>
 <span class="w">    </span><span class="nx">Protocol</span><span class="w"> </span><span class="kt">string</span><span class="w"> </span><span class="s">`json:"protocol"`</span>
 
@@ -5430,8 +5460,28 @@ whether NetworkQoS rules are configured correctly in OVN or not.</p>
 <span class="w">    </span><span class="c1">// ipBlock defines policy on a particular IPBlock. If this field is set then</span>
 <span class="w">    </span><span class="c1">// neither of the other fields can be.</span>
 <span class="w">    </span><span class="c1">// +optional</span>
-<span class="w">    </span><span class="nx">IPBlock</span><span class="w"> </span><span class="o">*</span><span class="nx">networkingv1</span><span class="p">.</span><span class="nx">IPBlock</span><span class="w"> </span><span class="s">`json:"ipBlock,omitempty" protobuf:"bytes,3,rep,name=ipBlock"`</span>
+<span class="w">    </span><span class="nx">IPBlock</span><span class="w"> </span><span class="o">*</span><span class="nx">IPBlock</span><span class="w"> </span><span class="s">`json:"ipBlock,omitempty" protobuf:"bytes,3,rep,name=ipBlock"`</span>
 <span class="p">}</span>
+
+<span class="c1">// IPBlock selects destination addresses by CIDR, with optional exclusions.</span>
+<span class="kd">type</span><span class="w"> </span><span class="nx">IPBlock</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="c1">// cidr is a CIDR, for example "192.168.1.0/24" or "2001:db8::/64", or a</span>
+<span class="w">    </span><span class="c1">// single IP address.</span>
+<span class="w">    </span><span class="c1">// +required</span>
+<span class="w">    </span><span class="nx">CIDR</span><span class="w"> </span><span class="nx">CIDR</span><span class="w"> </span><span class="s">`json:"cidr" protobuf:"bytes,1,name=cidr"`</span>
+
+<span class="w">    </span><span class="c1">// except lists CIDRs or single IP addresses that are excluded from cidr,</span>
+<span class="w">    </span><span class="c1">// for example "192.168.1.0/28" or "2001:db8::/96".</span>
+<span class="w">    </span><span class="c1">// +optional</span>
+<span class="w">    </span><span class="c1">// +listType=atomic</span>
+<span class="w">    </span><span class="c1">// +kubebuilder:validation:MaxItems=25</span>
+<span class="w">    </span><span class="nx">Except</span><span class="w"> </span><span class="p">[]</span><span class="nx">CIDR</span><span class="w"> </span><span class="s">`json:"except,omitempty" protobuf:"bytes,2,rep,name=except"`</span>
+<span class="p">}</span>
+
+<span class="c1">// CIDR is an IPv4 or IPv6 network in CIDR notation, or a single IP address.</span>
+<span class="c1">// +kubebuilder:validation:XValidation:rule="isCIDR(self) || isIP(self)", message="must be a CIDR or an IP address"</span>
+<span class="c1">// +kubebuilder:validation:MaxLength=49</span>
+<span class="kd">type</span><span class="w"> </span><span class="nx">CIDR</span><span class="w"> </span><span class="kt">string</span>
 
 <span class="c1">// Status defines the observed state of NetworkQoS</span>
 <span class="kd">type</span><span class="w"> </span><span class="nx">Status</span><span class="w"> </span><span class="kd">struct</span><span class="w"> </span><span class="p">{</span>

@@ -37,6 +37,10 @@
          <lastmod>2026-11-27</lastmod>
     </url>
     <url>
+         <loc>https://www.ovn.org/ovn-kubernetes/1.4/api-reference/network-qos-api-spec/</loc>
+         <lastmod>2026-11-27</lastmod>
+    </url>
+    <url>
          <loc>https://www.ovn.org/ovn-kubernetes/1.4/api-reference/routeadvertisements-api-spec/</loc>
          <lastmod>2026-11-27</lastmod>
     </url>
