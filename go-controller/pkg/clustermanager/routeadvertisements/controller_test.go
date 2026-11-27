@@ -229,6 +229,47 @@ func (tn testNode) Node() *corev1.Node {
 	}
 }
 
+// TestUpdateFRRConfigurationsWriteFailure verifies that duplicates remain
+// until the desired update succeeds on retry.
+func TestUpdateFRRConfigurationsWriteFailure(t *testing.T) {
+	g := gomega.NewWithT(t)
+	existing := generatedFRRConfig("existing", "node", true)
+	duplicate := generatedFRRConfig("duplicate", "node", true)
+	tt := newFRRReconcileTest(t, g, "eth0", existing, duplicate)
+	client := tt.fakeClientset.FRRClient.(*frrfake.Clientset)
+	updateErr := errors.New("update failed")
+	reject := true
+	client.PrependReactor("update", "frrconfigurations", func(ctesting.Action) (bool, runtime.Object, error) {
+		if reject {
+			return true, nil, updateErr
+		}
+		return false, nil, nil
+	})
+
+	desired := generatedFRRConfig("desired", "node", true).FRRConfiguration()
+	desired.Spec.BGP.Routers[0].ASN = 2
+	result := frrGenerationResult{frrConfigs: []*frrapi.FRRConfiguration{desired}}
+	client.ClearActions()
+	changed, err := tt.c.updateFRRConfigurations(context.Background(), "ra", &result)
+	g.Expect(err).NotTo(gomega.HaveOccurred(), "update failures are recorded in the result rather than returned")
+	g.Expect(changed).To(gomega.BeFalse(), "a failed update must not count as a change")
+	g.Expect(result.failedFRRUpdate).To(gomega.BeTrue(), "hold NAD withdrawals that depend on the failed update")
+	g.Expect(errors.Is(result.failureError(), updateErr)).To(gomega.BeTrue(), "the recorded failure must wrap the update error")
+	g.Expect(result.failureError().Error()).To(gomega.ContainSubstring("frrNamespace/"+desired.Name), "the recorded failure must identify the failed FRRConfiguration")
+	for _, action := range client.Actions() {
+		g.Expect(action.GetVerb()).NotTo(gomega.Equal("delete"), "keep duplicates until the desired update succeeds")
+	}
+
+	reject = false
+	result = frrGenerationResult{frrConfigs: []*frrapi.FRRConfiguration{desired}}
+	changed, err = tt.c.updateFRRConfigurations(context.Background(), "ra", &result)
+	g.Expect(err).NotTo(gomega.HaveOccurred(), "a successful retry must not return an error")
+	g.Expect(changed).To(gomega.BeTrue(), "a successful update must count as a change")
+	g.Expect(result.failureError()).NotTo(gomega.HaveOccurred(), "a successful retry must clear the recorded failure")
+	g.Expect(tt.frrConfigNames()).To(gomega.ConsistOf("frrConfig", desired.Name), "delete the duplicate after the update succeeds")
+	g.Expect(tt.generatedConfigs("ra")["ra/frrConfig/node"].Spec).To(gomega.Equal(desired.Spec), "the retried update must write the desired configuration")
+}
+
 // TestDeleteIncompleteVTEPConfigurations checks that partial deletion failures remain retryable
 // without preventing cleanup of other rejected nodes.
 func TestDeleteIncompleteVTEPConfigurations(t *testing.T) {
