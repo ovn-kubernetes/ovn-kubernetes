@@ -405,7 +405,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					&nbdb.LogicalRouter{
 						Name: ovntypes.OVNClusterRouter,
 						UUID: ovntypes.OVNClusterRouter + "-UUID",
-						Policies: []string{"default-no-reroute-UUID", "no-reroute-service-UUID",
+						Policies: []string{"remote-reroute-UUID", "default-no-reroute-UUID", "no-reroute-service-UUID",
 							"default-no-reroute-node-UUID", "default-no-reroute-reply-traffic", "reroute-UUID"},
 						StaticRoutes: []string{"reroute-static-route-UUID"},
 					},
@@ -532,6 +532,8 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					getDefaultQoSRule(false, netInfo.GetNetworkName(), ovntypes.DefaultNetworkControllerName),
 					egressIPServedPodsASUDNv4,
 					udnEnabledSvcV4,
+					getReRoutePolicy(egressPodCDNRemote.Status.PodIP, "4", "remote-reroute-UUID", []string{node1DefaultRtoJIP},
+						getEgressIPLRPReRouteDbIDs(eIP.Name, egressPodCDNRemote.Namespace, egressPodCDNRemote.Name, IPFamilyValueV4, ovntypes.DefaultNetworkName, ovntypes.DefaultNetworkControllerName).GetExternalIDs()),
 				}
 				ginkgo.By("ensure expected equals actual")
 				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseStateTwoEgressNodes))
@@ -791,7 +793,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					&nbdb.LogicalRouter{
 						Name: ovntypes.OVNClusterRouter,
 						UUID: ovntypes.OVNClusterRouter + "-UUID",
-						Policies: []string{"default-no-reroute-UUID", "no-reroute-service-UUID",
+						Policies: []string{"remote-reroute-UUID", "default-no-reroute-UUID", "no-reroute-service-UUID",
 							"default-no-reroute-node-UUID", "default-no-reroute-reply-traffic", "reroute-UUID"},
 						StaticRoutes: []string{"reroute-static-route-UUID"},
 					},
@@ -919,6 +921,8 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					getDefaultQoSRule(false, netInfo.GetNetworkName(), ovntypes.DefaultNetworkControllerName),
 					egressIPServedPodsASUDNv4,
 					udnEnabledSvcV4,
+					getReRoutePolicy(egressPodCDNRemote.Status.PodIP, "4", "remote-reroute-UUID", []string{node1DefaultRtoJIP},
+						getEgressIPLRPReRouteDbIDs(eIP.Name, egressPodCDNRemote.Namespace, egressPodCDNRemote.Name, IPFamilyValueV4, ovntypes.DefaultNetworkName, ovntypes.DefaultNetworkControllerName).GetExternalIDs()),
 				}
 				ginkgo.By("ensure expected equals actual")
 				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseStateTwoEgressNodes))
@@ -1319,7 +1323,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					&nbdb.LogicalRouter{
 						Name: ovntypes.OVNClusterRouter,
 						UUID: ovntypes.OVNClusterRouter + "-UUID",
-						Policies: []string{"default-no-reroute-UUID", "no-reroute-service-UUID",
+						Policies: []string{"remote-reroute-UUID", "default-no-reroute-UUID", "no-reroute-service-UUID",
 							"default-no-reroute-node-UUID", "default-no-reroute-reply-traffic", "reroute-UUID"},
 						StaticRoutes: []string{"reroute-static-route-UUID"},
 					},
@@ -1446,6 +1450,8 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					getDefaultQoSRule(false, netInfo.GetNetworkName(), ovntypes.DefaultNetworkControllerName),
 					egressIPServedPodsASUDNv4,
 					udnEnabledSvcV4,
+					getReRoutePolicy(egressPodCDNRemote.Status.PodIP, "4", "remote-reroute-UUID", []string{node1DefaultRtoJIP},
+						getEgressIPLRPReRouteDbIDs(eIP.Name, egressPodCDNRemote.Namespace, egressPodCDNRemote.Name, IPFamilyValueV4, ovntypes.DefaultNetworkName, ovntypes.DefaultNetworkControllerName).GetExternalIDs()),
 				}
 				ginkgo.By("ensure expected equals actual")
 				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseStateTwoEgressNodes))
@@ -2573,7 +2579,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					&nbdb.LogicalRouter{
 						Name: ovntypes.OVNClusterRouter,
 						UUID: ovntypes.OVNClusterRouter + "-UUID",
-						Policies: []string{"default-no-reroute-UUID", "no-reroute-service-UUID",
+						Policies: []string{"remote-reroute-UUID", "default-no-reroute-UUID", "no-reroute-service-UUID",
 							"default-no-reroute-node-UUID", "default-no-reroute-reply-traffic", "reroute-UUID"},
 						StaticRoutes: []string{"reroute-static-route-UUID"},
 					},
@@ -2700,6 +2706,8 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					getDefaultQoSRule(false, netInfo.GetNetworkName(), ovntypes.DefaultNetworkControllerName),
 					egressIPServedPodsASUDNv4,
 					udnEnabledSvcV4,
+					getReRoutePolicy(egressPodCDNRemote.Status.PodIP, "4", "remote-reroute-UUID", []string{node1DefaultRtoJIP},
+						getEgressIPLRPReRouteDbIDs(eIP.Name, egressPodCDNRemote.Namespace, egressPodCDNRemote.Name, IPFamilyValueV4, ovntypes.DefaultNetworkName, ovntypes.DefaultNetworkControllerName).GetExternalIDs()),
 				}
 				ginkgo.By("ensure expected equals actual")
 				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseStateTwoEgressNodes))
@@ -2948,7 +2956,7 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					&nbdb.LogicalRouter{
 						Name: ovntypes.OVNClusterRouter,
 						UUID: ovntypes.OVNClusterRouter + "-UUID",
-						Policies: []string{"default-no-reroute-UUID", "no-reroute-service-UUID",
+						Policies: []string{"remote-reroute-UUID", "default-no-reroute-UUID", "no-reroute-service-UUID",
 							"default-no-reroute-node-UUID", "default-no-reroute-reply-traffic", "reroute-UUID"},
 						StaticRoutes: []string{"reroute-static-route-UUID"},
 					},
@@ -3075,6 +3083,8 @@ var _ = ginkgo.Describe("EgressIP Operations for user defined network with topol
 					getDefaultQoSRule(false, netInfo.GetNetworkName(), ovntypes.DefaultNetworkControllerName),
 					egressIPServedPodsASUDNv4,
 					udnEnabledSvcV4,
+					getReRoutePolicy(egressPodCDNRemote.Status.PodIP, "4", "remote-reroute-UUID", []string{node1DefaultRtoJIP},
+						getEgressIPLRPReRouteDbIDs(eIP.Name, egressPodCDNRemote.Namespace, egressPodCDNRemote.Name, IPFamilyValueV4, ovntypes.DefaultNetworkName, ovntypes.DefaultNetworkControllerName).GetExternalIDs()),
 				}
 				ginkgo.By("ensure expected equals actual")
 				gomega.Eventually(fakeOvn.nbClient).Should(libovsdbtest.HaveData(expectedDatabaseState))

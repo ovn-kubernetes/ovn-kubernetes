@@ -143,6 +143,8 @@ const (
 	DefaultNoRereoutePriority             = 102
 	EgressSVCReroutePriority              = 101
 	EgressIPReroutePriority               = 100
+	EgressGatewayReroutePriority          = 90
+	EgressGatewayReplyQoSPriority         = 102
 	EgressIPRerouteQoSRulePriority        = 103
 	NetworkConnectPolicyPriority          = 9001
 	// priority of logical router policies on a nodes gateway router
@@ -177,6 +179,7 @@ const (
 	// Packet marking
 	EgressIPNodeConnectionMark         = "1008"
 	EgressIPReplyTrafficConnectionMark = 42
+	EgressGatewayReplyTrafficMark      = 43
 	// Packet mark for egress IP traffic on secondary host interfaces
 	// This mark will be cleared by node controller when SNAT is ready
 	EgressIPSecondaryInterfaceMark = "1009"

@@ -54,9 +54,10 @@ type ClusterManager struct {
 	udnClusterManager           *userDefinedNetworkClusterManager
 	// Controller used for programming node allocation for egress IP
 	// The OVN DB setup is handled by egressIPZoneController that runs in ovnkube-controller
-	eIPC                          *egressIPClusterController
-	egressServiceController       *egressservice.Controller
-	endpointSliceMirrorController *endpointslicemirror.Controller
+	eIPC                           *egressIPClusterController
+	egressGatewayClusterController *egressGatewayClusterController
+	egressServiceController        *egressservice.Controller
+	endpointSliceMirrorController  *endpointslicemirror.Controller
 	// Controller used for maintaining dns name resolver objects
 	dnsNameResolverController *dnsnameresolver.Controller
 	// Controller for managing user-defined-network CRD
@@ -140,6 +141,7 @@ func NewClusterManager(
 	if config.OVNKubernetesFeature.EnableEgressIP {
 		cm.eIPC = newEgressIPController(ovnClient, wf, recorder)
 	}
+	cm.egressGatewayClusterController = newEgressGatewayClusterController(ovnClient, wf)
 
 	if config.OVNKubernetesFeature.EnableEgressService {
 		// TODO: currently an ugly hack to pass the (copied) isReachable func to the egress service controller
@@ -268,6 +270,10 @@ func (cm *ClusterManager) Start(ctx context.Context) error {
 		return fmt.Errorf("could not start node allocation controller, err: %w", err)
 	}
 
+	if err := cm.egressGatewayClusterController.Start(); err != nil {
+		return err
+	}
+
 	if config.OVNKubernetesFeature.EnableEgressIP {
 		if err := cm.eIPC.Start(); err != nil {
 			return err
@@ -346,6 +352,7 @@ func (cm *ClusterManager) Start(ctx context.Context) error {
 // Stop the cluster manager.
 func (cm *ClusterManager) Stop() {
 	klog.Info("Stopping the cluster manager")
+	cm.egressGatewayClusterController.Stop()
 	cm.defaultNetClusterController.Stop()
 	cm.nodeAllocationController.Stop()
 

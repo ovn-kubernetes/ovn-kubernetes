@@ -85,6 +85,7 @@ func getFlagsByCategory() map[string][]cli.Flag {
 	m["Metrics Options"] = config.MetricsFlags
 	m["TLS Options"] = config.TLSFlags
 	m["Egress IP Health-Check TLS Options"] = config.EgressIPHealthCheckTLSFlags
+	m["Egress Gateway Health-Check TLS Options"] = config.EgressGatewayHealthCheckTLSFlags
 	m["Hybrid Overlay Options"] = config.HybridOverlayFlags
 
 	return m

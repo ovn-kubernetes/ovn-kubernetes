@@ -96,7 +96,8 @@ type DefaultNetworkController struct {
 	svcController *svccontroller.Controller
 
 	// Controller used for programming OVN for egress IP
-	eIPC *EgressIPController
+	eIPC                        *EgressIPController
+	egressGatewayNodeController *egressGatewayNodeController
 
 	// Controller used to handle egress services
 	egressSvcController *egresssvc.Controller
@@ -357,6 +358,9 @@ func (oc *DefaultNetworkController) Start(ctx context.Context) error {
 
 // Stop gracefully stops the controller
 func (oc *DefaultNetworkController) Stop() {
+	if oc.egressGatewayNodeController != nil {
+		oc.egressGatewayNodeController.Stop()
+	}
 	oc.DeregisterNodeHandler()
 	if oc.dnsNameResolver != nil {
 		oc.dnsNameResolver.Shutdown()
@@ -671,6 +675,10 @@ func (oc *DefaultNetworkController) run(ctx context.Context) error {
 	// which most other watches depend on.
 	// https://github.com/ovn-kubernetes/ovn-kubernetes/pull/859
 	if err := WithSyncDurationMetric("node", oc.startNodeReconciliation); err != nil {
+		return err
+	}
+	oc.egressGatewayNodeController = newEgressGatewayNodeController(oc)
+	if err := oc.egressGatewayNodeController.Start(); err != nil {
 		return err
 	}
 	if oc.uplinkStateController != nil {

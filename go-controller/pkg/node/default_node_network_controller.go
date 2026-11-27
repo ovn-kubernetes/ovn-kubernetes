@@ -34,6 +34,7 @@ import (
 	honode "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/hybrid-overlay/pkg/controller"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/cni"
 	config "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
 	adminpolicybasedrouteclientset "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1/apis/clientset/versioned"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/informer"
@@ -113,8 +114,9 @@ func NewCommonNodeNetworkControllerInfo(kubeClient clientset.Interface, apbExter
 type DefaultNodeNetworkController struct {
 	BaseNodeNetworkController
 
-	mgmtPortController managementport.Controller
-	Gateway            Gateway
+	egressGatewayController controller.Controller
+	mgmtPortController      managementport.Controller
+	Gateway                 Gateway
 
 	// Node healthcheck server for cloud load balancers
 	healthzServer *proxierHealthUpdater
@@ -263,6 +265,9 @@ func (oc *DefaultNodeNetworkController) Reconcile(_ context.Context, netInfo uti
 
 		if oc.mgmtPortController != nil {
 			oc.mgmtPortController.Reconcile()
+		}
+		if oc.egressGatewayController != nil {
+			oc.egressGatewayController.Reconcile(oc.name)
 		}
 	}
 
@@ -1036,6 +1041,12 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) (err error) {
 	if err != nil {
 		return fmt.Errorf("failed to start management port controller: %w", err)
 	}
+	// In DPU mode, there is no local OVN management-port IP for the health server to bind to.
+	if !config.IsModeDPU() {
+		if err := nc.startEgressGateway(); err != nil {
+			return fmt.Errorf("failed to start EgressGateway: %w", err)
+		}
+	}
 	if config.OVNKubernetesFeature.EnableEgressIP {
 		// Start the health checking server used by egressip, if EgressIPNodeHealthCheckPort is specified
 		if err := nc.startEgressIPHealthCheckingServer(nc.mgmtPortController); err != nil {
@@ -1151,6 +1162,9 @@ func (nc *DefaultNodeNetworkController) Stop() {
 	if nc.stopChan == nil {
 		klog.Infof("Default node network controller is already stopped")
 		return
+	}
+	if nc.egressGatewayController != nil {
+		controller.Stop(nc.egressGatewayController)
 	}
 	close(nc.stopChan)
 	nc.stopChan = nil

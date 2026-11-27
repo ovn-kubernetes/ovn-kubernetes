@@ -2074,13 +2074,15 @@ func (e *EgressIPController) syncStaleEgressReroutePolicy(cache egressIPCache, i
 					return true
 				}
 				egressPodIPs := sets.NewString()
-				// Since LRPs are created only for pods scheduled on this controller's node,
-				// we need to care about only those pods. Nexthop for them will
-				// either be transit switch IP or join switch IP or mp0 IP.
-				// FIXME: LRPs are also created for remote pods to route them
-				// correctly but we do not handling cleaning for them now
 				for _, podIPs := range data.egressLocalPods {
 					egressPodIPs.Insert(podIPs.UnsortedList()...)
+				}
+				// Exit nodes also own reroutes for remote pods assigned to them.
+				if networkName == types.DefaultNetworkName &&
+					slices.Contains(cache.egressIPNameToAssignedNodes[eipName], e.nodeName) {
+					for _, podIPs := range data.egressRemotePods {
+						egressPodIPs.Insert(podIPs.UnsortedList()...)
+					}
 				}
 				if !egressPodIPs.Has(podIP.String()) {
 					klog.Infof("syncStaleEgressReroutePolicy will delete %s due to no nexthop or stale logical ip: %v", extractedEgressIPName, item)
@@ -2543,6 +2545,9 @@ func (e *EgressIPController) addEgressNode(node *corev1.Node) error {
 		if err != nil {
 			return fmt.Errorf("failed to get default network gateway router join IPs for node %q: %w", node.Name, err)
 		}
+		// EgressGateway also needs this route for remote pod traffic: OVN performs
+		// route lookup before evaluating router policies. Without a matching route,
+		// packets are dropped before reaching the priority-90 or priority-100 policy.
 		if err := libovsdbutil.CreateDefaultRouteToExternal(e.nbClient, ni.GetNetworkScopedClusterRouterName(),
 			ni.GetNetworkScopedGWRouterName(node.Name), ni.Subnets(), gatewayIPs); err != nil {
 			return fmt.Errorf("failed to create route to external for network %s: %v", ni.GetNetworkName(), err)
@@ -2876,9 +2881,10 @@ func (e *EgressIPController) addPodEgressIPAssignment(ni util.NetInfo, egressIPN
 				}
 			}
 		}
-		if ni.IsDefault() && !isOVNNetwork && (loadedPodNode && !isLocalPod) {
-			// For CDNs, configure LRP with reroute action for remote pods on egress nodes to support redirect to local management port
-			// when the egress IP is assigned to a host secondary interface
+		if ni.IsDefault() && loadedPodNode && !isLocalPod {
+			// Remote primary-interface EgressIP pods need an explicit path to the
+			// gateway router's SNAT, ahead of lower-priority reroute policies.
+			// Secondary-interface EgressIPs use the management port instead.
 			routerName := ni.GetNetworkScopedClusterRouterName()
 			ops, err = e.createReroutePolicyOps(ni, ops, podIPs, status, policyOpsMark, egressIPName, nextHopIP, routerName, pod.Namespace, pod.Name)
 			if err != nil {
@@ -2972,11 +2978,11 @@ func (e *EgressIPController) deletePodEgressIPAssignment(ni util.NetInfo, egress
 	}
 
 	if loadedEgressNode && isLocalEgressNode {
-		if ni.IsDefault() && !isOVNNetwork && (!loadedPodNode || !isLocalPod) { // node is deleted (we can't determine locality so we always try and nuke OR pod is remote)
-			// For CDNs, delete reroute for remote pods on egress nodes when the egress IP is assigned to a secondary host interface
+		if ni.IsDefault() && (!loadedPodNode || !isLocalPod) {
+			// Remove the exit-node reroute together with its EgressIP assignment.
 			ops, err = e.deleteReroutePolicyOps(ni, ops, status, egressIPName, nextHopIP, routerName, pod.Namespace, pod.Name)
 			if err != nil {
-				return fmt.Errorf("unable to delete logical router static route ops %v, err: %v", status, err)
+				return fmt.Errorf("unable to delete logical router policy ops %v, err: %v", status, err)
 			}
 		}
 		if ni.IsDefault() {

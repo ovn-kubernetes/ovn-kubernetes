@@ -382,6 +382,21 @@ var PortGroupUDN = newObjectIDsType(portGroup, UDNIsolationOwnerType, []External
 	ObjectNameKey,
 })
 
+// LogicalRouterPolicyEgressGateway identifies EgressGateway-owned routing policies.
+var LogicalRouterPolicyEgressGateway = newObjectIDsType(logicalRouterPolicy, "EgressGateway", []ExternalIDKey{
+	ObjectNameKey, IPFamilyKey, NetworkKey,
+})
+
+// QoSEgressGateway identifies EgressGateway-owned reply marking rules.
+var QoSEgressGateway = newObjectIDsType(qos, "EgressGateway", []ExternalIDKey{
+	ObjectNameKey, IPFamilyKey, NetworkKey,
+})
+
+// NATEgressGateway identifies SNAT rules for remote pod subnets on a selected gateway.
+var NATEgressGateway = newObjectIDsType(nat, "EgressGateway", []ExternalIDKey{
+	ObjectNameKey, IPFamilyKey, NetworkKey,
+})
+
 var LogicalRouterPolicyEgressIP = newObjectIDsType(logicalRouterPolicy, EgressIPOwnerType, []ExternalIDKey{
 	// the priority of the LRP
 	PriorityKey,
