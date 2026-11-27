@@ -582,6 +582,59 @@ spec:
 		ginkgo.Entry("ipv6", &skipIpv6, &dstPod1IPv6),
 	)
 
+	ginkgo.DescribeTable("Limits egress traffic by protocol and port through a NetworkQoS spec without destinations",
+		func(skipThisTableEntry *bool, dst1IP *string) {
+			if *skipThisTableEntry {
+				return
+			}
+			rate := 5000
+			dstPod1, err := createPod(f, dstPod1Name, dstNode, dstPodNamespace, []string{"bash", "-c", "iperf3 -s -p 80 -D && iperf3 -s -p 8080"}, map[string]string{"component": "nqos-test-port-only"}, func(p *corev1.Pod) {
+				p.Spec.Containers[0].Image = images.Netshoot()
+			})
+			framework.ExpectNoError(err, "failed to create pod %s/%s", dstPodNamespace, dstPod1Name)
+			gomega.Eventually(func() error {
+				_, err := e2ekubectl.RunKubectl(dstPodNamespace, "exec", dstPod1Name, "--", "which", "iperf3")
+				return err
+			}, 60*time.Second, 1*time.Second).ShouldNot(gomega.HaveOccurred(), "iperf3 is not available in pod %s/%s", dstPodNamespace, dstPod1Name)
+			dstPod1IPv4, dstPod1IPv6 = getPodAddresses(dstPod1)
+			bps := iperf3Test(f, srcPodName, *dst1IP, 80)
+			gomega.Expect(bps/1000).To(gomega.BeNumerically(">", float64(rate)*bandwidthFluctuation),
+				"traffic to %s must not be limited before the NetworkQoS is created", *dst1IP)
+
+			networkQoSSpec := fmt.Sprintf(`
+apiVersion: k8s.ovn.org/v1alpha1
+kind: NetworkQoS
+metadata:
+  namespace: %s
+  name: %s
+spec:
+  podSelector:
+    matchLabels:
+      component: nqos-test-src
+  priority: 56
+  egress:
+  - dscp: 5
+    bandwidth:
+      rate: %d
+    classifier:
+      ports:
+      - protocol: TCP
+        port: 80
+`, f.Namespace.Name, nqosSpecName, rate)
+			_, err = e2ekubectl.RunKubectlInput(f.Namespace.Name, networkQoSSpec, "create", "-f", "-")
+			framework.ExpectNoError(err, "failed to create NetworkQoS %s/%s", f.Namespace.Name, nqosSpecName)
+			waitForNetworkQoSApplied(f.Namespace.Name)
+			bps = iperf3Test(f, srcPodName, *dst1IP, 80)
+			gomega.Expect(bps/1000).To(gomega.BeNumerically("<=", float64(rate)*bandwidthFluctuation),
+				"traffic to %s port 80 must be limited by the NetworkQoS", *dst1IP)
+			bps = iperf3Test(f, srcPodName, *dst1IP, 8080)
+			gomega.Expect(bps/1000).To(gomega.BeNumerically(">", float64(rate)*bandwidthFluctuation),
+				"traffic to %s port 8080 must not be limited by the NetworkQoS", *dst1IP)
+		},
+		ginkgo.Entry("ipv4", &skipIpv4, &dstPod1IPv4),
+		ginkgo.Entry("ipv6", &skipIpv6, &dstPod1IPv6),
+	)
+
 	ginkgo.AfterEach(func() {
 		err := f.ClientSet.CoreV1().Namespaces().Delete(context.Background(), dstPodNamespace, metav1.DeleteOptions{})
 		framework.ExpectNoError(err, "Error deleting Namespace %v: %v", dstPodNamespace, err)

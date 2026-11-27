@@ -100,9 +100,12 @@ spec:
                                 minimum: 1
                                 type: integer
                               protocol:
-                                description: protocol (tcp, udp, sctp) that the traffic
+                                description: protocol (TCP, UDP, SCTP) that the traffic
                                   must match.
-                                pattern: ^TCP|UDP|SCTP$
+                                enum:
+                                - TCP
+                                - UDP
+                                - SCTP
                                 type: string
                             type: object
                           type: array
@@ -120,16 +123,26 @@ spec:
                                 properties:
                                   cidr:
                                     description: |-
-                                      cidr is a string representing the IPBlock
-                                      Valid examples are "192.168.1.0/24" or "2001:db8::/64"
+                                      cidr is a CIDR, for example "192.168.1.0/24" or "2001:db8::/64", or a
+                                      single IP address.
+                                    maxLength: 49
                                     type: string
+                                    x-kubernetes-validations:
+                                    - message: must be a CIDR or an IP address
+                                      rule: isCIDR(self) || isIP(self)
                                   except:
                                     description: |-
-                                      except is a slice of CIDRs that should not be included within an IPBlock
-                                      Valid examples are "192.168.1.0/24" or "2001:db8::/64"
-                                      Except values will be rejected if they are outside the cidr range
+                                      except lists CIDRs or single IP addresses that are excluded from cidr,
+                                      for example "192.168.1.0/28" or "2001:db8::/96".
                                     items:
+                                      description: CIDR is an IPv4 or IPv6 network
+                                        in CIDR notation, or a single IP address.
+                                      maxLength: 49
                                       type: string
+                                      x-kubernetes-validations:
+                                      - message: must be a CIDR or an IP address
+                                        rule: isCIDR(self) || isIP(self)
+                                    maxItems: 25
                                     type: array
                                     x-kubernetes-list-type: atomic
                                 required:
@@ -247,6 +260,7 @@ spec:
                                 and ipBlock
                               rule: '!(has(self.ipBlock) && (has(self.podSelector)
                                 || has(self.namespaceSelector)))'
+                          maxItems: 100
                           type: array
                           x-kubernetes-list-type: atomic
                       type: object

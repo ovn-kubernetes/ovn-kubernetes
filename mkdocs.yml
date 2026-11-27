@@ -126,6 +126,7 @@ nav:
       - EgressIP: api-reference/egress-ip-api-spec.md
       - EgressService: api-reference/egress-service-api-spec.md
       - EgressQoS: api-reference/egress-qos-api-spec.md
+      - NetworkQoS: api-reference/network-qos-api-spec.md
       - EgressFirewall: api-reference/egress-firewall-api-spec.md
       - AdminPolicyBasedExternalRoutes: api-reference/admin-epbr-api-spec.md
       - UserDefinedNetwork: api-reference/userdefinednetwork-api-spec.md

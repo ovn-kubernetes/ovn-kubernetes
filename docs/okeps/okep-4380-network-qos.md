@@ -156,7 +156,6 @@ whether NetworkQoS rules are configured correctly in OVN or not.
 
 ```go
 import (
-	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	crdtypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"
@@ -231,6 +230,7 @@ type Rule struct {
 
 type Classifier struct {
 	// +optional
+	// +kubebuilder:validation:MaxItems=100
 	To []Destination `json:"to"`
 
 	// +optional
@@ -258,8 +258,8 @@ type Bandwidth struct {
 // Port specifies destination protocol and port on which NetworkQoS
 // rule is applied
 type Port struct {
-	// protocol (tcp, udp, sctp) that the traffic must match.
-	// +kubebuilder:validation:Pattern=^TCP|UDP|SCTP$
+	// protocol (TCP, UDP, SCTP) that the traffic must match.
+	// +kubebuilder:validation:Enum=TCP;UDP;SCTP
 	// +optional
 	Protocol string `json:"protocol"`
 
@@ -295,8 +295,28 @@ type Destination struct {
 	// ipBlock defines policy on a particular IPBlock. If this field is set then
 	// neither of the other fields can be.
 	// +optional
-	IPBlock *networkingv1.IPBlock `json:"ipBlock,omitempty" protobuf:"bytes,3,rep,name=ipBlock"`
+	IPBlock *IPBlock `json:"ipBlock,omitempty" protobuf:"bytes,3,rep,name=ipBlock"`
 }
+
+// IPBlock selects destination addresses by CIDR, with optional exclusions.
+type IPBlock struct {
+	// cidr is a CIDR, for example "192.168.1.0/24" or "2001:db8::/64", or a
+	// single IP address.
+	// +required
+	CIDR CIDR `json:"cidr" protobuf:"bytes,1,name=cidr"`
+
+	// except lists CIDRs or single IP addresses that are excluded from cidr,
+	// for example "192.168.1.0/28" or "2001:db8::/96".
+	// +optional
+	// +listType=atomic
+	// +kubebuilder:validation:MaxItems=25
+	Except []CIDR `json:"except,omitempty" protobuf:"bytes,2,rep,name=except"`
+}
+
+// CIDR is an IPv4 or IPv6 network in CIDR notation, or a single IP address.
+// +kubebuilder:validation:XValidation:rule="isCIDR(self) || isIP(self)", message="must be a CIDR or an IP address"
+// +kubebuilder:validation:MaxLength=49
+type CIDR string
 
 // Status defines the observed state of NetworkQoS
 type Status struct {
