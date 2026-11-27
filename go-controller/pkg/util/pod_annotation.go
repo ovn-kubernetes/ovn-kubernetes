@@ -646,7 +646,11 @@ func UnmarshalUDNOpenPortsAnnotation(annotations map[string]string) ([]*OpenPort
 	}
 	allowedProtocols := sets.New("tcp", "udp", "sctp", "icmp")
 
-	for _, portDef := range result {
+	for i, portDef := range result {
+		// A null list item, as in "[null]", decodes to a nil pointer.
+		if portDef == nil {
+			return nil, fmt.Errorf("invalid null entry at index %d", i)
+		}
 		if !allowedProtocols.Has(portDef.Protocol) {
 			return nil, fmt.Errorf("invalid protocol %s", portDef.Protocol)
 		}

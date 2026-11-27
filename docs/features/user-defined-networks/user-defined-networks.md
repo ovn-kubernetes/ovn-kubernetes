@@ -668,6 +668,11 @@ k8s.ovn.org/open-default-ports: |
 which means we open up allow ACLs and nftrules to allow traffic
 to reach at those ports.
 
+If the annotation is invalid, for example an unknown protocol, a missing
+port or a null entry, none of its ports are opened and a warning event is
+reported on the pod. A pod created with an invalid annotation does not
+start until the annotation is fixed.
+
 #### Locating the kubelet cgroup
 
 The rule above matches traffic by the cgroup kubelet runs in, so that
