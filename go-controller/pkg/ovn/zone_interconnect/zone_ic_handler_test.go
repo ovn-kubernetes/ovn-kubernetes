@@ -15,6 +15,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/sets"
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
@@ -665,6 +666,287 @@ var _ = ginkgo.Describe("Zone Interconnect Operations", func() {
 				"-zone-join-switch-subnets=" + joinSubnetCIDR,
 			})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		})
+
+		ginkgo.It("removes interconnect routes whose prefix is no longer the node's subnet", func() {
+			app.Action = func(ctx *cli.Context) error {
+				dbSetup := libovsdbtest.TestSetup{
+					NBData: initialNBDB,
+					SBData: initialSBDB,
+				}
+
+				_, err := config.InitConfig(ctx, nil, nil)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to init config for ic-node route cleanup")
+
+				var libovsdbOvnNBClient, libovsdbOvnSBClient libovsdbclient.Client
+				libovsdbOvnNBClient, libovsdbOvnSBClient, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(dbSetup)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to start the NB/SB harness for ic-node route cleanup")
+
+				err = createTransitSwitchPortBindings(libovsdbOvnSBClient, types.DefaultNetworkName, &testNode1, &testNode2, &testNode3)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to create transit switch port bindings")
+
+				zoneICHandler := NewZoneInterconnectHandler(&util.DefaultNetInfo{}, libovsdbOvnNBClient, libovsdbOvnSBClient, nil)
+				err = zoneICHandler.createOrUpdateTransitSwitch(0)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to create the transit switch")
+
+				// All three nodes are remote. node3 currently owns 10.244.4.0/24.
+				err = invokeICHandlerAddNodeFunction("global", zoneICHandler, &testNode1, &testNode2, &testNode3)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to add the remote nodes before the subnet move")
+
+				// node3 used to own 10.244.9.0/24, and also 10.244.3.0/24 which node2 owns now.
+				// Re-adding node3 by prefix does not touch either route.
+				staleRoutes := []nbdb.LogicalRouterStaticRoute{
+					{
+						IPPrefix: "10.244.9.0/24",
+						Nexthop:  "100.88.0.4",
+						ExternalIDs: map[string]string{
+							"ic-node":               testNode3.Name,
+							types.NetworkExternalID: types.DefaultNetworkName,
+						},
+					},
+					{
+						IPPrefix: "10.244.3.0/24",
+						Nexthop:  "100.88.3.60",
+						ExternalIDs: map[string]string{
+							"ic-node":               testNode3.Name,
+							types.NetworkExternalID: types.DefaultNetworkName,
+						},
+					},
+					{
+						IPPrefix: "10.194.9.0/26",
+						Nexthop:  "100.88.0.4",
+						ExternalIDs: map[string]string{
+							"ic-node":               testNode3.Name,
+							types.NetworkExternalID: "ovn-storage",
+						},
+					},
+				}
+				for i := range staleRoutes {
+					ops, err := libovsdbops.CreateOrUpdateLogicalRouterStaticRoutesWithPredicateOps(libovsdbOvnNBClient, nil, types.OVNClusterRouter, &staleRoutes[i], nil)
+					gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to build a stale ic-node route")
+					_, err = libovsdbops.TransactAndCheck(libovsdbOvnNBClient, ops)
+					gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to insert a stale ic-node route")
+				}
+
+				routesForPrefix := func(prefix string) []*nbdb.LogicalRouterStaticRoute {
+					clusterRouter, err := libovsdbops.GetLogicalRouter(libovsdbOvnNBClient, &nbdb.LogicalRouter{Name: types.OVNClusterRouter})
+					gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to read the cluster router while checking prefixes")
+					routes, err := libovsdbops.GetRouterLogicalRouterStaticRoutesWithPredicate(libovsdbOvnNBClient, clusterRouter, func(route *nbdb.LogicalRouterStaticRoute) bool {
+						return route.IPPrefix == prefix
+					})
+					gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to list routes for a prefix")
+					return routes
+				}
+				expectStalePrefixesGone := func() {
+					gomega.Expect(routesForPrefix("10.244.9.0/24")).To(gomega.BeEmpty(), "stale prefix 10.244.9.0/24 should be removed from node3")
+					node2Routes := routesForPrefix("10.244.3.0/24")
+					gomega.Expect(node2Routes).To(gomega.HaveLen(1), "node2 should keep one route for 10.244.3.0/24")
+					gomega.Expect(node2Routes[0].Nexthop).To(gomega.Equal("100.88.0.3"), "node2 route nexthop should stay 100.88.0.3")
+					gomega.Expect(node2Routes[0].ExternalIDs["ic-node"]).To(gomega.Equal(testNode2.Name), "node2 route should still be tagged for node2")
+					storageRoutes := routesForPrefix("10.194.9.0/26")
+					gomega.Expect(storageRoutes).To(gomega.HaveLen(1), "other-network route 10.194.9.0/26 should be preserved")
+					gomega.Expect(storageRoutes[0].ExternalIDs[types.NetworkExternalID]).To(gomega.Equal("ovn-storage"), "preserved route should stay tagged for ovn-storage")
+				}
+
+				// Startup sync heals a zone whose subnet move already happened.
+				err = zoneICHandler.CleanupStaleNodes([]interface{}{&testNode1, &testNode2, &testNode3})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to clean stale nodes after the subnet move")
+				expectStalePrefixesGone()
+
+				// The same cleanup runs when the remote node is reconciled again.
+				for i := range staleRoutes[:2] {
+					ops, err := libovsdbops.CreateOrUpdateLogicalRouterStaticRoutesWithPredicateOps(libovsdbOvnNBClient, nil, types.OVNClusterRouter, &staleRoutes[i], nil)
+					gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to rebuild a stale ic-node route before reconcile")
+					_, err = libovsdbops.TransactAndCheck(libovsdbOvnNBClient, ops)
+					gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to reinsert a stale ic-node route before reconcile")
+				}
+				err = zoneICHandler.AddRemoteZoneNode(&testNode3)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to reconcile the remote node after the subnet move")
+				expectStalePrefixesGone()
+
+				// Drop the other-network route so the full interconnect check sees only this network.
+				err = libovsdbops.DeleteLogicalRouterStaticRoutesWithPredicate(libovsdbOvnNBClient, types.OVNClusterRouter, func(route *nbdb.LogicalRouterStaticRoute) bool {
+					return route.IPPrefix == "10.194.9.0/26"
+				})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to drop the other-network route before the full check")
+				err = checkInterconnectResources("global", types.DefaultNetworkName, libovsdbOvnNBClient, testNodesRouteInfo, &testNode1, &testNode2, &testNode3)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "interconnect resources should match after stale route cleanup")
+
+				return nil
+			}
+
+			err := app.Run([]string{
+				app.Name,
+				"-cluster-subnets=" + clusterCIDR,
+				"-init-cluster-manager",
+				"-zone-join-switch-subnets=" + joinSubnetCIDR,
+			})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "ic-node route cleanup spec failed")
+		})
+
+		ginkgo.It("deleteStaleRemoteNodeStaticRoutes keeps an owned route until its prefix is absent", func() {
+			app.Action = func(ctx *cli.Context) error {
+				dbSetup := libovsdbtest.TestSetup{
+					NBData: initialNBDB,
+					SBData: initialSBDB,
+				}
+
+				_, err := config.InitConfig(ctx, nil, nil)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to init config for deleteStaleRemoteNodeStaticRoutes")
+
+				var libovsdbOvnNBClient, libovsdbOvnSBClient libovsdbclient.Client
+				libovsdbOvnNBClient, libovsdbOvnSBClient, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(dbSetup)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to start the NB/SB harness for deleteStaleRemoteNodeStaticRoutes")
+
+				zoneICHandler := NewZoneInterconnectHandler(&util.DefaultNetInfo{}, libovsdbOvnNBClient, libovsdbOvnSBClient, nil)
+				ownedRoute := nbdb.LogicalRouterStaticRoute{
+					IPPrefix: "10.244.4.0/24",
+					Nexthop:  "100.88.0.4",
+					ExternalIDs: map[string]string{
+						"ic-node":               testNode3.Name,
+						types.NetworkExternalID: types.DefaultNetworkName,
+					},
+				}
+				ops, err := libovsdbops.CreateOrUpdateLogicalRouterStaticRoutesWithPredicateOps(libovsdbOvnNBClient, nil, types.OVNClusterRouter, &ownedRoute, nil)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to build the owned ic-node route")
+				_, err = libovsdbops.TransactAndCheck(libovsdbOvnNBClient, ops)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to insert the owned ic-node route")
+
+				routesForNode := func() []*nbdb.LogicalRouterStaticRoute {
+					clusterRouter, err := libovsdbops.GetLogicalRouter(libovsdbOvnNBClient, &nbdb.LogicalRouter{Name: types.OVNClusterRouter})
+					gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to read the cluster router while checking the owned route")
+					routes, err := libovsdbops.GetRouterLogicalRouterStaticRoutesWithPredicate(libovsdbOvnNBClient, clusterRouter, func(route *nbdb.LogicalRouterStaticRoute) bool {
+						return route.IPPrefix == ownedRoute.IPPrefix &&
+							route.Nexthop == ownedRoute.Nexthop &&
+							route.ExternalIDs["ic-node"] == testNode3.Name
+					})
+					gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to list the owned ic-node route")
+					return routes
+				}
+
+				// A failed prefix lookup passes an empty set and must not wipe the route.
+				err = zoneICHandler.deleteStaleRemoteNodeStaticRoutes(testNode3.Name, sets.New[string]())
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to delete stale routes with an empty desired set")
+				gomega.Expect(routesForNode()).To(gomega.HaveLen(1), "empty desired set should keep the owned route")
+
+				err = zoneICHandler.deleteStaleRemoteNodeStaticRoutes(testNode3.Name, sets.New[string]("10.244.9.0/24"))
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to delete the route once its prefix is absent")
+				gomega.Expect(routesForNode()).To(gomega.BeEmpty(), "route should be removed when its prefix is not desired")
+
+				return nil
+			}
+
+			err := app.Run([]string{
+				app.Name,
+				"-cluster-subnets=" + clusterCIDR,
+				"-init-cluster-manager",
+				"-zone-join-switch-subnets=" + joinSubnetCIDR,
+			})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "deleteStaleRemoteNodeStaticRoutes spec failed")
+		})
+
+		ginkgo.It("keeps prefixes a node owns when that family has no transit nexthop", func() {
+			app.Action = func(ctx *cli.Context) error {
+				dbSetup := libovsdbtest.TestSetup{
+					NBData: initialNBDB,
+					SBData: initialSBDB,
+				}
+
+				_, err := config.InitConfig(ctx, nil, nil)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to init config for the no-transit-nexthop case")
+
+				var libovsdbOvnNBClient, libovsdbOvnSBClient libovsdbclient.Client
+				libovsdbOvnNBClient, libovsdbOvnSBClient, libovsdbCleanup, err = libovsdbtest.NewNBSBTestHarness(dbSetup)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to start the NB/SB harness for the no-transit-nexthop case")
+
+				zoneICHandler := NewZoneInterconnectHandler(&util.DefaultNetInfo{}, libovsdbOvnNBClient, libovsdbOvnSBClient, nil)
+				_, v4Subnet, err := net.ParseCIDR("10.244.4.0/24")
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to parse the v4 subnet")
+				_, v6Subnet, err := net.ParseCIDR("aef0:0:0:4::/64")
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to parse the v6 subnet")
+				// Keep the host address. ParseCIDR masks 100.88.0.4/16 to 100.88.0.0.
+				v4TransitIP, v4TransitNet, err := net.ParseCIDR("100.88.0.4/16")
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to parse the v4 transit address")
+				v4Transit := &net.IPNet{IP: v4TransitIP, Mask: v4TransitNet.Mask}
+				v6GRIP, v6GRNet, err := net.ParseCIDR("fd97::4/64")
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to parse the v6 gateway-router address")
+				v6GR := &net.IPNet{IP: v6GRIP, Mask: v6GRNet.Mask}
+				v6SubnetPrefix := remoteNodeStaticRoutePrefix(v6Subnet, false)
+				v6GRPrefix := remoteNodeStaticRoutePrefix(v6GR, true)
+
+				insertRoute := func(prefix, nexthop string) {
+					route := nbdb.LogicalRouterStaticRoute{
+						IPPrefix: prefix,
+						Nexthop:  nexthop,
+						ExternalIDs: map[string]string{
+							"ic-node":               testNode3.Name,
+							types.NetworkExternalID: types.DefaultNetworkName,
+						},
+					}
+					ops, err := libovsdbops.CreateOrUpdateLogicalRouterStaticRoutesWithPredicateOps(libovsdbOvnNBClient, nil, types.OVNClusterRouter, &route, nil)
+					gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to build an owned route")
+					_, err = libovsdbops.TransactAndCheck(libovsdbOvnNBClient, ops)
+					gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to insert an owned route")
+				}
+				routesForPrefix := func(prefix string) []*nbdb.LogicalRouterStaticRoute {
+					clusterRouter, err := libovsdbops.GetLogicalRouter(libovsdbOvnNBClient, &nbdb.LogicalRouter{Name: types.OVNClusterRouter})
+					gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to read the cluster router while checking owned prefixes")
+					routes, err := libovsdbops.GetRouterLogicalRouterStaticRoutesWithPredicate(libovsdbOvnNBClient, clusterRouter, func(route *nbdb.LogicalRouterStaticRoute) bool {
+						return route.IPPrefix == prefix
+					})
+					gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to list routes for an owned prefix")
+					return routes
+				}
+
+				// node3 still owns the v6 subnet and gateway-router host route, but the
+				// transit port annotation only has an IPv4 address. 10.244.9.0/24 is stale.
+				insertRoute(v6SubnetPrefix, "fd97::88")
+				insertRoute(v6GRPrefix, "fd97::88")
+				insertRoute("10.244.9.0/24", "100.88.0.99")
+
+				err = zoneICHandler.addRemoteNodeStaticRoutes(&testNode3, []*net.IPNet{v4Transit}, []*net.IPNet{v4Subnet, v6Subnet}, []*net.IPNet{v6GR})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to add remote routes when v6 has no transit nexthop")
+
+				v6SubnetRoutes := routesForPrefix(v6SubnetPrefix)
+				gomega.Expect(v6SubnetRoutes).To(gomega.HaveLen(1), "v6 subnet route should be kept without a v6 transit nexthop")
+				gomega.Expect(v6SubnetRoutes[0].Nexthop).To(gomega.Equal("fd97::88"), "kept v6 subnet route should still use nexthop fd97::88")
+				v6GRRoutes := routesForPrefix(v6GRPrefix)
+				gomega.Expect(v6GRRoutes).To(gomega.HaveLen(1), "v6 gateway-router route should be kept without a v6 transit nexthop")
+				gomega.Expect(v6GRRoutes[0].Nexthop).To(gomega.Equal("fd97::88"), "kept v6 gateway-router route should still use nexthop fd97::88")
+				gomega.Expect(routesForPrefix("10.244.9.0/24")).To(gomega.BeEmpty(), "stale prefix 10.244.9.0/24 should be removed")
+				v4Routes := routesForPrefix("10.244.4.0/24")
+				gomega.Expect(v4Routes).To(gomega.HaveLen(1), "v4 subnet route should be created")
+				gomega.Expect(v4Routes[0].Nexthop).To(gomega.Equal("100.88.0.4"), "v4 subnet route should use the v4 transit nexthop")
+
+				// The same ownership rule applies when the remote node is reconciled.
+				// Drop the hand-built v6 gateway route first: this cluster is IPv4-only,
+				// so reconcile does not treat that address as owned.
+				err = libovsdbops.DeleteLogicalRouterStaticRoutesWithPredicate(libovsdbOvnNBClient, types.OVNClusterRouter, func(route *nbdb.LogicalRouterStaticRoute) bool {
+					return route.IPPrefix == v6GRPrefix
+				})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to drop the hand-built v6 gateway route before reconcile")
+				insertRoute("10.244.9.0/24", "100.88.0.99")
+				testNode3.Annotations[ovnNodeSubnetsAnnotation] = "{\"default\":[\"10.244.4.0/24\",\"aef0:0:0:4::/64\"]}"
+				testNode3.Annotations[ovnTransitSwitchPortAddrAnnotation] = "{\"ipv4\":\"100.88.0.4/16\"}"
+				err = zoneICHandler.reconcileRemoteNodeStaticRoutes(&testNode3)
+				gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to reconcile remote node routes without a v6 transit nexthop")
+
+				v6SubnetRoutes = routesForPrefix(v6SubnetPrefix)
+				gomega.Expect(v6SubnetRoutes).To(gomega.HaveLen(1), "reconcile should keep the v6 subnet route")
+				gomega.Expect(v6SubnetRoutes[0].Nexthop).To(gomega.Equal("fd97::88"), "reconciled v6 subnet route should still use nexthop fd97::88")
+				gomega.Expect(routesForPrefix("10.244.9.0/24")).To(gomega.BeEmpty(), "reconcile should remove the stale prefix")
+				gomega.Expect(routesForPrefix("10.244.4.0/24")).To(gomega.HaveLen(1), "reconcile should keep the v4 subnet route")
+
+				return nil
+			}
+
+			err := app.Run([]string{
+				app.Name,
+				"-cluster-subnets=" + clusterCIDR,
+				"-init-cluster-manager",
+				"-zone-join-switch-subnets=" + joinSubnetCIDR,
+			})
+			gomega.Expect(err).NotTo(gomega.HaveOccurred(), "no-transit-nexthop ownership spec failed")
 		})
 
 		ginkgo.It("CleanupStaleNodes with nil should cleanup all transit switch ports for no-overlay migration", func() {
