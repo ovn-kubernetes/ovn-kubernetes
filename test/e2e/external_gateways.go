@@ -288,21 +288,31 @@ var _ = ginkgo.Describe("External Gateway", feature.ExternalGateway, func() {
 					ginkgo.By(fmt.Sprintf("Reducing to one gateway. Removing gateway: %s", gatewayPodName2))
 					err := e2epod.DeletePodWithWaitByName(context.TODO(), f.ClientSet, gatewayPodName2, servingNamespace)
 					framework.ExpectNoError(err, "failed to delete pod %s/%s", servingNamespace, gatewayPodName2)
-					time.Sleep(1 * time.Second)
 
 					ginkgo.By("Checking if one of the external gateways are reachable via Egress")
 					gwIP := addresses.targetIPs[0]
+					// Convergence of the next hops and conntrack entries for the removed gateway
+					// takes a moment. Retry with a fresh source port on every attempt so a probe
+					// cannot get stuck on a conntrack entry pinned to the removed gateway.
 					sourcePort := 50000
-
-					res, err := e2ekubectl.RunKubectl(f.Namespace.Name, ncCmd(sourcePort, gwIP)...)
-					framework.ExpectNoError(err, "failed to reach %s (%s)", gwIP, protocol)
-					hostname := strings.TrimSuffix(res, "\n")
 					var gateway infraapi.ExternalContainer
-					if g, ok := expectedHostNames[hostname]; !ok {
-						framework.Failf("Unexpected gateway hostname %q, expected; %#v", hostname, expectedHostNames)
-					} else {
+					var hostname string
+					gomega.Eventually(func() bool {
+						sourcePort++
+						res, err := e2ekubectl.RunKubectl(f.Namespace.Name, ncCmd(sourcePort, gwIP)...)
+						if err != nil {
+							framework.Logf("Failed to reach %s (%s) from source port %d: %v", gwIP, protocol, sourcePort, err)
+							return false
+						}
+						hostname = strings.TrimSuffix(res, "\n")
+						g, ok := expectedHostNames[hostname]
+						if !ok {
+							framework.Logf("Unexpected gateway hostname %q from source port %d, expected one of %v", hostname, sourcePort, expectedHostNames)
+							return false
+						}
 						gateway = g
-					}
+						return true
+					}, time.Minute, time.Second).Should(gomega.BeTrue(), "failed to reach any expected external gateway %s (%s) via egress", gwIP, protocol)
 					network, err := infraprovider.Get().PrimaryNetwork()
 					framework.ExpectNoError(err, "failed to get primary network information")
 					if overrideNetworkName, _, _ := getOverrideNetwork(); overrideNetworkName != "" {
@@ -318,7 +328,7 @@ var _ = ginkgo.Describe("External Gateway", feature.ExternalGateway, func() {
 					tcpDumpSync := sync.WaitGroup{}
 					tcpDumpSync.Add(1)
 					go checkReceivedPacketsOnExternalContainer(gateway, srcPingPodName, anyLink, []string{protocol, "and", "port", strconv.Itoa(sourcePort)}, &tcpDumpSync)
-					res, err = e2ekubectl.RunKubectl(f.Namespace.Name, ncCmd(sourcePort, gwIP)...)
+					res, err := e2ekubectl.RunKubectl(f.Namespace.Name, ncCmd(sourcePort, gwIP)...)
 					framework.ExpectNoError(err, "failed to reach %s (%s)", gwIP, protocol)
 					hostname2 := strings.TrimSuffix(res, "\n")
 					gomega.Expect(hostname).To(gomega.Equal(hostname2))
@@ -350,9 +360,9 @@ var _ = ginkgo.Describe("External Gateway", feature.ExternalGateway, func() {
 					time.Sleep(1 * time.Second)
 
 					ginkgo.By("Post-Migration: Sending Egress traffic and verify it is received")
-					// We don't want traffic to hit the already existing conntrack entry (created for source port 50000)
-					// so we use a fresh source port.
-					sourcePort = 50001
+					// We don't want traffic to hit the already existing conntrack entry (created for the
+					// previous source port) so we use a fresh source port.
+					sourcePort++
 
 					tcpDumpSync = sync.WaitGroup{}
 					tcpDumpSync.Add(1)
