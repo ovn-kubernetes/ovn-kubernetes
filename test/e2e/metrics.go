@@ -14,9 +14,12 @@ import (
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/kubectl/pkg/util/podutils"
 	"k8s.io/kubernetes/test/e2e/framework"
+	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/feature"
@@ -38,19 +41,46 @@ var _ = ginkgo.Describe("e2e OVN/OVS metrics", feature.Metrics, func() {
 	var (
 		ovnNamespace string
 		nodePod      corev1.Pod
+		ovnMetrics   = []string{
+			"ovn_northd_status",
+			"ovn_northd_nb_connection_status",
+			"ovn_northd_sb_connection_status",
+			"ovn_controller_integration_bridge_openflow_total",
+			"ovn_controller_integration_bridge_patch_ports",
+			"ovn_controller_integration_bridge_geneve_ports",
+			"ovn_controller_southbound_database_connected",
+			"ovn_db_db_size_bytes",
+		}
+		ovsMetrics = []string{
+			"ovs_build_info",
+			"ovs_vswitchd_dp_flows_total",
+		}
 	)
 
-	ginkgo.BeforeEach(func() {
-		ovnNamespace = deploymentconfig.Get().OVNKubernetesNamespace()
+	selectNodePod := func(excludedRevision string) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		pods, err := f.ClientSet.CoreV1().Pods(ovnNamespace).List(ctx, metav1.ListOptions{
 			LabelSelector: "app=ovnkube-node",
 		})
 		framework.ExpectNoError(err, "listing ovnkube-node pods")
-		gomega.Expect(pods.Items).NotTo(gomega.BeEmpty(), "no ovnkube-node pods found")
-		nodePod = pods.Items[0]
-		gomega.Expect(nodePod.Status.PodIP).NotTo(gomega.BeEmpty(), "ovnkube-node pod has no IP")
+		for i := range pods.Items {
+			pod := &pods.Items[i]
+			revision := pod.Labels[appsv1.ControllerRevisionHashLabelKey]
+			if pod.DeletionTimestamp != nil || pod.Status.Phase != corev1.PodRunning ||
+				!podutils.IsPodReady(pod) || pod.Status.PodIP == "" ||
+				(excludedRevision != "" && (revision == "" || revision == excludedRevision)) {
+				continue
+			}
+			nodePod = *pod
+			return
+		}
+		framework.Failf("no non-terminating, ready ovnkube-node pod found outside revision %q", excludedRevision)
+	}
+
+	ginkgo.BeforeEach(func() {
+		ovnNamespace = deploymentconfig.Get().OVNKubernetesNamespace()
+		selectNodePod("")
 	})
 
 	// scrapeNoError curls a metrics endpoint and returns the response body or error,
@@ -92,30 +122,109 @@ var _ = ginkgo.Describe("e2e OVN/OVS metrics", feature.Metrics, func() {
 		}
 	}
 
-	ginkgo.It("delivers OVN controller and northd metrics, including the loop-collected ones", func() {
-		body := scrape("ovnkube-controller", ovnMetricsPort)
-		assertPresent(body,
-			// northd status/connection metrics (background-loop gauges)
-			"ovn_northd_status",
-			"ovn_northd_nb_connection_status",
-			"ovn_northd_sb_connection_status",
-			// integration-bridge metrics (background-loop gauges)
-			"ovn_controller_integration_bridge_openflow_total",
-			"ovn_controller_integration_bridge_patch_ports",
-			"ovn_controller_integration_bridge_geneve_ports",
-			// a representative always-registered controller metric
-			"ovn_controller_southbound_database_connected",
-			// OVN DB gauges refreshed by the loop
-			"ovn_db_db_size_bytes",
-		)
+	metricValues := func(body, name string) []float64 {
+		var values []float64
+		for _, line := range strings.Split(body, "\n") {
+			if !strings.HasPrefix(line, name+" ") && !strings.HasPrefix(line, name+"{") {
+				continue
+			}
+			fields := strings.Fields(line)
+			gomega.Expect(fields).NotTo(gomega.BeEmpty(), "metric %q has an invalid sample", name)
+			value, err := strconv.ParseFloat(fields[len(fields)-1], 64)
+			framework.ExpectNoError(err, "parsing value for metric %q", name)
+			values = append(values, value)
+		}
+		gomega.Expect(values).NotTo(gomega.BeEmpty(), "expected metric %q missing from endpoint", name)
+		return values
+	}
+
+	ginkgo.It("delivers OVN and OVS metrics with periodic collection", func() {
+		assertPresent(scrape("ovnkube-controller", ovnMetricsPort), ovnMetrics...)
+		assertPresent(scrape("ovs-metrics-exporter", ovsMetricsPort), ovsMetrics...)
 	})
 
-	ginkgo.It("delivers OVS metrics from the standalone exporter", func() {
-		body := scrape("ovs-metrics-exporter", ovsMetricsPort)
-		assertPresent(body,
-			"ovs_build_info",
-			"ovs_vswitchd_dp_flows_total",
-		)
+	ginkgo.It("delivers the same metrics after restarting ovnkube-node with on-demand collection", ginkgo.Serial, func() {
+		const intervalEnv = "OVN_METRICS_COLLECTION_INTERVAL"
+		containers := []string{getNodeContainerName(), "ovs-metrics-exporter"}
+
+		setCollectionInterval := func(values map[string]string, forceRestart bool) {
+			needsUpdate := forceRestart
+			if !needsUpdate {
+				for _, container := range containers {
+					if getTemplateContainerEnv(ovnNamespace, "daemonset/ovnkube-node", container, intervalEnv) != values[container] {
+						needsUpdate = true
+						break
+					}
+				}
+			}
+			if !needsUpdate {
+				return
+			}
+
+			err := updateAndWaitForRollout(f.ClientSet, ovnNamespace, "daemonset/ovnkube-node", 0, rolloutTimeout, func() {
+				for _, container := range containers {
+					value := values[container]
+					setting := intervalEnv + "-"
+					if value != "" {
+						setting = intervalEnv + "=" + value
+					}
+					e2ekubectl.RunKubectlOrDie(
+						ovnNamespace,
+						"set", "env", "daemonset/ovnkube-node",
+						"-c", container, setting,
+					)
+				}
+				if forceRestart {
+					e2ekubectl.RunKubectlOrDie(
+						ovnNamespace,
+						"rollout", "restart", "daemonset/ovnkube-node",
+					)
+				}
+			})
+			framework.ExpectNoError(err, "updating metrics collection interval")
+		}
+
+		ginkgo.By("Getting the original collection interval values")
+		previousRevision := nodePod.Labels[appsv1.ControllerRevisionHashLabelKey]
+		gomega.Expect(previousRevision).NotTo(gomega.BeEmpty(), "ovnkube-node pod has no controller revision")
+		originalValues := make(map[string]string, len(containers))
+		for _, container := range containers {
+			originalValues[container] = getTemplateContainerEnv(
+				ovnNamespace, "daemonset/ovnkube-node", container, intervalEnv,
+			)
+		}
+		ginkgo.DeferCleanup(func() {
+			setCollectionInterval(originalValues, false)
+		})
+
+		ginkgo.By(fmt.Sprintf("Setting the metrics collection interval to 0 for all containers in Pod: %s", nodePod.Name))
+		setCollectionInterval(map[string]string{
+			getNodeContainerName(): "0",
+			"ovs-metrics-exporter": "0",
+		}, true)
+		selectNodePod(previousRevision)
+
+		ginkgo.By("Verifying that containers are using on-demand metrics collection")
+		for _, container := range containers {
+			stdout, stderr, err := ExecCommandInContainerWithFullOutput(
+				f, ovnNamespace, nodePod.Name, container,
+				"sh", "-c", `for file in /proc/[0-9]*/cmdline; do tr '\000' ' ' < "${file}" 2>/dev/null; echo; done`,
+			)
+			framework.ExpectNoError(err, "reading process command lines from container %s: %s", container, stderr)
+			gomega.Expect(stdout).To(gomega.ContainSubstring("--metrics-collection-interval=0"),
+				"container %s is not using on-demand metrics collection", container)
+		}
+
+		ginkgo.By("Verifying metrics endpoints still serve the expected metrics after restart")
+		ovnMetricsBody := scrape(getNodeContainerName(), ovnMetricsPort)
+		assertPresent(ovnMetricsBody, ovnMetrics...)
+		gomega.Expect(metricValues(ovnMetricsBody, "ovn_controller_southbound_database_connected")).To(
+			gomega.ContainElement(gomega.BeNumerically("==", 1)), "OVN controller is not connected to the southbound database")
+
+		ovsMetricsBody := scrape("ovs-metrics-exporter", ovsMetricsPort)
+		assertPresent(ovsMetricsBody, ovsMetrics...)
+		gomega.Expect(metricValues(ovsMetricsBody, "ovs_vswitchd_dp_flows_total")).To(
+			gomega.ContainElement(gomega.BeNumerically(">", 0)), "OVS datapath has no flows")
 	})
 
 	ginkgo.It("keeps the endpoint responsive to repeated scrapes", func() {
