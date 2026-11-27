@@ -19,9 +19,11 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
+	utilnet "k8s.io/utils/net"
 
 	ovntypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
 )
 
 var _ = ginkgo.Describe("Node subnet claims", func() {
@@ -100,5 +102,74 @@ var _ = ginkgo.Describe("Node subnet claims", func() {
 					"not allowed to modify the following controller-owned annotations")))
 			}
 		}
+	})
+
+	ginkgo.It("restores transit switch port addresses changed after allocation", ginkgo.SpecTimeout(2*time.Minute), func(ctx ginkgo.SpecContext) {
+		const (
+			timeout  = 30 * time.Second
+			interval = time.Second
+		)
+
+		ginkgo.By("creating a node and waiting for its transit switch port addresses")
+		nodeName := "transit-addr-repair-" + framework.RandomSuffix()
+		_, err := f.ClientSet.CoreV1().Nodes().Create(ctx, &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{Name: nodeName},
+		}, metav1.CreateOptions{})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to create node %s", nodeName)
+		ginkgo.DeferCleanup(func(ctx ginkgo.SpecContext) {
+			gomega.Expect(f.ClientSet.CoreV1().Nodes().Delete(ctx, nodeName, metav1.DeleteOptions{})).
+				To(gomega.Succeed(), "failed to delete node %s", nodeName)
+		}, ginkgo.NodeTimeout(time.Minute))
+		var node *corev1.Node
+		gomega.Eventually(ctx, func(g gomega.Gomega) {
+			var err error
+			node, err = f.ClientSet.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
+			g.Expect(err).NotTo(gomega.HaveOccurred(), "failed to get node %s", nodeName)
+			g.Expect(node.Annotations).To(gomega.HaveKey(util.OvnTransitSwitchPortAddr),
+				"node %s has no transit switch port addresses", nodeName)
+		}, timeout, interval).Should(gomega.Succeed())
+		allocated := node.Annotations[util.OvnTransitSwitchPortAddr]
+
+		ginkgo.By("changing the addresses as cluster manager, the only allowed writer")
+		addrs, err := util.ParseNodeTransitSwitchPortAddrs(node)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to parse the transit switch port addresses %s", allocated)
+		// Addresses far from the allocated ones belong to no node in the test
+		// cluster, so no real node loses traffic while they are in place.
+		var v4Addr, v6Addr *net.IPNet
+		for _, addr := range addrs {
+			addr.IP = utilnet.AddIPOffset(utilnet.BigForIP(addr.IP), 4000)
+			if utilnet.IsIPv6(addr.IP) {
+				v6Addr = addr
+			} else {
+				v4Addr = addr
+			}
+		}
+		changedAnnotations, err := util.CreateNodeTransitSwitchPortAddrAnnotation(nil, v4Addr, v6Addr)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to build the changed transit switch port addresses")
+		changed := changedAnnotations[util.OvnTransitSwitchPortAddr].(string)
+		gomega.Expect(changed).NotTo(gomega.Equal(allocated), "changed addresses must differ from the allocated ones")
+
+		clusterManagerConfig := rest.CopyConfig(f.ClientConfig())
+		clusterManagerConfig.Impersonate = rest.ImpersonationConfig{
+			UserName: fmt.Sprintf("system:serviceaccount:%s:ovnkube-cluster-manager",
+				deploymentconfig.Get().OVNKubernetesNamespace()),
+		}
+		clusterManagerClient, err := kubernetes.NewForConfig(clusterManagerConfig)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to create a client impersonating cluster manager")
+		annotationPatch := []byte(fmt.Sprintf(`{"metadata":{"annotations":{%q:%q}}}`, util.OvnTransitSwitchPortAddr, changed))
+		// Cluster manager may only write Nodes through the status subresource.
+		patched, err := clusterManagerClient.CoreV1().Nodes().Patch(ctx, nodeName, types.MergePatchType,
+			annotationPatch, metav1.PatchOptions{}, "status")
+		gomega.Expect(err).NotTo(gomega.HaveOccurred(), "failed to change the transit switch port addresses of node %s", nodeName)
+		gomega.Expect(patched.Annotations[util.OvnTransitSwitchPortAddr]).To(gomega.Equal(changed),
+			"the changed addresses were not stored on node %s", nodeName)
+
+		ginkgo.By("waiting for cluster manager to restore the allocated addresses")
+		gomega.Eventually(ctx, func(g gomega.Gomega) {
+			node, err := f.ClientSet.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
+			g.Expect(err).NotTo(gomega.HaveOccurred(), "failed to get node %s", nodeName)
+			g.Expect(node.Annotations[util.OvnTransitSwitchPortAddr]).To(gomega.Equal(allocated),
+				"transit switch port addresses of node %s were not restored", nodeName)
+		}, timeout, interval).Should(gomega.Succeed())
 	})
 })
