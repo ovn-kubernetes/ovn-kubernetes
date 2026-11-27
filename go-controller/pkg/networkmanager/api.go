@@ -96,7 +96,8 @@ type Interface interface {
 	// Returns nil if there is no running controller for the provided network.
 	GetActiveNetwork(network string) util.NetInfo
 
-	// DoWithLock takes care of locking and unlocking while iterating over all role primary user defined networks.
+	// DoWithLock iterates over all role primary user defined networks while holding the controller read lock.
+	// The callback must not call other controller methods that acquire the same lock.
 	DoWithLock(f func(network util.NetInfo) error) error
 	GetActiveNetworkNamespaces(networkName string) ([]string, error)
 

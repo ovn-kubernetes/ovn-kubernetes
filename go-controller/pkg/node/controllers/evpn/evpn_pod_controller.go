@@ -332,7 +332,7 @@ func (c *Controller) cleanStalePodEntries() error {
 	type evpnNetworkDevices struct {
 		sviName     string
 		ovsPortName string
-		nadKeys     []string
+		networkName string
 	}
 	var networks []evpnNetworkDevices
 	err := c.networkMgr.DoWithLock(func(netInfo util.NetInfo) error {
@@ -342,7 +342,7 @@ func (c *Controller) cleanStalePodEntries() error {
 		networks = append(networks, evpnNetworkDevices{
 			sviName:     GetEVPNL2SVIName(netInfo),
 			ovsPortName: GetEVPNOVSPortName(netInfo),
-			nadKeys:     c.networkMgr.GetNADKeysForNetwork(netInfo.GetNetworkName()),
+			networkName: netInfo.GetNetworkName(),
 		})
 		return nil
 	})
@@ -354,7 +354,7 @@ func (c *Controller) cleanStalePodEntries() error {
 		desiredIPs := sets.New[string]()
 		desiredMACs := sets.New[string]()
 
-		for _, nadKey := range net.nadKeys {
+		for _, nadKey := range c.networkMgr.GetNADKeysForNetwork(net.networkName) {
 			ns, _, err := cache.SplitMetaNamespaceKey(nadKey)
 			if err != nil {
 				klog.Errorf("Failed to parse nad key %s: %v", nadKey, err)

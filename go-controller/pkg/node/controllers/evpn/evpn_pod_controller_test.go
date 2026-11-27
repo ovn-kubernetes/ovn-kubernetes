@@ -4,11 +4,14 @@
 package evpn
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"syscall"
 	"time"
 
+	nadfake "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/fake"
+	frrfake "github.com/metallb/frr-k8s/pkg/client/clientset/versioned/fake"
 	"github.com/stretchr/testify/mock"
 	"github.com/vishvananda/netlink"
 	kubevirtv1 "kubevirt.io/api/core/v1"
@@ -16,9 +19,20 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8stypes "k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes/fake"
 	corelistersfake "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	adminpolicybasedroutefake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/adminpolicybasedroute/v1/apis/clientset/versioned/fake"
+	egressipfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressip/v1/apis/clientset/versioned/fake"
+	egressservicefake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/egressservice/v1/apis/clientset/versioned/fake"
+	routeadvertisementsfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/clientset/versioned/fake"
+	uplinkfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1/apis/clientset/versioned/fake"
+	udnfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1/apis/clientset/versioned/fake"
+	vtepfake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1/apis/clientset/versioned/fake"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
@@ -38,6 +52,27 @@ func newFakePodLister(pods ...*corev1.Pod) corelistersfake.PodLister {
 	return corelistersfake.NewPodLister(indexer)
 }
 
+// lockedNetworkManager reproduces the real NAD controller's locking: callbacks run with
+// the manager lock held.
+type lockedNetworkManager struct {
+	*networkmanager.FakeNetworkManager
+}
+
+// DoWithLock is overridden because FakeNetworkManager drops its lock before invoking
+// callbacks. Holding it across the loop makes a callback that re-enters the manager
+// block, which is the deadlock this spec guards against.
+func (m *lockedNetworkManager) DoWithLock(f func(network util.NetInfo) error) error {
+	m.Lock()
+	defer m.Unlock()
+	var errs []error
+	for _, network := range m.PrimaryNetworks {
+		if err := f(network); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
 var _ = Describe("EVPN pod controller", func() {
 	const nodeName = "node1"
 
@@ -47,24 +82,24 @@ var _ = Describe("EVPN pod controller", func() {
 		fakeNM *networkmanager.FakeNetworkManager
 	)
 
-	BeforeEach(func() {
-		fakeNM = &networkmanager.FakeNetworkManager{}
-		ctrl = &Controller{
-			nodeName:     nodeName,
-			networkMgr:   fakeNM,
-			podNeighbors: make(map[string]*neighEntries),
-			stopChan:     make(chan struct{}),
-		}
-
-		nlMock = &netlinkMocks.NetLinkOps{}
-		util.SetNetLinkOpMockInst(nlMock)
-	})
-
-	AfterEach(func() {
-		util.ResetNetLinkOpMockInst()
-	})
-
 	Describe("reconcilePod", func() {
+		BeforeEach(func() {
+			fakeNM = &networkmanager.FakeNetworkManager{}
+			ctrl = &Controller{
+				nodeName:     nodeName,
+				networkMgr:   fakeNM,
+				podNeighbors: make(map[string]*neighEntries),
+				stopChan:     make(chan struct{}),
+			}
+
+			nlMock = &netlinkMocks.NetLinkOps{}
+			util.SetNetLinkOpMockInst(nlMock)
+		})
+
+		AfterEach(func() {
+			util.ResetNetLinkOpMockInst()
+		})
+
 		It("programs FDB and neighbor entries for a pod on an EVPN network", func() {
 			netInfo := &multinetworkmocks.NetInfo{}
 			netInfo.On("EVPNVTEPName").Return("vtep1")
@@ -564,6 +599,67 @@ var _ = Describe("EVPN pod controller", func() {
 				Expect(pods).To(Equal(1))
 				Expect(neighbors).To(Equal(1))
 			})
+		})
+
+		It("resolves NAD keys after the network manager lock is released", func() {
+			// The network manager holds its lock for the duration of DoWithLock callbacks, and
+			// that lock is not reentrant. cleanStalePodEntries used to call GetNADKeysForNetwork
+			// from inside the callback, which deadlocked ovnkube-node against concurrent NAD
+			// updates. The stub below reproduces the real lock semantics; resolving NAD keys
+			// outside the callback must let cleanup finish.
+			Expect(config.PrepareTestConfig()).To(Succeed(),
+				"the test config must be initialized before enabling the EVPN feature flags")
+			DeferCleanup(func() {
+				Expect(config.PrepareTestConfig()).To(Succeed(),
+					"the test config must be reset so later specs start from the defaults")
+			})
+			config.OVNKubernetesFeature.EnableMultiNetwork = true
+			config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+			config.OVNKubernetesFeature.EnableRouteAdvertisements = true
+			config.OVNKubernetesFeature.EnableEVPN = true
+			config.Gateway.Mode = config.GatewayModeLocal
+
+			nlMock.On("LinkByName", mock.Anything).Return(nil, fmt.Errorf("link not found"))
+
+			kubeClient := fake.NewClientset(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: nodeName}})
+			ovnClientset := &util.OVNClientset{
+				KubeClient:                kubeClient,
+				EgressServiceClient:       egressservicefake.NewClientset(),
+				EgressIPClient:            egressipfake.NewClientset(),
+				AdminPolicyRouteClient:    adminpolicybasedroutefake.NewClientset(),
+				NetworkAttchDefClient:     nadfake.NewSimpleClientset(),
+				UserDefinedNetworkClient:  udnfake.NewClientset(),
+				RouteAdvertisementsClient: routeadvertisementsfake.NewClientset(),
+				FRRClient:                 frrfake.NewSimpleClientset(),
+				UplinkClient:              uplinkfake.NewSimpleClientset(),
+				VTEPClient:                vtepfake.NewSimpleClientset(),
+			}
+			wf, err := factory.NewNodeWatchFactory(ovnClientset.GetNodeClientset(), nodeName)
+			Expect(err).NotTo(HaveOccurred(), "the node watch factory must be created")
+			Expect(wf.Start()).To(Succeed(), "the node watch factory must start")
+			DeferCleanup(wf.Shutdown)
+
+			ctrl, err = NewController(nodeName, wf, &kube.Kube{KClient: kubeClient}, nil, &networkmanager.FakeNetworkManager{}, nil, &fakeAddressManager{})
+			Expect(err).NotTo(HaveOccurred(), "the EVPN pod controller must be created")
+			DeferCleanup(ctrl.Stop)
+
+			netInfo := &multinetworkmocks.NetInfo{}
+			netInfo.On("EVPNVTEPName").Return("vtep1")
+			netInfo.On("GetNetworkName").Return("mynet")
+			netInfo.On("GetNetworkID").Return(5)
+
+			ctrl.networkMgr = &lockedNetworkManager{
+				FakeNetworkManager: &networkmanager.FakeNetworkManager{
+					PrimaryNetworks: map[string]util.NetInfo{"test-ns": netInfo},
+					NADNetworks:     map[string]util.NetInfo{"test-ns/test-nad": netInfo},
+				},
+			}
+
+			done := make(chan error, 1)
+			go func() { done <- ctrl.cleanStalePodEntries() }()
+
+			Eventually(done, 5*time.Second).Should(Receive(BeNil()),
+				"cleanStalePodEntries must return instead of deadlocking on the network manager lock")
 		})
 	})
 })
