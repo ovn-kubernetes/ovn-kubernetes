@@ -29,6 +29,10 @@ gateway mode.
   configuration.
 * [FRR-k8s](https://github.com/metallb/frr-k8s) deployed with FRR speakers
   running on every node.
+* For managed routing, the node FRR speakers must accept incoming BGP sessions,
+  because the nodes peer with each other. `bgpd` must therefore listen on the
+  BGP port (179); some FRR-k8s manifests ship with `bgpd_options="-p 0"`, which
+  disables the listening socket.
 * For unmanaged routing, administrator-created `RouteAdvertisements` and
   `FRRConfiguration` resources that exchange pod subnet routes. In managed
   routing mode, OVN-Kubernetes creates these resources for the internal
@@ -70,9 +74,32 @@ Managed routing currently supports only the `full-mesh` topology. For large
 clusters, prefer unmanaged routing with route reflectors or another scalable BGP
 topology.
 
-In managed routing mode, administrators can still advertise the no-overlay pod
-network to external BGP infrastructure by creating additional
-`RouteAdvertisements` and `FRRConfiguration` resources.
+The managed fabric only peers the cluster nodes with each other, so it carries
+east/west pod traffic only. In managed routing mode, administrators can still
+advertise the no-overlay pod network to external BGP infrastructure by creating
+additional `RouteAdvertisements` and `FRRConfiguration` resources.
+
+### The `[bgp-managed]` Section
+
+`[bgp-managed]` configures the cluster-internal BGP fabric that every network
+with managed routing shares. It is cluster-wide and independent of the
+`[default]` and `[no-overlay]` sections: each network requests managed routing
+on its own, so a CUDN can use `routing: Managed` whether or not the cluster
+default network uses no-overlay transport. Configure `[bgp-managed]` whenever
+any network in the cluster may use managed routing.
+
+```ini
+[bgp-managed]
+topology = full-mesh
+as-number = 64512
+frr-namespace = frr-k8s-system
+```
+
+`topology` and `as-number` are shared by all managed networks; `frr-namespace`
+is the namespace OVN-Kubernetes writes the managed `FRRConfiguration` resources
+to. The Helm chart always renders this section, from the `managedBGPTopology`,
+`managedBGPASNumber` and `managedBGPFRRNamespace` global values, which default
+to `full-mesh`, `64512` and `frr-k8s-system`.
 
 ## Traffic Behavior
 
@@ -126,10 +153,15 @@ as-number = 64512
 frr-namespace = frr-k8s-system
 ```
 
+The `[bgp-managed]` section above is the shared one described in
+[The `[bgp-managed]` Section](#the-bgp-managed-section).
+
 With this configuration, OVN-Kubernetes creates:
 
-* A managed `RouteAdvertisements` object for the default network.
-* A managed base `FRRConfiguration` in the configured FRR namespace.
+* A managed `RouteAdvertisements` object named `ovnk-managed-bgp-default` for
+  the default network.
+* A managed base `FRRConfiguration` named `ovnk-managed-bgp` in the configured
+  FRR namespace, shared with any managed CUDN.
 
 The managed `FRRConfiguration` peers node FRR speakers with each other and
 allows them to receive the no-overlay pod subnet routes.
@@ -172,6 +204,11 @@ global:
   managedBGPASNumber: 64512
   managedBGPFRRNamespace: frr-k8s-system
 ```
+
+Of these, `enableNoOverlay`, `enableNoOverlaySnat` and
+`enableNoOverlayManagedRouting` configure the cluster default network, while
+the `managedBGP*` values configure the shared
+[`[bgp-managed]` section](#the-bgp-managed-section).
 
 ### Unmanaged Routing
 
@@ -282,14 +319,35 @@ no-overlay transport on Layer 2, localnet, and secondary Layer 3 networks.
 The CUDN `spec` is immutable, so the transport configuration cannot be changed
 after the CUDN is created.
 
-To use managed routing for a CUDN, set `routing: Managed` and configure the
-global `[bgp-managed]` section shown in the default network managed-routing
-example. The CUDN still reports transport acceptance only after a
-`RouteAdvertisements` object advertises its pod routes and reaches
-`Accepted=True`.
+### Managed Routing for a CUDN
 
-Create a `RouteAdvertisements` object that selects the CUDN and advertises
-`PodNetwork` routes:
+To use managed routing for a CUDN, set `routing: Managed` and configure the
+cluster-wide [`[bgp-managed]` section](#the-bgp-managed-section).
+
+For a managed CUDN, OVN-Kubernetes owns the BGP resources, and administrators
+should not create `RouteAdvertisements` for it. The managed BGP controller:
+
+* Labels every managed CUDN with `k8s.ovn.org/managed-bgp: ""`.
+* Creates a single `RouteAdvertisements` named `ovnk-managed-bgp-cudn`, shared
+  by all managed CUDNs, which selects them through that label and advertises
+  `PodNetwork`. It is created with the first managed CUDN and deleted with the
+  last one. The cluster default network, when it is itself managed, gets a
+  separate `ovnk-managed-bgp-default` object.
+* Creates the base `FRRConfiguration` named `ovnk-managed-bgp` in the
+  configured FRR namespace, which peers the nodes in a full mesh. It is shared
+  with the cluster default network: it is removed with the last managed
+  network, so it outlives the CUDNs whenever the default network is managed.
+* Recreates these resources if they are deleted or modified out of band.
+
+As with any no-overlay network, the CUDN reports transport acceptance only
+after a `RouteAdvertisements` object advertises its pod routes and reaches
+`Accepted=True`; with managed routing, the controller-owned object satisfies
+this.
+
+### Unmanaged Routing for a CUDN
+
+With `routing: Unmanaged`, create a `RouteAdvertisements` object that selects
+the CUDN and advertises `PodNetwork` routes:
 
 ```yaml
 apiVersion: k8s.ovn.org/v1
@@ -313,6 +371,8 @@ spec:
 
 For VRF-Lite designs, set `targetVRF: auto` or a specific VRF as described in
 the [Route Advertisements VRF-Lite workflow](route-advertisements.md#import-and-export-routes-to-a-cudn-over-the-network-vrf-vrf-lite).
+
+### CUDN Transport Status
 
 When the CUDN is reconciled, OVN-Kubernetes sets the `TransportAccepted` status
 condition:
