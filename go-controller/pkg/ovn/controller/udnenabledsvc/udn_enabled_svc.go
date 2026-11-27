@@ -221,7 +221,7 @@ func (c *Controller) syncService(key string) error {
 	}
 	cachedClusterIPs, ok := c.cache[key]
 	if !ok {
-		cachedClusterIPs = make([]string, 0, len(service.Spec.ClusterIPs))
+		cachedClusterIPs = make([]string, 0)
 	}
 	// service delete case
 	if service == nil {
