@@ -240,15 +240,7 @@ func ParseNodeHostSubnetsForNetworks(node *corev1.Node, networks []string) (map[
 }
 
 func nodeHostSubnetEntries(node *corev1.Node) (map[string]json.RawMessage, error) {
-	var nodeSubnetMap map[string]json.RawMessage
-	annotation, ok := node.Annotations[types.NodeSubnetsAnnotation]
-	if !ok {
-		return nil, newAnnotationNotSetError("could not find %q annotation", types.NodeSubnetsAnnotation)
-	}
-	if err := json.Unmarshal([]byte(annotation), &nodeSubnetMap); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal %q annotation on node %s: %v", types.NodeSubnetsAnnotation, node.Name, err)
-	}
-	return nodeSubnetMap, nil
+	return nodeNetworkAnnotationEntries(node, types.NodeSubnetsAnnotation)
 }
 
 func parseNetworkHostSubnets(nodeSubnetMap map[string]json.RawMessage, nodeName, netName string) ([]*net.IPNet, error) {

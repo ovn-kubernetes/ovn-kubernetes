@@ -32,6 +32,87 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
+// TestNodeSubnetUpdatesQueueChangedNetworks verifies exact scheduling, including
+// desired networks whose controllers have not started yet.
+func TestNodeSubnetUpdatesQueueChangedNetworks(t *testing.T) {
+	g := gomega.NewWithT(t)
+	g.Expect(config.PrepareTestConfig()).To(gomega.Succeed(), "prepare test configuration")
+	t.Cleanup(func() { g.Expect(config.PrepareTestConfig()).To(gomega.Succeed(), "restore test configuration") })
+	c := newNetworkController("test", "local", &testControllerManager{}, nil, false)
+	t.Cleanup(c.Stop)
+	for _, name := range []string{"a", "b"} {
+		network, err := util.NewNetInfo(&ovncnitypes.NetConf{
+			NetConf: cnitypes.NetConf{Name: name}, Topology: types.Layer3Topology, Subnets: "10.0.0.0/16",
+		})
+		g.Expect(err).NotTo(gomega.HaveOccurred(), "create desired network %s", name)
+		c.setNetwork(name, util.NewMutableNetInfo(network))
+	}
+	controller.Stop(c.networkReconciler)
+	for _, tt := range []struct {
+		name, before, after string
+		want                []string
+		full                bool
+	}{
+		{"one changed", `{"a":["10.0.0.0/24"],"b":["10.1.0.0/24"]}`, `{"a":["10.0.1.0/24"],"b":["10.1.0.0/24"]}`, []string{"a"}, false},
+		{"added and removed", `{"a":["10.0.0.0/24"]}`, `{"b":["10.1.0.0/24"]}`, []string{"a", "b"}, false},
+		{"annotation removed", `{"a":["10.0.0.0/24"],"b":["10.1.0.0/24"]}`, "", []string{"a", "b"}, false},
+		{"default", `{}`, `{"default":["10.0.0.0/24"]}`, []string{types.DefaultNetworkName}, false},
+		{"unknown network", `{}`, `{"unknown":["10.0.0.0/24"]}`, nil, false},
+		{"format only", `{"a":["10.0.0.0/24"]}`, `{"a": [ "10.0.0.0/24" ]}`, nil, false},
+		{"legacy string normalized", `{"a":"10.0.0.0/24"}`, `{"a":["10.0.0.0/24"]}`, nil, false},
+		{"invalid map", `{"a":["10.0.0.0/24"]}`, `{`, nil, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			g := gomega.NewWithT(t)
+			old := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "local", ResourceVersion: "1", Annotations: map[string]string{types.NodeSubnetsAnnotation: tt.before}}}
+			next := old.DeepCopy()
+			next.ResourceVersion = "2"
+			next.Annotations[types.NodeSubnetsAnnotation] = tt.after
+			if tt.after == "" {
+				delete(next.Annotations, types.NodeSubnetsAnnotation)
+			}
+			queued := &controller.FakeController{}
+			c.networkReconciler = queued
+			g.Expect(c.nodeNeedsUpdate(old, next)).To(gomega.Equal(tt.full), "unexpected full refresh request")
+			want := make([]string, 0, len(tt.want))
+			for _, name := range tt.want {
+				want = append(want, "Reconcile:"+name)
+			}
+			g.Expect(queued.Reconciles).To(gomega.ConsistOf(want), "unexpected networks queued")
+		})
+	}
+}
+
+// TestNodeUpdatesPreserveFullRefresh checks node-wide events and ignored updates.
+func TestNodeUpdatesPreserveFullRefresh(t *testing.T) {
+	g := gomega.NewWithT(t)
+	g.Expect(config.PrepareTestConfig()).To(gomega.Succeed(), "prepare test configuration")
+	t.Cleanup(func() { g.Expect(config.PrepareTestConfig()).To(gomega.Succeed(), "restore test configuration") })
+	c := newNetworkController("test", "local", &testControllerManager{}, nil, false)
+	t.Cleanup(c.Stop)
+	old := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "local", ResourceVersion: "1"}}
+	g.Expect(c.nodeNeedsUpdate(nil, old)).To(gomega.BeTrue(), "new local node needs a full refresh")
+	for _, tt := range []struct {
+		name string
+		edit func(*corev1.Node)
+		want bool
+	}{
+		{"labels", func(n *corev1.Node) { n.Labels = map[string]string{"role": "worker"} }, true},
+		{"recreated", func(n *corev1.Node) { n.UID = "replacement" }, true},
+		{"resync", func(n *corev1.Node) { n.ResourceVersion = "1" }, false},
+		{"remote", func(n *corev1.Node) { n.Name = "remote"; n.Labels = map[string]string{"role": "worker"} }, false},
+		{"deleting", func(n *corev1.Node) { now := metav1.Now(); n.DeletionTimestamp = &now }, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			g := gomega.NewWithT(t)
+			next := old.DeepCopy()
+			next.ResourceVersion = "2"
+			tt.edit(next)
+			g.Expect(c.nodeNeedsUpdate(old, next)).To(gomega.Equal(tt.want), "unexpected full refresh decision")
+		})
+	}
+}
+
 func TestSetAdvertisements(t *testing.T) {
 	g := gomega.NewWithT(t)
 	g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())

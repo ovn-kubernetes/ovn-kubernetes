@@ -116,7 +116,7 @@ func newNetworkController(name, node string, cm ControllerManager, wf watchFacto
 				}
 				return nc.syncNetworks()
 			},
-			ObjNeedsUpdate: nodeNeedsUpdate,
+			ObjNeedsUpdate: nc.nodeNeedsUpdate,
 			Threadiness:    1,
 		}
 		nc.nodeController = controller.NewController(
@@ -777,8 +777,14 @@ func legacyRAIntent(ra *ratypes.RouteAdvertisements) (intent *util.RouteAdvertis
 	return util.NewRouteAdvertisementsIntent(ra), false
 }
 
-func nodeNeedsUpdate(oldNode, newNode *corev1.Node) bool {
-	if oldNode == nil || newNode == nil {
+// nodeNeedsUpdate queues subnet changes directly by network. Returning true
+// requests a full refresh for local-node lifecycle and label changes.
+// Deletes bypass this predicate and use the full node reconciliation path.
+func (c *networkController) nodeNeedsUpdate(oldNode, newNode *corev1.Node) bool {
+	if newNode.Name != c.node {
+		return false
+	}
+	if oldNode == nil || oldNode.UID != newNode.UID {
 		return true
 	}
 
@@ -788,7 +794,22 @@ func nodeNeedsUpdate(oldNode, newNode *corev1.Node) bool {
 		return false
 	}
 
-	return !reflect.DeepEqual(oldNode.Labels, newNode.Labels) || oldNode.Annotations[types.NodeSubnetsAnnotation] != newNode.Annotations[types.NodeSubnetsAnnotation]
+	if !reflect.DeepEqual(oldNode.Labels, newNode.Labels) {
+		return true
+	}
+	changed, err := util.ChangedNetworksForNodeAnnotation(oldNode, newNode, types.NodeSubnetsAnnotation)
+	if err != nil {
+		klog.Errorf("%s: unable to scope node update: %v", c.name, err)
+		return true
+	}
+	for network := range changed {
+		// Include desired networks whose controllers are still starting. The
+		// default controller is managed separately and may not be in networks.
+		if network == types.DefaultNetworkName || c.getNetwork(network) != nil {
+			c.networkReconciler.Reconcile(network)
+		}
+	}
+	return false
 }
 
 func (c *networkController) getRunningNetwork(id int) string {

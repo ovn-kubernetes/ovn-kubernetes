@@ -6,6 +6,8 @@ package node
 import (
 	"context"
 	"fmt"
+	"maps"
+	"reflect"
 	"strings"
 	"sync"
 
@@ -13,6 +15,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/util/sets"
 	v1 "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog/v2"
 
@@ -22,6 +25,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/syncmap"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
 // localNodeQueueWorkers is the number of workers of the local node queue, the same as the shared
@@ -145,10 +149,20 @@ func NewNodeController(wf *factory.WatchFactory, networkManager networkmanager.I
 	return c
 }
 
-// nodeNeedsReconcile decides whether a node event is queued on the shared queue. Events of this
-// process's own node skip it: they are queued for every registered network directly on the local
-// queue, so they do not wait behind the remote nodes queued on the shared queue first.
-func (c *NodeController) nodeNeedsReconcile(_, newNode *corev1.Node) bool {
+// nodeNeedsReconcile queues annotation-only changes for the affected networks.
+// Other changes reach every handler. Local-node work always uses the dedicated
+// queue so startup does not wait behind remote-node reconciliation.
+func (c *NodeController) nodeNeedsReconcile(oldNode, newNode *corev1.Node) bool {
+	if oldNode != nil {
+		if networks, scoped := networksForNodeUpdate(oldNode, newNode); scoped {
+			for network := range networks {
+				if _, registered := c.handlers.Load(network); registered {
+					c.ReconcileNetwork(newNode.Name, network)
+				}
+			}
+			return false
+		}
+	}
 	if c.localNodeController == nil || newNode.Name != c.nodeName {
 		return true
 	}
@@ -156,6 +170,59 @@ func (c *NodeController) nodeNeedsReconcile(_, newNode *corev1.Node) bool {
 		c.ReconcileNetwork(newNode.Name, netName)
 	}
 	return false
+}
+
+// networksForNodeUpdate scopes only changes to independent network allocations.
+// Gateway configuration stays node-wide: UDNs also consume the default gateway.
+// A false result requests full reconciliation, including on resyncs.
+func networksForNodeUpdate(oldNode, newNode *corev1.Node) (sets.Set[string], bool) {
+	// Node embeds ObjectMeta by value, so clearing fields on shallow copies
+	// leaves the informer objects unchanged. We never mutate shared maps or
+	// slice elements, avoiding a full DeepCopy on every node update.
+	// Annotation updates change ResourceVersion and may change ManagedFields;
+	// ignore that bookkeeping here. Check annotations separately, but retain
+	// full reconciliation for other changes, such as labels or status.
+	old, next := *oldNode, *newNode
+	old.Annotations, next.Annotations = nil, nil
+	old.ResourceVersion, next.ResourceVersion = "", ""
+	old.ManagedFields, next.ManagedFields = nil, nil
+	if !reflect.DeepEqual(old, next) {
+		return nil, false
+	}
+
+	// Remove the independently scoped annotations from copies of both maps.
+	// Any remaining difference, such as a gateway change, may affect every
+	// network and must retain full reconciliation.
+	oldAnnotations, newAnnotations := maps.Clone(oldNode.Annotations), maps.Clone(newNode.Annotations)
+	annotations := []string{types.NodeSubnetsAnnotation, types.UDNLayer2NodeGRLRPTunnelIDAnnotation, util.OvnNetworkIDs}
+	for _, annotation := range annotations {
+		delete(oldAnnotations, annotation)
+		delete(newAnnotations, annotation)
+	}
+	if !maps.Equal(oldAnnotations, newAnnotations) {
+		return nil, false
+	}
+
+	// Combine affected networks across the scoped annotations so each is queued
+	// once. If no raw annotation changed, leave scoped false so resyncs still
+	// reconcile every network.
+	networks := sets.New[string]()
+	scoped := false
+	for _, annotation := range annotations {
+		if oldNode.Annotations[annotation] == newNode.Annotations[annotation] {
+			continue
+		}
+		changed, err := util.ChangedNetworksForNodeAnnotation(oldNode, newNode, annotation)
+		if err != nil {
+			klog.Errorf("Unable to scope node update: %v", err)
+			return nil, false
+		}
+		for network := range changed {
+			networks.Insert(network)
+		}
+		scoped = true
+	}
+	return networks, scoped
 }
 
 // Start starts the node worker.

@@ -6,6 +6,7 @@ package node
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -21,6 +22,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/controller"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/syncmap"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
@@ -756,6 +758,7 @@ func TestBootstrapRetriesFailedLocalNodeOnLocalQueue(t *testing.T) {
 	expectKeys(t, "shared", shared, scopedNodeQueueKey(remoteNode.Name, netName))
 }
 
+// TestLocalNodeEventsSkipSharedQueue preserves local queue priority on resyncs.
 func TestLocalNodeEventsSkipSharedQueue(t *testing.T) {
 	const netName = "net-a"
 	localNode := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "local-node"}}
@@ -776,4 +779,89 @@ func TestLocalNodeEventsSkipSharedQueue(t *testing.T) {
 	}
 	expectKeys(t, "local", local, scopedNodeQueueKey(localNode.Name, netName))
 	expectKeys(t, "shared", shared)
+}
+
+// TestNodeUpdatesScopeNetworks checks allocation changes and node-wide fallbacks
+// on both the local and remote queues.
+func TestNodeUpdatesScopeNetworks(t *testing.T) {
+	for _, nodeName := range []string{"local", "remote"} {
+		for _, tt := range []struct {
+			name string
+			edit func(*corev1.Node)
+			want []string
+			full bool
+		}{
+			// Only a's subnet changes; managed fields do not affect network selection.
+			{"subnet and managed fields", func(n *corev1.Node) {
+				n.Annotations[types.NodeSubnetsAnnotation] = `{"a":["10.0.1.0/24"],"b":["10.1.0.0/24"]}`
+				n.ManagedFields = []metav1.ManagedFieldsEntry{{Manager: "cluster-manager"}}
+			}, []string{"a"}, false},
+			// Changing a's tunnel ID queues a without disturbing b.
+			{"tunnel ID", func(n *corev1.Node) { n.Annotations[types.UDNLayer2NodeGRLRPTunnelIDAnnotation] = `{"a":"3","b":"2"}` }, []string{"a"}, false},
+			// Changing a's network ID queues only a.
+			{"network ID", func(n *corev1.Node) { n.Annotations[util.OvnNetworkIDs] = `{"a":"3","b":"2"}` }, []string{"a"}, false},
+			// Changes across both annotations queue a and b once each.
+			{"multiple allocations", func(n *corev1.Node) {
+				n.Annotations[util.OvnNetworkIDs] = `{"a":"3","b":"2"}`
+				n.Annotations[types.UDNLayer2NodeGRLRPTunnelIDAnnotation] = `{"a":"3","b":"4"}`
+			}, []string{"a", "b"}, false},
+			// Removing the subnet annotation queues both networks that had entries.
+			{"removal", func(n *corev1.Node) { delete(n.Annotations, types.NodeSubnetsAnnotation) }, []string{"a", "b"}, false},
+			// Adding c queues nothing because c has no registered handler.
+			{"unregistered network", func(n *corev1.Node) { n.Annotations[util.OvnNetworkIDs] = `{"a":"1","b":"2","c":"3"}` }, nil, false},
+			// The default gateway is shared, so its changes refresh all networks.
+			{"gateway", func(n *corev1.Node) { n.Annotations[util.OvnNodeL3GatewayConfig] = `{"default":{"mode":"local"}}` }, nil, true},
+			// Node labels can affect every network, so refresh them all.
+			{"labels", func(n *corev1.Node) { n.Labels = map[string]string{"role": "worker"} }, nil, true},
+			// A node condition change requires a full refresh.
+			{"status", func(n *corev1.Node) {
+				n.Status.Conditions = []corev1.NodeCondition{{Type: corev1.NodeNetworkUnavailable, Status: corev1.ConditionTrue}}
+			}, nil, true},
+			// A new UID means the node was recreated; refresh every network.
+			{"recreated", func(n *corev1.Node) { n.UID = "replacement" }, nil, true},
+			// Invalid JSON prevents identifying affected networks, so refresh them all.
+			{"malformed", func(n *corev1.Node) { n.Annotations[types.NodeSubnetsAnnotation] = "{" }, nil, true},
+		} {
+			t.Run(nodeName+"/"+tt.name, func(t *testing.T) {
+				old := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: nodeName, ResourceVersion: "1", Annotations: map[string]string{
+					types.NodeSubnetsAnnotation:                `{"a":["10.0.0.0/24"],"b":["10.1.0.0/24"]}`,
+					types.UDNLayer2NodeGRLRPTunnelIDAnnotation: `{"a":"1","b":"2"}`,
+					util.OvnNetworkIDs:                         `{"a":"1","b":"2"}`,
+				}}}
+				next := old.DeepCopy()
+				next.ResourceVersion = "2"
+				tt.edit(next)
+				c := newLocalQueueControllerForTest(t, "local", nil, nil, old)
+				controller.Stop(c.nodeController, c.localNodeController)
+				shared, local := &controller.FakeController{}, &controller.FakeController{}
+				c.nodeController, c.localNodeController = shared, local
+				for _, name := range []string{"a", "b"} {
+					c.handlers.Store(name, &fakeNodeHandler{netName: name})
+				}
+				if got, want := c.nodeNeedsReconcile(old, next), tt.full && nodeName == "remote"; got != want {
+					t.Fatalf("full-node queue request = %t, want %t", got, want)
+				}
+				want := tt.want
+				if tt.full && nodeName == "local" {
+					want = []string{"a", "b"}
+				}
+				keys := make([]string, 0, len(want))
+				for _, name := range want {
+					keys = append(keys, "Reconcile:"+scopedNodeQueueKey(nodeName, name))
+				}
+				selected, other := shared, local
+				if nodeName == "local" {
+					selected, other = local, shared
+				}
+				slices.Sort(keys)
+				slices.Sort(selected.Reconciles)
+				if !slices.Equal(keys, selected.Reconciles) {
+					t.Fatalf("queued networks = %v, want %v", selected.Reconciles, keys)
+				}
+				if len(other.Reconciles) != 0 {
+					t.Fatalf("node work went to the wrong queue: %v", other.Reconciles)
+				}
+			})
+		}
+	}
 }
