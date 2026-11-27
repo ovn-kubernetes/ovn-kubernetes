@@ -393,6 +393,8 @@ var _ = Describe("Network Segmentation: MAC binding mirroring with ARP/NDP flood
 		// Namespaces are created by hand in BeforeAll: the UDN ones need the
 		// primary-UDN label, and the framework must not garbage collect them
 		// between the ordered specs.
+		// createUnmanagedNamespace still gives them the framework's privileged
+		// pod security labels, which the privileged client pods need.
 		f.SkipNamespaceCreation = true
 
 		// The ordered container is nested so that the framework's own
@@ -541,9 +543,7 @@ var _ = Describe("Network Segmentation: MAC binding mirroring with ARP/NDP flood
 			}
 
 			createNamespace := func(labels map[string]string) *v1.Namespace {
-				ns, err := cs.CoreV1().Namespaces().Create(context.TODO(), &v1.Namespace{
-					ObjectMeta: metav1.ObjectMeta{GenerateName: f.BaseName + "-", Labels: labels},
-				}, metav1.CreateOptions{})
+				ns, err := createUnmanagedNamespace(context.TODO(), cs, f, f.BaseName, labels)
 				Expect(err).NotTo(HaveOccurred(), "must create namespace")
 				DeferCleanup(func() {
 					_ = cs.CoreV1().Namespaces().Delete(context.TODO(), ns.Name, metav1.DeleteOptions{})
@@ -1173,6 +1173,8 @@ var _ = Describe("Network Segmentation: MAC binding mirroring for multiple UDNs 
 		f := wrappedTestFramework("noflood-uplink")
 		// Namespaces are created by hand: the framework would otherwise delete
 		// them after the first spec of the ordered container.
+		// createUnmanagedNamespace still gives them the framework's privileged
+		// pod security labels.
 		f.SkipNamespaceCreation = true
 
 		// Nested so the framework's BeforeEach, which populates f.ClientSet,
@@ -1324,15 +1326,10 @@ var _ = Describe("Network Segmentation: MAC binding mirroring for multiple UDNs 
 			// addMember creates a primary layer3 CUDN bound to the uplink, its
 			// namespace and a client pod on the traffic node, and tracks it.
 			addMember := func(ctx context.Context, name string) noFloodUplinkCUDN {
-				ns, err := cs.CoreV1().Namespaces().Create(ctx, &v1.Namespace{
-					ObjectMeta: metav1.ObjectMeta{
-						GenerateName: name + "-",
-						Labels: map[string]string{
-							"e2e-framework":           f.BaseName,
-							RequiredUDNNamespaceLabel: "",
-						},
-					},
-				}, metav1.CreateOptions{})
+				ns, err := createUnmanagedNamespace(ctx, cs, f, name, map[string]string{
+					"e2e-framework":           f.BaseName,
+					RequiredUDNNamespaceLabel: "",
+				})
 				framework.ExpectNoError(err, "must create namespace for CUDN %s", name)
 				ictx.AddCleanUpFn(func() error {
 					err := cs.CoreV1().Namespaces().Delete(context.Background(), ns.Name, metav1.DeleteOptions{})
