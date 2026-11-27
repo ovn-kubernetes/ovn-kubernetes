@@ -280,43 +280,7 @@ func informerObjectTrim(obj interface{}) (interface{}, error) {
 		accessor.SetManagedFields(nil)
 	}
 	if pod, ok := obj.(*corev1.Pod); ok {
-		// OVN-K does not consume pod volumes from informer cache.
-		pod.Spec.Volumes = []corev1.Volume{}
-		// Scheduling-only pod fields are not read from the informer cache.
-		pod.Spec.Tolerations = nil
-		pod.Spec.Affinity = nil
-		pod.Spec.NodeSelector = nil
-		pod.OwnerReferences = nil
-		// OVN-K only walks pod containers for named ports, so trim the per-container
-		// runtime and resource payload that is not read from the informer cache.
-		for i := range pod.Spec.Containers {
-			pod.Spec.Containers[i].Command = nil
-			pod.Spec.Containers[i].Args = nil
-			pod.Spec.Containers[i].Env = nil
-			pod.Spec.Containers[i].EnvFrom = nil
-			pod.Spec.Containers[i].VolumeMounts = nil
-			pod.Spec.Containers[i].Resources = corev1.ResourceRequirements{}
-			pod.Spec.Containers[i].LivenessProbe = nil
-			pod.Spec.Containers[i].ReadinessProbe = nil
-			pod.Spec.Containers[i].StartupProbe = nil
-			pod.Spec.Containers[i].Lifecycle = nil
-			pod.Spec.Containers[i].SecurityContext = nil
-		}
-		// Init and ephemeral containers are not read from the informer cache.
-		pod.Spec.InitContainers = nil
-		pod.Spec.EphemeralContainers = nil
-		// OVN-K only needs pod phase/IPs/host IP and a small subset of conditions.
-		// Container status arrays are retained heavily in heap profiles and are not read.
-		pod.Status.ContainerStatuses = nil
-		pod.Status.InitContainerStatuses = nil
-		pod.Status.EphemeralContainerStatuses = nil
-		// Current informer consumers only read condition type/status/transition time.
-		for i := range pod.Status.Conditions {
-			pod.Status.Conditions[i].LastProbeTime = metav1.Time{}
-			pod.Status.Conditions[i].Reason = ""
-			pod.Status.Conditions[i].Message = ""
-			pod.Status.Conditions[i].ObservedGeneration = 0
-		}
+		trimPod(pod)
 	}
 	if node, ok := obj.(*corev1.Node); ok {
 		// OVN-K does not consume these node fields from informer cache.
@@ -450,9 +414,21 @@ func NewOVNKubeControllerWatchFactory(ovnClientset *util.OVNKubeControllerClient
 			getEndpointSliceSelector())
 	})
 
+	podInformer := wf.iFactory.InformerFor(&corev1.Pod{}, func(c kubernetes.Interface, resyncPeriod time.Duration) cache.SharedIndexInformer {
+		return cache.NewTypedSharedIndexInformer[*corev1.Pod](cache.NewSharedIndexInformerWithOptions(
+			cache.ToListWatcherWithWatchListSemantics(newPodListWatch(c, corev1.NamespaceAll), c),
+			&corev1.Pod{},
+			cache.SharedIndexInformerOptions{
+				ResyncPeriod: resyncPeriod,
+				Indexers:     cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc},
+				Identifier:   wf.iFactory.InformerName().WithResource(corev1.SchemeGroupVersion.WithResource("pods")),
+			},
+		))
+	})
+
 	var err error
 	// Create our informer-wrapper informer (and underlying shared informer) for types we need
-	wf.informers[PodType], err = newQueuedInformer(eventQueueSize, PodType, wf.iFactory.Core().V1().Pods().Informer(), wf.stopChan,
+	wf.informers[PodType], err = newQueuedInformer(eventQueueSize, PodType, podInformer, wf.stopChan,
 		defaultNumEventQueues)
 	if err != nil {
 		return nil, err
