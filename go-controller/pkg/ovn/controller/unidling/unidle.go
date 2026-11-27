@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -25,11 +26,13 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
+const controllerEventResyncInterval = 30 * time.Second
+
 // unidlingController checks periodically the OVN events db
 // and generates a Kubernetes NeedPods events with the Service
 // associated to the VIP
 type unidlingController struct {
-	eventQueue    chan sbdb.ControllerEvent
+	wakeupCh      chan struct{}
 	eventRecorder record.EventRecorder
 	// Map of load balancers to service namespace
 	serviceVIPToName     map[ServiceVIPKey]types.NamespacedName
@@ -40,7 +43,7 @@ type unidlingController struct {
 // NewController creates a new unidling controller
 func NewController(recorder record.EventRecorder, serviceInformer cache.SharedIndexInformer, sbClient libovsdbclient.Client) (*unidlingController, error) {
 	uc := &unidlingController{
-		eventQueue:       make(chan sbdb.ControllerEvent),
+		wakeupCh:         make(chan struct{}, 1),
 		eventRecorder:    recorder,
 		serviceVIPToName: map[ServiceVIPKey]types.NamespacedName{},
 		sbClient:         sbClient,
@@ -52,40 +55,22 @@ func NewController(recorder record.EventRecorder, serviceInformer cache.SharedIn
 		// the client cache is only available once the client is connected
 		return nil, fmt.Errorf("SB DB client is not connected, no cache to register the ControllerEvent handler on")
 	}
-	// add all empty lb backend events to a channel
+	// Keep the rows in SB as the backlog. The shared cache event processor must
+	// never wait for this controller to finish a transaction or start running.
 	sbCache.AddEventHandler(
 		&libovsdbcache.EventHandlerFuncs{
 			AddFunc: func(_ string, m model.Model) {
 				if event, ok := m.(*sbdb.ControllerEvent); ok {
 					if event.EventType == sbdb.ControllerEventEventTypeEmptyLbBackends {
-						uc.eventQueue <- *event
+						uc.requestSync()
 					}
 				}
 			},
 		},
 	)
 
-	// FIXME: libovsdb event handlers should be added before the Monitor is set
-	// manually populate the current events. we may get an event twice, but this
-	// shouldn't cause issues as we'll just log an error message
-	klog.Info("Populating initial ControllerEvent events")
-
-	var controllerEvents []sbdb.ControllerEvent
-	ctx, cancel := context.WithTimeout(context.Background(), config.Default.OVSDBTxnTimeout)
-	defer cancel()
-	err := sbClient.List(ctx, &controllerEvents)
-	if err != nil {
-		return nil, err
-	}
-	go func() {
-		for _, event := range controllerEvents {
-			uc.eventQueue <- event
-		}
-	}()
-
-	// we only process events on unidling, there is no reconciliation
 	klog.Info("Setting up event handlers for services")
-	_, err = serviceInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, err := serviceInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: uc.onServiceAdd,
 		UpdateFunc: func(old, new interface{}) {
 			uc.onServiceDelete(old)
@@ -167,15 +152,59 @@ func (uc *unidlingController) DeleteServiceVIPToName(vip string, protocol corev1
 	delete(uc.serviceVIPToName, ServiceVIPKey{vip, protocol})
 }
 
+// requestSync requests a scan without waiting for the worker. Pending signals
+// are coalesced because the rows remain in SB. The channel stays open so cache
+// callbacks remain safe after Run returns.
+func (uc *unidlingController) requestSync() {
+	select {
+	case uc.wakeupCh <- struct{}{}:
+	default:
+	}
+}
+
+// Run processes pending SB events at startup, on cache notifications, and
+// periodically until stopCh is closed.
 func (uc *unidlingController) Run(stopCh <-chan struct{}) {
+	// Failed deletions and dropped libovsdb notifications may leave pending
+	// rows without another wakeup.
+	ticker := time.NewTicker(controllerEventResyncInterval)
+	defer ticker.Stop()
+
+	// Include rows that existed before the cache handler was registered.
+	uc.requestSync()
 	for {
 		select {
-		case event := <-uc.eventQueue:
-			if err := uc.handleLbEmptyBackendsEvent(event); err != nil {
-				klog.Error(err)
-			}
 		case <-stopCh:
 			return
+		case <-uc.wakeupCh:
+		case <-ticker.C:
+		}
+		uc.syncControllerEvents(stopCh)
+	}
+}
+
+// syncControllerEvents processes a snapshot of the monitored Controller_Event
+// cache and leaves failed deletions in SB for a later scan. It checks stopCh
+// between events so shutdown does not drain the remaining backlog.
+func (uc *unidlingController) syncControllerEvents(stopCh <-chan struct{}) {
+	var controllerEvents []sbdb.ControllerEvent
+	ctx, cancel := context.WithTimeout(context.Background(), config.Default.OVSDBTxnTimeout)
+	err := uc.sbClient.List(ctx, &controllerEvents)
+	cancel()
+	if err != nil {
+		klog.Errorf("Failed to list unidling controller events: %v", err)
+		return
+	}
+	for _, event := range controllerEvents {
+		select {
+		case <-stopCh:
+			return
+		default:
+		}
+		if event.EventType == sbdb.ControllerEventEventTypeEmptyLbBackends {
+			if err := uc.handleLbEmptyBackendsEvent(event); err != nil {
+				klog.Errorf("Failed to process unidling controller event %s: %v", event.UUID, err)
+			}
 		}
 	}
 }
