@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/onsi/ginkgo/v2"
@@ -20,6 +21,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/label"
 
 	deploymentkind "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig/configs/kind"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/engine/runner"
 	infraproviderkind "github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/providers/kind"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -69,13 +71,38 @@ func TestMain(m *testing.M) {
 	handleFlags()
 	ProcessTestContextAndSetupLogging()
 
-	// Set up infrastructure provider and deployment config
-	// Upstream currently uses KinD as its preferred platform infra
-	// So TestMain is expected to run only there.
-	infraprovider.Set(infraproviderkind.New())
+	// Set up infrastructure provider and deployment config. The cluster is KinD
+	// either way; OVN_TEST_INFRA_PROVIDER only picks how the provider reaches the
+	// container runtime holding the node containers. "ssh" means that runtime is
+	// on another host (see test/e2e/infraprovider/engine/runner for its
+	// OVN_TEST_SSH_* configuration).
+	var opts infraproviderkind.Options
+	switch provider := strings.ToLower(strings.TrimSpace(os.Getenv("OVN_TEST_INFRA_PROVIDER"))); provider {
+	case "", "kind":
+	case "ssh":
+		cfg, err := runner.SSHConfigFromEnv()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to configure ssh runner: %v\n", err)
+			os.Exit(1)
+		}
+		sshRunner, err := runner.NewSSHRunnerFromConfig(cfg)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to create ssh runner: %v\n", err)
+			os.Exit(1)
+		}
+		opts.Runner = sshRunner
+	default:
+		fmt.Fprintf(os.Stderr, "unknown OVN_TEST_INFRA_PROVIDER %q (expected \"kind\" or \"ssh\")\n", provider)
+		os.Exit(1)
+	}
+	provider, err := infraproviderkind.New(opts)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to create infra provider: %v\n", err)
+		os.Exit(1)
+	}
+	infraprovider.Set(provider)
 	var restConfig *rest.Config
 	if framework.TestContext.KubeConfig != "" {
-		var err error
 		restConfig, err = clientcmd.BuildConfigFromFlags("", framework.TestContext.KubeConfig)
 		if err != nil {
 			klog.Exitf("Failed to build rest config: %v", err)
@@ -97,7 +124,18 @@ func TestMain(m *testing.M) {
 		deploymentconfig.Get().AddRequiredImage(api.Netshoot)
 	}
 
-	os.Exit(m.Run())
+	code := m.Run()
+	// Release anything a provider held for the whole suite, such as a runner's
+	// connection to a remote host. Close is discovered by type assertion rather
+	// than declared on api.Provider, so that adding it breaks no out-of-tree
+	// provider. A failure here must not change the result the tests produced, so
+	// it is reported and the test exit code is preserved.
+	if closer, ok := infraprovider.Get().(interface{ Close() error }); ok {
+		if err := closer.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "infra provider close: %v\n", err)
+		}
+	}
+	os.Exit(code)
 }
 
 func TestE2E(t *testing.T) {

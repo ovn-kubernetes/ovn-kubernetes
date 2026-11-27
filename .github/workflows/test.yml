@@ -362,6 +362,13 @@ jobs:
         make test-crd
         popd
 
+    # The e2e infra providers are ordinary Go packages (SSH config handling, the
+    # KinD provider's command plumbing) whose unit tests need no cluster, so they
+    # gate every PR here instead of costing an e2e lane its runtime.
+    - name: Run e2e infra provider unit tests
+      working-directory: test/e2e
+      run: go test -race ./infraprovider/...
+
     - name: Submit code coverage to Coveralls
       continue-on-error: true
       env:
@@ -642,6 +649,12 @@ jobs:
           - {"target": "control-plane", "gateway-mode": "local",  "ipfamily": "ipv6",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "cni-mode": "privileged"}
           - {"target": "control-plane", "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "2br", "cni-mode": "privileged"}
           - {"target": "control-plane", "gateway-mode": "shared", "ipfamily": "ipv6",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "2br", "cni-mode": "unprivileged"}
+          # Same control-plane suite as the lanes above, but the test binary reaches the
+          # container runtime over SSH instead of running its commands locally. The
+          # cluster still lives on this runner; only the transport changes. This is the
+          # only coverage of the SSH infra provider, and it runs the whole suite because
+          # a focused subset exercises too little of the provider to catch a regression.
+          - {"target": "control-plane", "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "snatGW",   "second-bridge": "1br", "cni-mode": "privileged", "infra-provider": "ssh"}
           - {"target": "multi-homing", "gateway-mode": "shared",  "ipfamily": "dualstack",      "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "cni-mode": "privileged"}
           - {"target": "node-ip-mac-migration", "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "cni-mode": "privileged"}
           - {"target": "multi-homing", "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "cni-mode": "privileged", "network-segmentation": "enable-network-segmentation"}
@@ -675,7 +688,15 @@ jobs:
     needs: [ changes, build-pr, build-pr-ubuntu ]
     if: ${{ !cancelled() && needs.changes.outputs.run_ci == 'true' }}
     env:
-      JOB_NAME: "${{ matrix.target }}-${{ matrix.gateway-mode }}-${{ matrix.ipfamily }}-${{ matrix.disable-snat-multiple-gws }}-${{ matrix.second-bridge }}-${{ matrix.cni-mode }}-${{ matrix.image_family || 'fedora' }}"
+      # JOB_NAME names the uploaded logs and prefixes the junit reports. The SSH
+      # lane shares every other value with the control-plane lane it mirrors, so
+      # without this suffix the two would be indistinguishable there. It is only
+      # appended for lanes that set infra-provider, leaving the existing lanes'
+      # names unchanged.
+      JOB_NAME: "${{ matrix.target }}-${{ matrix.gateway-mode }}-${{ matrix.ipfamily }}-${{ matrix.disable-snat-multiple-gws }}-${{ matrix.second-bridge }}-${{ matrix.cni-mode }}-${{ matrix.image_family || 'fedora' }}${{ matrix.infra-provider && format('-{0}', matrix.infra-provider) || '' }}"
+      # Empty on every other lane, which leaves the suite on the default provider
+      # that runs the container runtime's commands locally.
+      OVN_TEST_INFRA_PROVIDER: "${{ matrix.infra-provider }}"
       OVN_HYBRID_OVERLAY_ENABLE: ${{ matrix.target == 'control-plane' && (matrix.ipfamily == 'ipv4' || matrix.ipfamily == 'dualstack' ) }}
       OVN_MULTICAST_ENABLE:  "${{ matrix.target == 'control-plane' || startsWith(matrix.target, 'network-segmentation') || startsWith(matrix.target, 'bgp') }}"
       OVN_EMPTY_LB_EVENTS: "${{ matrix.target == 'control-plane' || startsWith(matrix.target, 'bgp') }}"
@@ -824,6 +845,35 @@ jobs:
       run: |
         sudo ufw disable
 
+    # Give the SSH lane a host to SSH into: this runner itself. The provider then
+    # drives the local container runtime over a real SSH connection, which is the
+    # part under test. Host-key verification stays on, using a known_hosts file
+    # seeded from the server we just started, so the lane also covers that path.
+    - name: Set up SSH to localhost
+      if: matrix.infra-provider == 'ssh'
+      env:
+        SSH_KEY: /home/runner/.ssh/id_ed25519
+      run: |
+        set -euxo pipefail
+        mkdir -p ~/.ssh
+        chmod 700 ~/.ssh
+        ssh-keygen -t ed25519 -N "" -f "${SSH_KEY}"
+        chmod 600 "${SSH_KEY}"
+        cat "${SSH_KEY}.pub" >> ~/.ssh/authorized_keys
+        chmod 600 ~/.ssh/authorized_keys
+        sudo apt-get update
+        sudo apt-get install -y openssh-server
+        sudo systemctl enable --now ssh
+        ssh-keyscan -H 127.0.0.1 >> ~/.ssh/known_hosts
+        chmod 644 ~/.ssh/known_hosts
+        {
+          echo "OVN_TEST_SSH_HOST=127.0.0.1"
+          echo "OVN_TEST_SSH_USER=$(id -un)"
+          echo "OVN_TEST_SSH_KEY=${SSH_KEY}"
+          echo "OVN_TEST_SSH_KNOWN_HOSTS=${HOME}/.ssh/known_hosts"
+        } >> $GITHUB_ENV
+        ssh -o BatchMode=yes "$(id -un)@127.0.0.1" true
+
     - name: Download selected PR image
       uses: actions/download-artifact@v8
       with:
@@ -897,7 +947,11 @@ jobs:
           :
         else
           make -C test "${{ matrix.target }}"
-          if [ "${{ matrix.ipfamily }}" != "ipv6" ]; then
+          # The conformance suite is a separate module run straight against the
+          # kubeconfig, so it never touches the infra provider. Skip it on the SSH
+          # lane: it would add runtime without adding coverage of what that lane
+          # exists to test.
+          if [ "${{ matrix.ipfamily }}" != "ipv6" ] && [ "${{ matrix.infra-provider }}" != "ssh" ]; then
             make -C test conformance
           fi
         fi
