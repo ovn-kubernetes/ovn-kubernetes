@@ -4,6 +4,8 @@
 package managementport
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net"
 
@@ -12,11 +14,16 @@ import (
 	coreinformers "k8s.io/client-go/informers/core/v1"
 	listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/ptr"
+
+	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	ovsops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/node/controllers/mgmtportdevice"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/vswitchd"
 )
 
 type udnManagementPort interface {
@@ -41,9 +48,10 @@ type UDNManagementPortController struct {
 
 type udnManagementPortConfig struct {
 	util.NetInfo
-	nodeName string
-	subnets  []*net.IPNet
-	mpMAC    net.HardwareAddr
+	nodeName  string
+	subnets   []*net.IPNet
+	mpMAC     net.HardwareAddr
+	ovsClient libovsdbclient.Client
 }
 
 func newUDNManagementPortConfig(nodeName string, networkLocalSubnets []*net.IPNet, netInfo util.NetInfo) (*udnManagementPortConfig, error) {
@@ -155,6 +163,7 @@ func (c *UDNManagementPortController) Reconcile() error {
 
 // NewUDNManagementPortController creates a new management port controller for a primary UDN
 func NewUDNManagementPortController(
+	ovsClient libovsdbclient.Client,
 	nodeInformer coreinformers.NodeInformer,
 	nodeName string,
 	networkLocalSubnets []*net.IPNet,
@@ -168,6 +177,7 @@ func NewUDNManagementPortController(
 	if err != nil {
 		return nil, err
 	}
+	cfg.ovsClient = ovsClient
 
 	nodeLister := nodeInformer.Lister()
 	node, err := nodeLister.Get(nodeName)
@@ -274,30 +284,56 @@ func newUDNManagementPortRep(cfg *udnManagementPortConfig, repDeviceName string)
 
 // syncUDNManagementPort is to delete stale UDN management port entities created when the node was in different configuration/mode
 func syncUDNManagementPort(cfg *udnManagementPortConfig, mgmtIfName string, mpdev *util.NetworkDeviceDetails) error {
-	var err error
-	// representor OVS interface
-	ovsRepIfName, _, _ := util.RunOVSVsctl("--no-headings",
-		"--data", "bare",
-		"--format", "csv",
-		"--columns", "name",
-		"find", "Interface", fmt.Sprintf("external-ids:%s=%s", types.OvnManagementPortNameExternalID, mgmtIfName))
-	// internal OVS interface
-	ovsInternalIfName, _, _ := util.RunOVSVsctl("--no-headings",
-		"--data", "bare",
-		"--format", "csv",
-		"--columns", "name",
-		"find", "Interface", "type=internal", fmt.Sprintf("name=%s", mgmtIfName))
+	if cfg.ovsClient == nil {
+		if !config.IsModeDPUHost() {
+			return fmt.Errorf("OVS client is required to sync management port %s in node mode %s",
+				mgmtIfName, config.OvnKubeNode.Mode)
+		}
+		// DPU-host has no local OVS. Preserve its stale netdevice cleanup, but
+		// do not issue OVS queries that cannot succeed in this mode.
+		return syncUDNManagementPortEntities(cfg, mgmtIfName, mpdev, nil, "")
+	}
 
-	if config.OvnKubeNode.MgmtPortDPResourceName == "" && config.IsModeFull() {
-		// expect internal OVS management port interface
-		if ovsRepIfName != "" {
-			klog.V(5).Infof("Expected management port OVS internal interface, delete stale management port representor %s for network %s",
-				ovsRepIfName, cfg.GetNetworkName())
-			err = DeleteManagementPortRepInterface(cfg.GetNetworkName(), ovsRepIfName, ovsRepIfName)
-			if err != nil {
-				klog.Errorf("Failed to delete stale OVS representor port interface %s for network %s: %v", ovsRepIfName, cfg.GetNetworkName(), err)
+	var ovsRepIfNames []string
+	var ovsInternalIfName string
+	representors, findErr := ovsops.FindInterfacesWithPredicate(cfg.ovsClient, func(iface *vswitchd.Interface) bool {
+		return iface.ExternalIDs[types.OvnManagementPortNameExternalID] == mgmtIfName
+	})
+	if findErr != nil {
+		return fmt.Errorf("failed to find management port representor for %s: %w", mgmtIfName, findErr)
+	}
+	for _, representor := range representors {
+		ovsRepIfNames = append(ovsRepIfNames, representor.Name)
+	}
+	internal, findErr := ovsops.FindInterfacesWithPredicate(cfg.ovsClient, func(iface *vswitchd.Interface) bool {
+		return iface.Name == mgmtIfName && iface.Type == "internal"
+	})
+	if findErr != nil {
+		return fmt.Errorf("failed to find internal management port for %s: %w", mgmtIfName, findErr)
+	}
+	if len(internal) > 0 {
+		ovsInternalIfName = internal[0].Name
+	}
+	return syncUDNManagementPortEntities(cfg, mgmtIfName, mpdev, ovsRepIfNames, ovsInternalIfName)
+}
+
+func syncUDNManagementPortEntities(cfg *udnManagementPortConfig, mgmtIfName string, mpdev *util.NetworkDeviceDetails, ovsRepIfNames []string, ovsInternalIfName string) error {
+	// Reconcile every match: an interrupted device change can leave both
+	// the current representor and one or more stale ports in OVS.
+	deleteStaleRepresentors := func(keep string) error {
+		var errs []error
+		for _, name := range ovsRepIfNames {
+			if name == keep {
+				continue
+			}
+			if err := DeleteManagementPortRepInterface(cfg.ovsClient, cfg.GetNetworkName(), name, name); err != nil {
+				errs = append(errs, err)
 			}
 		}
+		return errors.Join(errs...)
+	}
+	if config.OvnKubeNode.MgmtPortDPResourceName == "" && config.IsModeFull() {
+		// Expect an internal OVS management port interface.
 		// In gateway_udn unit testing, it pre-create the netdev link for management port OVS internal interface.
 		// In order for unit testing to work, we can not tear-down/rename the link. Remove below for now.
 		//
@@ -312,22 +348,25 @@ func syncUDNManagementPort(cfg *udnManagementPortConfig, mgmtIfName string, mpde
 		//		}
 		//	}
 		//}
-		return nil
+		return deleteStaleRepresentors("")
 	}
 
 	if config.IsModeDPUHost() || config.IsModeFull() {
 		if ovsInternalIfName != "" {
 			klog.V(5).Infof("Expected management port OVS netdev interface, bring down stale management port internal interface %s for network %s",
 				mgmtIfName, cfg.GetNetworkName())
-			err = DeleteManagementPortInternalOVSInterface(cfg.GetNetworkName(), mgmtIfName)
+			err := DeleteManagementPortInternalOVSInterface(cfg.ovsClient, cfg.GetNetworkName(), mgmtIfName)
 			if err != nil {
 				klog.Errorf("Failed to delete OVS internal interface %s for network %s: %v", mgmtIfName, cfg.GetNetworkName(), err)
 			}
 		}
 		// then check the current mgmtIfName to see if it is the same netdevice
-		link, _ := util.GetNetLinkOps().LinkByName(mgmtIfName)
-		if link == nil {
-			return nil
+		link, err := util.GetNetLinkOps().LinkByName(mgmtIfName)
+		if err != nil {
+			if util.GetNetLinkOps().IsLinkNotFoundError(err) {
+				return nil
+			}
+			return fmt.Errorf("failed to look up management port %s for network %s: %w", mgmtIfName, cfg.GetNetworkName(), err)
 		}
 		deviceId, err := util.GetDeviceIDFromNetdevice(link.Attrs().Name)
 		if err != nil {
@@ -340,22 +379,15 @@ func syncUDNManagementPort(cfg *udnManagementPortConfig, mgmtIfName string, mpde
 			if err != nil {
 				klog.Errorf("Failed to bring down stale OVS netdev interface %s for network %s: %v", mgmtIfName, cfg.GetNetworkName(), err)
 			}
-			// in that case, representor could also be associated with stale netdev and needs to be deleted
-			if ovsRepIfName != "" {
-				err = DeleteManagementPortRepInterface(cfg.GetNetworkName(), ovsRepIfName, ovsRepIfName)
-				if err != nil {
-					klog.Errorf("Failed to delete stale OVS representor port interface %s for network %s: %v", ovsRepIfName, cfg.GetNetworkName(), err)
-				}
-			}
+			// The representors may also belong to the stale device.
+			return errors.Join(err, deleteStaleRepresentors(""))
 		}
-	} else if config.IsModeDPU() && ovsRepIfName != "" {
-		repDeviceName, _ := util.GetDPUOps().GetPortRepresentor(fmt.Sprintf("%d", mpdev.PfId), fmt.Sprintf("%d", mpdev.FuncId))
-		if repDeviceName != ovsRepIfName {
-			err = DeleteManagementPortRepInterface(cfg.GetNetworkName(), ovsRepIfName, ovsRepIfName)
-			if err != nil {
-				klog.Errorf("Failed to delete stale OVS representor port interface %s for network %s: %v", ovsRepIfName, cfg.GetNetworkName(), err)
-			}
+	} else if config.IsModeDPU() && len(ovsRepIfNames) > 0 {
+		repDeviceName, err := util.GetDPUOps().GetPortRepresentor(fmt.Sprintf("%d", mpdev.PfId), fmt.Sprintf("%d", mpdev.FuncId))
+		if err != nil {
+			return fmt.Errorf("failed to resolve management port representor for network %s: %w", cfg.GetNetworkName(), err)
 		}
+		return deleteStaleRepresentors(repDeviceName)
 	}
 
 	return nil
@@ -367,21 +399,33 @@ func syncUDNManagementPort(cfg *udnManagementPortConfig, mgmtIfName string, mpde
 // STEP3: enables IPv4 forwarding on the interface if the network has a v4 subnet
 func (mp *udnManagementPortOVS) create() error {
 	// STEP1
-	stdout, stderr, err := util.RunOVSVsctl(
-		"--", "--may-exist", "add-port", "br-int", mp.ifName,
-		"--", "set", "interface", mp.ifName, fmt.Sprintf("mac=\"%s\"", mp.mpMAC.String()),
-		"type=internal", "mtu_request="+fmt.Sprintf("%d", mp.MTU()),
-		"external-ids:iface-id="+mp.GetNetworkScopedK8sMgmtIntfName(mp.nodeName),
-		"external-ids:"+fmt.Sprintf("%s=%s", types.NetworkExternalID, mp.GetNetworkName()),
-	)
-	if err != nil {
-		return fmt.Errorf("failed to add port to br-int for network %s, stdout: %q, stderr: %q, error: %w",
-			mp.GetNetworkName(), stdout, stderr, err)
+	if mp.ovsClient == nil {
+		return fmt.Errorf("OVS client is required to create management port for network %s", mp.GetNetworkName())
 	}
-	klog.V(3).Infof("Added OVS management port interface %s for network %s", mp.ifName, mp.GetNetworkName())
+	mac := mp.mpMAC.String()
+	iface := &vswitchd.Interface{
+		Type:       "internal",
+		MAC:        &mac,
+		MTURequest: ptr.To(mp.MTU()),
+		ExternalIDs: map[string]string{
+			"iface-id":              mp.GetNetworkScopedK8sMgmtIntfName(mp.nodeName),
+			types.NetworkExternalID: mp.GetNetworkName(),
+		},
+	}
+	ovsdbOps, err := ovsops.CreateOrUpdateOVSPortOps(mp.ovsClient, nil, "br-int", mp.ifName, &vswitchd.Port{}, iface)
+	if err != nil {
+		return fmt.Errorf("failed to create operations to add port to br-int for network %s: %w", mp.GetNetworkName(), err)
+	}
+	if err := ovsops.TransactAndCheckAndWaitForVSwitchd(context.Background(), mp.ovsClient, ovsdbOps); err != nil {
+		return fmt.Errorf("failed to add port to br-int for network %s: %w", mp.GetNetworkName(), err)
+	}
+	return mp.configureLink()
+}
 
+func (mp *udnManagementPortOVS) configureLink() error {
+	klog.V(3).Infof("Added OVS management port interface %s for network %s", mp.ifName, mp.GetNetworkName())
 	// STEP2
-	_, err = util.LinkSetUp(mp.ifName)
+	_, err := util.LinkSetUp(mp.ifName)
 	if err != nil {
 		return fmt.Errorf("failed to set the link up for interface %s while plumbing network %s, err: %v",
 			mp.ifName, mp.GetNetworkName(), err)
@@ -402,7 +446,7 @@ func (mp *udnManagementPortOVS) create() error {
 }
 
 func (mp *udnManagementPortOVS) delete() error {
-	return DeleteManagementPortInternalOVSInterface(mp.GetNetworkName(), mp.ifName)
+	return DeleteManagementPortInternalOVSInterface(mp.ovsClient, mp.GetNetworkName(), mp.ifName)
 }
 
 // Create management port representor. Note that the representor device is not renamed. One can determine its associated
@@ -422,15 +466,15 @@ func (mp *udnManagementPortRep) create() error {
 		return fmt.Errorf("bring up management port %s for network %s failed: %v", mp.repDevice, mp.GetNetworkName(), err)
 	}
 
-	externalIds := []string{
-		fmt.Sprintf("%s=%s", types.NetworkExternalID, mp.GetNetworkName()),
-		fmt.Sprintf("%s=%s", types.OvnManagementPortNameExternalID, util.GetNetworkScopedK8sMgmtHostIntfName(uint(mp.GetNetworkID()))),
+	externalIDs := map[string]string{
+		types.NetworkExternalID:               mp.GetNetworkName(),
+		types.OvnManagementPortNameExternalID: util.GetNetworkScopedK8sMgmtHostIntfName(uint(mp.GetNetworkID())),
 	}
-	return createManagementPortOVSRepresentor(mp.GetNetworkName(), mp.repDevice, mp.GetNetworkScopedK8sMgmtIntfName(mp.nodeName), mp.MTU(), externalIds)
+	return createManagementPortOVSRepresentor(mp.ovsClient, mp.GetNetworkName(), mp.repDevice, mp.GetNetworkScopedK8sMgmtIntfName(mp.nodeName), mp.MTU(), externalIDs)
 }
 
 func (mp *udnManagementPortRep) delete() error {
-	return DeleteManagementPortRepInterface(mp.GetNetworkName(), mp.repDevice, mp.repDevice)
+	return DeleteManagementPortRepInterface(mp.ovsClient, mp.GetNetworkName(), mp.repDevice, mp.repDevice)
 }
 
 func (mp *udnManagementPortNetdev) create() error {

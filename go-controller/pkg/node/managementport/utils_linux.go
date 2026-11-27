@@ -7,7 +7,10 @@
 package managementport
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"maps"
 	"net"
 	"time"
 
@@ -15,8 +18,12 @@ import (
 
 	"k8s.io/klog/v2"
 
+	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
+
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/vswitchd"
 )
 
 // bringupManagementPortLink update the management port interface with the expected mac/name/mtu
@@ -127,54 +134,61 @@ func TearDownManagementPortLink(netName string, link netlink.Link, originalIfNam
 	return nil
 }
 
-func createManagementPortOVSRepresentor(netName, ifname, ifaceid string, mtu int, externalIds []string) error {
-	br_type, err := util.GetDatapathType("br-int")
+func createManagementPortOVSRepresentor(ovsClient libovsdbclient.Client, netName, ifname, ifaceid string, mtu int, externalIDs map[string]string) error {
+	if ovsClient == nil {
+		return fmt.Errorf("OVS client is required to create management port representor %s for network %s", ifname, netName)
+	}
+
+	bridge, err := ops.GetBridge(ovsClient, "br-int")
 	if err != nil {
-		return fmt.Errorf("failed to get datapath type for bridge br-int : %v", err)
+		return fmt.Errorf("failed to get datapath type for bridge br-int: %w", err)
 	}
-
-	ovsArgs := []string{
-		"--", "--may-exist", "add-port", "br-int", ifname,
-		"--", "set", "interface", ifname,
-		"external-ids:iface-id=" + ifaceid,
-	}
-	for _, v := range externalIds {
-		ovsArgs = append(ovsArgs, fmt.Sprintf("external-ids:%s", v))
-	}
-
-	if br_type == types.DatapathUserspace {
-		dpdkArgs := []string{"type=dpdk"}
-		ovsArgs = append(ovsArgs, dpdkArgs...)
-		ovsArgs = append(ovsArgs, fmt.Sprintf("mtu_request=%v", mtu))
+	ifaceExternalIDs := map[string]string{"iface-id": ifaceid}
+	maps.Copy(ifaceExternalIDs, externalIDs)
+	iface := &vswitchd.Interface{ExternalIDs: ifaceExternalIDs}
+	if bridge.DatapathType == types.DatapathUserspace {
+		iface.Type = "dpdk"
+		iface.MTURequest = &mtu
+	} else {
+		// Kernel representor MTU is managed through netlink. Preserve any
+		// existing OVS request, as ovs-vsctl add-port did in this path.
+		existing, err := ops.GetOVSInterface(ovsClient, ifname)
+		if err != nil && !errors.Is(err, libovsdbclient.ErrNotFound) {
+			return fmt.Errorf("failed to get representor %s: %w", ifname, err)
+		}
+		if err == nil {
+			iface.MTURequest = existing.MTURequest
+		}
 	}
 
 	klog.V(5).Infof("Add OVS representor OVS interface %s to bridge br-int for network %s: ifaceID %s mtu %v externalIDs %v",
-		ifname, netName, ifaceid, mtu, externalIds)
-	// Plug management port representor to OVS.
-	stdout, stderr, err := util.RunOVSVsctl(ovsArgs...)
+		ifname, netName, ifaceid, mtu, externalIDs)
+	ovsdbOps, err := ops.CreateOrUpdateOVSPortOps(ovsClient, nil, "br-int", ifname, &vswitchd.Port{}, iface)
 	if err != nil {
-		klog.Errorf("Failed to add port %q to br-int, stdout: %q, stderr: %q, error: %v",
-			ifname, stdout, stderr, err)
-		return err
+		return fmt.Errorf("failed to build operations for representor %q: %w", ifname, err)
+	}
+	if err := ops.TransactAndCheckAndWaitForVSwitchd(context.Background(), ovsClient, ovsdbOps); err != nil {
+		return fmt.Errorf("failed to add port %q to br-int: %w", ifname, err)
 	}
 	return nil
 }
 
 // deleteManagementPortOVSInterface delete the management port OVS interface from the br-int bridge:
-func deleteManagementPortOVSInterface(network, ovsIfName string) error {
-	stdout, stderr, err := util.RunOVSVsctl("--if-exists", "del-port", "br-int", ovsIfName)
-	if err != nil {
-		return fmt.Errorf("failed to delete port %s from br-int for network %s, stdout: %q, stderr: %q, error: %v",
-			ovsIfName, network, stdout, stderr, err)
+func deleteManagementPortOVSInterface(ovsClient libovsdbclient.Client, network, ovsIfName string) error {
+	if ovsClient == nil {
+		return fmt.Errorf("OVS client is required to delete port %s from br-int for network %s", ovsIfName, network)
+	}
+	if err := ops.DeletePortWithInterfacesAndWaitForVSwitchd(context.Background(), ovsClient, "br-int", ovsIfName); err != nil {
+		return fmt.Errorf("failed to delete port %s from br-int for network %s: %w", ovsIfName, network, err)
 	}
 	return nil
 }
 
 // DeleteManagementPortInternalOVSInterface delete the management port OVS internal interface:
-func DeleteManagementPortInternalOVSInterface(network, ovsIfName string) error {
+func DeleteManagementPortInternalOVSInterface(ovsClient libovsdbclient.Client, network, ovsIfName string) error {
 	klog.V(5).Infof("Removed OVS management port internal OVS interface %s for network %s", ovsIfName, network)
 
-	err := deleteManagementPortOVSInterface(network, ovsIfName)
+	err := deleteManagementPortOVSInterface(ovsClient, network, ovsIfName)
 	if err != nil {
 		return err
 	}
@@ -190,10 +204,10 @@ func DeleteManagementPortInternalOVSInterface(network, ovsIfName string) error {
 	return nil
 }
 
-func DeleteManagementPortRepInterface(network, repDevice, savedName string) error {
+func DeleteManagementPortRepInterface(ovsClient libovsdbclient.Client, network, repDevice, savedName string) error {
 	klog.V(5).Infof("Removed OVS management port Representor OVS interface %s for network %s", repDevice, network)
 
-	err := deleteManagementPortOVSInterface(network, repDevice)
+	err := deleteManagementPortOVSInterface(ovsClient, network, repDevice)
 	if err != nil {
 		return err
 	}

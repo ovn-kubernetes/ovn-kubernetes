@@ -660,7 +660,7 @@ func (udng *UserDefinedNetworkGateway) addNetworkWithResolvedUplink(
 			udng.GetNetworkName(), err)
 	}
 
-	udng.mgmtPortController, err = managementport.NewUDNManagementPortController(udng.nodeInformer, udng.nodeName, nodeSubnets, udng.NetInfo)
+	udng.mgmtPortController, err = managementport.NewUDNManagementPortController(udng.ovsClient, udng.nodeInformer, udng.nodeName, nodeSubnets, udng.NetInfo)
 	if err != nil {
 		return fmt.Errorf("could not create management port for network %s, UDN management port controller init failure: %v",
 			udng.GetNetworkName(), err)
