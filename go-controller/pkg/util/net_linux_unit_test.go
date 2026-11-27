@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/vishvananda/netlink"
+	"golang.org/x/sys/unix"
 
 	corev1 "k8s.io/api/core/v1"
 
@@ -1319,4 +1320,124 @@ func getAnyNetwork(v6 bool) *net.IPNet {
 		_, ipNet, _ = net.ParseCIDR("0.0.0.0/0")
 	}
 	return ipNet
+}
+
+// TestStrictRouteDumpSupported checks which populated route fields can use
+// strict dumps and which require client-side filtering to avoid kernel errors.
+func TestStrictRouteDumpSupported(t *testing.T) {
+	dst := ovntest.MustParseIPNet("10.128.1.0/24")
+	mplsDst := 100
+	tests := []struct {
+		desc   string
+		filter *netlink.Route
+		outExp bool
+	}{
+		{
+			desc:   "nil filter",
+			filter: nil,
+			outExp: true,
+		},
+		{
+			desc:   "unfiltered dump",
+			filter: &netlink.Route{},
+			outExp: true,
+		},
+		{
+			desc:   "table and protocol",
+			filter: &netlink.Route{Table: 254, Protocol: unix.RTPROT_BGP},
+			outExp: true,
+		},
+		{
+			desc:   "a single kernel dump filter field",
+			filter: &netlink.Route{Table: 1000},
+			outExp: true,
+		},
+		{
+			desc:   "zero scope",
+			filter: &netlink.Route{Scope: netlink.SCOPE_UNIVERSE},
+			outExp: true,
+		},
+		{
+			desc:   "link scope",
+			filter: &netlink.Route{Scope: netlink.SCOPE_LINK},
+			outExp: false,
+		},
+		{
+			desc:   "host scope",
+			filter: &netlink.Route{Scope: netlink.SCOPE_HOST},
+			outExp: false,
+		},
+		{
+			desc:   "scope and output interface together",
+			filter: &netlink.Route{Scope: netlink.SCOPE_LINK, LinkIndex: 3},
+			outExp: false,
+		},
+		{
+			desc: "all kernel dump filter fields",
+			filter: &netlink.Route{
+				Family:    netlink.FAMILY_V4,
+				Table:     1000,
+				Protocol:  unix.RTPROT_BGP,
+				Type:      unix.RTN_UNICAST,
+				Scope:     netlink.SCOPE_UNIVERSE,
+				LinkIndex: 3,
+			},
+			outExp: true,
+		},
+		{
+			desc:   "destination",
+			filter: &netlink.Route{Dst: dst},
+			outExp: false,
+		},
+		{
+			desc:   "gateway",
+			filter: &netlink.Route{Gw: ovntest.MustParseIP("192.168.8.1")},
+			outExp: false,
+		},
+		{
+			desc:   "source",
+			filter: &netlink.Route{Src: ovntest.MustParseIP("192.168.8.10")},
+			outExp: false,
+		},
+		{
+			desc:   "mpls destination",
+			filter: &netlink.Route{MPLSDst: &mplsDst},
+			outExp: false,
+		},
+		{
+			desc:   "multipath",
+			filter: &netlink.Route{MultiPath: []*netlink.NexthopInfo{{LinkIndex: 3}}},
+			outExp: false,
+		},
+		{
+			desc:   "tos",
+			filter: &netlink.Route{Tos: 8},
+			outExp: false,
+		},
+		{
+			desc:   "metric",
+			filter: &netlink.Route{MTU: 1400},
+			outExp: false,
+		},
+		{
+			desc:   "hoplimit",
+			filter: &netlink.Route{Hoplimit: 64},
+			outExp: false,
+		},
+		{
+			desc:   "input interface",
+			filter: &netlink.Route{ILinkIndex: 3},
+			outExp: false,
+		},
+		{
+			desc:   "table, protocol and destination",
+			filter: &netlink.Route{Table: 254, Protocol: unix.RTPROT_BGP, Dst: dst},
+			outExp: false,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.desc, func(t *testing.T) {
+			assert.Equal(t, tc.outExp, strictRouteDumpSupported(tc.filter))
+		})
+	}
 }
