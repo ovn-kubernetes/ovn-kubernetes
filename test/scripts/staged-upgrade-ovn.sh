@@ -85,12 +85,14 @@ running_images() {
     | jq -r '.items[] | select(.metadata.deletionTimestamp == null) | .spec.containers[].image' | sort -u
 }
 
-# Unique set of image IDs reported by the running containers of a workload,
+# Unique set of image digests reported by the running containers of a workload,
 # optionally restricted by a field selector. Two builds loaded under the same
-# tag are told apart by ID, not by name.
+# tag are told apart by digest, not by name. kind names an imported image after
+# the import time (import-<date>@sha256:...), so the same content loaded on
+# different days would otherwise look like two different images.
 running_image_ids() {
   kubectl -n "$NAMESPACE" get pod -l "$(selector_of "$1" "$2")" ${3:+--field-selector "$3"} -o json \
-    | jq -r '.items[] | select(.metadata.deletionTimestamp == null) | .status.containerStatuses[]?.imageID' | sort -u
+    | jq -r '.items[] | select(.metadata.deletionTimestamp == null) | .status.containerStatuses[]?.imageID | sub("^.*@"; "")' | sort -u
 }
 
 # Nodes of the kind cluster, one per line.
@@ -304,7 +306,7 @@ stage_control_plane_last() {
     wait_nodes
     for ds in $(node_daemonsets); do
       ids=$(running_image_ids daemonset "$ds")
-      if [[ $(wc -l <<<"$ids") -ne 1 ]]; then
+      if [[ -z "$ids" || $(wc -l <<<"$ids") -ne 1 ]]; then
         echo "${ds}: expected one image ID on every node after rolling ${holdback}, got [${ids}]" >&2
         exit 1
       fi

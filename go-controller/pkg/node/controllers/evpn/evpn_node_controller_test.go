@@ -1029,35 +1029,34 @@ var _ = Describe("EVPN node controller", func() {
 			ctrl.vtepController.Reconcile(reconcileNodeAddressChange)
 
 			vxlan4Name := GetEVPNVXLANName(vtepName, utilnet.IPv4)
-			Eventually(func() bool {
+			vxlan4SrcIPs := func() []net.IP {
 				ensuredMu.Lock()
 				defer ensuredMu.Unlock()
+				var srcIPs []net.IP
 				for _, cfg := range ensuredCfgs {
-					if cfg.Link.Attrs().Name == vxlan4Name {
-						return true
+					if vxlan, ok := cfg.Link.(*netlink.Vxlan); ok && cfg.Link.Attrs().Name == vxlan4Name {
+						srcIPs = append(srcIPs, vxlan.SrcAddr)
 					}
 				}
-				return false
-			}).Should(BeTrue())
+				return srcIPs
+			}
+
+			// Discovery writes the annotation before programming devices, so
+			// seeing the old source IP proves the annotation is set. The
+			// number of reconciliation passes is not deterministic: informer
+			// adds and the annotation write each enqueue one, and they may
+			// coalesce or queue an extra pass.
+			Eventually(vxlan4SrcIPs).Should(ContainElement(net.ParseIP("100.64.0.1")))
 
 			By("changing node IP — should reconcile with new source IP")
-			ensuredMu.Lock()
-			ensuredCfgs = nil
-			ensuredMu.Unlock()
-
 			am.SetIPs([]net.IP{net.ParseIP("100.64.0.5")})
 			ctrl.vtepController.Reconcile(reconcileNodeAddressChange)
 
-			Eventually(func() net.IP {
-				ensuredMu.Lock()
-				defer ensuredMu.Unlock()
-				for _, cfg := range ensuredCfgs {
-					if vxlan, ok := cfg.Link.(*netlink.Vxlan); ok && cfg.Link.Attrs().Name == vxlan4Name {
-						return vxlan.SrcAddr
-					}
-				}
-				return nil
-			}).Should(Equal(net.ParseIP("100.64.0.5")))
+			// Passes run on a single worker and only append to ensuredCfgs, so
+			// an update with the new source IP cannot be hidden by an earlier
+			// one. Checking every recorded update avoids depending on how many
+			// passes ran or on reading the first entry after a reset.
+			Eventually(vxlan4SrcIPs).Should(ContainElement(net.ParseIP("100.64.0.5")))
 		})
 
 		It("reconciles when a required IP family becomes available", func() {
