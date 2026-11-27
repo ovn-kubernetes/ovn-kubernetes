@@ -46,6 +46,7 @@ func TestNADAllocationAnnotationPolicy(t *testing.T) {
 	for _, annotation := range []struct {
 		key, value, replacement string
 	}{
+		{key: "k8s.ovn.org/network-name", value: "cluster_udn_blue", replacement: "cluster_udn_red"},
 		{key: "k8s.ovn.org/network-id", value: "1", replacement: "2"},
 		{key: "k8s.ovn.org/tunnel-keys", value: "[16711684,16715779]", replacement: "[16711684,16715780]"},
 	} {

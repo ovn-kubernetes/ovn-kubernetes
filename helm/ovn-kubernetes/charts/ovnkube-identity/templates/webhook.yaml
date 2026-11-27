@@ -114,4 +114,40 @@ webhooks:
         apiVersions: ["v1alpha1"]
         resources: ["uplinkstates"]
         scope: "Cluster"
+{{- if eq (hasKey .Values.global "secureNADNames" | ternary .Values.global.secureNADNames true) true }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: ovn-kubernetes-admission-webhook-nad
+webhooks:
+  - name: ovn-kubernetes-admission-webhook-nad.k8s.io
+    clientConfig:
+      url: https://localhost:9443/nad
+      caBundle: {{ $ca.Cert | b64enc | quote }}
+    admissionReviewVersions: ['v1']
+    sideEffects: None
+    failurePolicy: Fail
+    matchConditions:
+      # cluster-manager is allowed to create NAD without a webhook call.
+      # The webhook is currently used to reject manual NAD creation that may conflict with ovn-kubernetes.
+      - name: not-cluster-manager
+        expression: >-
+          request.userInfo.username != "system:serviceaccount:ovn-kubernetes:ovnkube-cluster-manager"
+      # Only call the webhook for a config that may belong to ovn-kubernetes,
+      # so NADs of other CNIs do not depend on it. Since we can't parse the json here,
+      # check if "ovn-k8s-cni-overlay" is in the spec to find our NADs.
+      # A JSON \u escape could spell the CNI type without the literal text,
+      # e.g. "ovn-k8s-cni-\u006fverlay", so such configs are sent too.
+      - name: may-be-ovn-kubernetes
+        expression: >-
+          [object, oldObject].exists(o, o != null && has(o.spec) && has(o.spec.config) &&
+            (o.spec.config.contains("ovn-k8s-cni-overlay") || o.spec.config.contains(r'\u')))
+    rules:
+      - operations: ["CREATE", "UPDATE"]
+        apiGroups: ["k8s.cni.cncf.io"]
+        apiVersions: ["v1"]
+        resources: ["network-attachment-definitions"]
+        scope: "Namespaced"
+{{- end }}
 {{- end }}

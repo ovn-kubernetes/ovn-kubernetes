@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	nadscheme "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/scheme"
 	"golang.org/x/sys/unix"
 
 	"k8s.io/client-go/informers"
@@ -128,6 +129,19 @@ func Run(ctx context.Context, restCfg *rest.Config, config Config) error {
 		return fmt.Errorf("failed to setup the UplinkState admission webhook: %w", err)
 	}
 	webhookMux.Handle("/uplinkstate", uplinkStateHandler)
+
+	nadWebhook := admission.WithValidator(
+		nadscheme.Scheme,
+		ovnwebhook.NewNADAdmissionWebhook(),
+	).WithRecoverPanic(true)
+	nadHandler, err := admission.StandaloneWebhook(nadWebhook, admission.StandaloneOptions{
+		Logger:      logger.WithName("nad.network-identity"),
+		MetricsPath: "nad.network-identity",
+	})
+	if err != nil {
+		return fmt.Errorf("failed to setup the NetworkAttachmentDefinition admission webhook: %w", err)
+	}
+	webhookMux.Handle("/nad", nadHandler)
 
 	certPath := filepath.Join(config.CertDir, "tls.crt")
 	keyPath := filepath.Join(config.CertDir, "tls.key")

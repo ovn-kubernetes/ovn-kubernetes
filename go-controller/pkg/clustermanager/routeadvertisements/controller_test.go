@@ -674,7 +674,7 @@ func (tn testNAD) NAD() *nadtypes.NetworkAttachmentDefinition {
 	}
 	if strings.HasPrefix(tn.Network, types.CUDNPrefix) {
 		ownerRef := *metav1.NewControllerRef(
-			&metav1.ObjectMeta{Name: tn.Network},
+			&metav1.ObjectMeta{Name: strings.TrimPrefix(tn.Network, types.CUDNPrefix)},
 			userdefinednetworkv1.SchemeGroupVersion.WithKind("ClusterUserDefinedNetwork"),
 		)
 		nad.ObjectMeta.OwnerReferences = []metav1.OwnerReference{ownerRef}
@@ -2083,7 +2083,11 @@ func TestController_reconcile(t *testing.T) {
 			expectAcceptedMessageContains: "invalid MAC-VRF VNI",
 		},
 		{
-			name: "rejects EVPN network whose VRF name is not a valid interface name",
+			// A NAD carrying a CUDN owner reference is only selected if it also has
+			// the name of that CUDN and the network name generated for it. This
+			// one is hand-written: a real CUDN cannot have a newline in its name,
+			// and the NAD is named differently.
+			name: "does not select a NAD that does not have the name of the CUDN in its owner reference",
 			ra:   &testRA{Name: "ra", TargetVRF: "auto", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}},
 			frrConfigs: []*testFRRConfig{
 				{
@@ -2105,7 +2109,7 @@ func TestController_reconcile(t *testing.T) {
 			reconcile:                     "ra",
 			expectAcceptedStatus:          metav1.ConditionFalse,
 			expectDegradedStatus:          metav1.ConditionTrue,
-			expectAcceptedMessageContains: "invalid VRF name",
+			expectAcceptedMessageContains: "no networks selected",
 		},
 		{
 			name: "rejects RouteAdvertisements with a newline in the target VRF",
@@ -6864,7 +6868,7 @@ func TestNetworkReadinessUsesSelectedNetwork(t *testing.T) {
 	config.OVNKubernetesFeature.EnableDynamicUDNAllocation = false
 	nm := &networkmanager.FakeNetworkManager{PrimaryNetworks: map[string]util.NetInfo{}}
 	networkName := util.GenerateCUDNNetworkName("production-blue-network")
-	tt.addNetwork(nm, &testNAD{Name: "blue", Namespace: "blue", Network: networkName,
+	tt.addNetwork(nm, &testNAD{Name: "production-blue-network", Namespace: "blue", Network: networkName,
 		Topology: types.Layer3Topology, Subnet: "1.3.0.0/16/24", Labels: map[string]string{"color": "blue"}})
 	previous := util.NewMutableNetInfo(nm.GetNetwork(networkName))
 	previous.SetNetworkID(7)

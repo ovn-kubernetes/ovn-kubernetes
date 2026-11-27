@@ -485,6 +485,15 @@ unlimited
 			<td>OVN remote probe interval in ms  @default 100000</td>
 		</tr>
 		<tr>
+			<td>global.secureNADNames</td>
+			<td>bool</td>
+			<td><pre lang="json">
+true
+</pre>
+</td>
+			<td>Reject hand-written ovn-kubernetes NetworkAttachmentDefinitions whose network name is reserved for a ClusterUserDefinedNetwork or for a UserDefinedNetwork of another namespace. Requires the ovnkube identity webhook</td>
+		</tr>
+		<tr>
 			<td>global.sflowTargets</td>
 			<td>string</td>
 			<td><pre lang="json">

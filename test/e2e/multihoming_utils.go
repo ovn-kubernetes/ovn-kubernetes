@@ -209,7 +209,9 @@ func newNetworkAttachmentConfig(params networkAttachmentConfigParams) networkAtt
 
 func uniqueNadName(originalNetName string) string {
 	const randomStringLength = 5
-	return fmt.Sprintf("%s_%s", rand.String(randomStringLength), originalNetName)
+	// No '_': a network name of the form <namespace>_<name> is reserved for
+	// UserDefinedNetworks and rejected for hand-written NADs.
+	return fmt.Sprintf("%s-%s", rand.String(randomStringLength), originalNetName)
 }
 
 func generateNADSpec(config networkAttachmentConfig) string {
