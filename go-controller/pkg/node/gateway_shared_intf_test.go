@@ -588,8 +588,8 @@ var _ = Describe("DeleteEndpointSlice", func() {
 			if updating {
 				// This command runs while the replacement is being built. A
 				// delete/add implementation would already have removed these.
-				Expect(npw.ofm.getFlowsByKey("External_test-namespace_test-service_192.0.2.10_5201")).NotTo(BeEmpty())
-				Expect(npw.ofm.getFlowsByKey("Ingress_test-namespace_test-service_192.0.2.20_5201")).NotTo(BeEmpty())
+				Expect(npw.ofm.getFlowsByKey("External_test-namespace_test-service_tcp_192.0.2.10_5201")).NotTo(BeEmpty())
+				Expect(npw.ofm.getFlowsByKey("Ingress_test-namespace_test-service_tcp_192.0.2.20_5201")).NotTo(BeEmpty())
 			}
 			return nil
 		}}, 4)
