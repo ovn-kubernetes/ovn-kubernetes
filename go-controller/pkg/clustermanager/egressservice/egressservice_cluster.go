@@ -277,7 +277,7 @@ func (c *Controller) repair(ctx context.Context) error {
 			continue
 		}
 
-		nodeSelector := &es.Spec.NodeSelector
+		nodeSelector := es.Spec.NodeSelector.DeepCopy()
 		svcHost := es.Status.Host
 
 		if svcHost == "" {
@@ -560,7 +560,7 @@ func (c *Controller) syncEgressService(ctx context.Context, key string) error {
 		return c.clearServiceResourcesAndRequeue(ctx, key, state, noHost)
 	}
 
-	nodeSelector := es.Spec.NodeSelector
+	nodeSelector := es.Spec.NodeSelector.DeepCopy()
 	epsNodes, err := c.backendNodesFor(svc)
 	if err != nil {
 		return err
@@ -576,7 +576,7 @@ func (c *Controller) syncEgressService(ctx context.Context, key string) error {
 		}
 		nodeSelector.MatchExpressions = append(nodeSelector.MatchExpressions, matchEpsNodes)
 	}
-	selector, err := metav1.LabelSelectorAsSelector(&nodeSelector)
+	selector, err := metav1.LabelSelectorAsSelector(nodeSelector)
 	if err != nil {
 		return err
 	}
