@@ -1830,15 +1830,22 @@ func (eIPC *egressIPClusterController) reconcileCloudPrivateIPConfig(ctx context
 				return err
 			}
 		}
-		resyncEgressIPs, err := eIPC.removePendingOpsAndGetResyncs(ctx, egressIPName, egressIPString)
+		// Compute resyncs without dropping the pending delete so a failed synthetic reconcile can retry with it.
+		resyncEgressIPs, err := eIPC.getResyncsForDeletedIP(ctx, egressIPName, egressIPString)
 		if err != nil {
 			return err
 		}
 		for _, resyncEgressIP := range resyncEgressIPs {
 			if err := eIPC.reconcileEgressIP(ctx, nil, resyncEgressIP); err != nil {
-				return fmt.Errorf("synthetic update for EgressIP: %s failed, err: %v", egressIP.Name, err)
+				// Re-queue the failed sibling under its own key: recorded pending ops would otherwise stop resync selection from retrying its add.
+				if requeueErr := eIPC.retryEgressIPs.AddRetryObjWithAddNoBackoff(resyncEgressIP); requeueErr != nil {
+					return fmt.Errorf("synthetic update for EgressIP: %s failed, err: %v; scheduling a retry for it failed, err: %v",
+						resyncEgressIP.Name, err, requeueErr)
+				}
+				return fmt.Errorf("synthetic update for EgressIP: %s failed, err: %v", resyncEgressIP.Name, err)
 			}
 		}
+		eIPC.clearPendingDeleteOp(egressIPName, egressIPString)
 	}
 	if shouldAdd {
 		// Get the EgressIP owner reference
@@ -1934,27 +1941,16 @@ func cloudPrivateIPConfigNameToIPString(name string) string {
 	return net.ParseIP(name).String()
 }
 
-// removePendingOps removes the existing pending CloudPrivateIPConfig operations
-// from the cache and returns the EgressIP object which can be re-synced given
-// the new assignment possibilities.
-func (eIPC *egressIPClusterController) removePendingOpsAndGetResyncs(ctx context.Context, egressIPName, egressIPAddr string) ([]*egressipv1.EgressIP, error) {
+// getResyncsForDeletedIP returns the EgressIP objects which can be re-synced given the new assignment possibilities.
+func (eIPC *egressIPClusterController) getResyncsForDeletedIP(ctx context.Context, egressIPName, egressIPAddr string) ([]*egressipv1.EgressIP, error) {
 	eIPC.pendingCloudPrivateIPConfigsMutex.Lock()
 	defer eIPC.pendingCloudPrivateIPConfigsMutex.Unlock()
 	ops, pending := eIPC.pendingCloudPrivateIPConfigsOps[egressIPName]
 	if !pending {
 		return nil, fmt.Errorf("no pending operation found for EgressIP: %s", egressIPName)
 	}
-	op, exists := ops[egressIPAddr]
-	if !exists {
+	if _, exists := ops[egressIPAddr]; !exists {
 		return nil, fmt.Errorf("pending operations found for EgressIP: %s, but not for the finalized IP: %s", egressIPName, egressIPAddr)
-	}
-	// Make sure we are dealing with a delete operation, since for update
-	// operations will still need to process the add afterwards.
-	if op.toAdd == "" && op.toDelete != "" {
-		delete(ops, egressIPAddr)
-	}
-	if len(ops) == 0 {
-		delete(eIPC.pendingCloudPrivateIPConfigsOps, egressIPName)
 	}
 
 	// Some EgressIP objects might not have all of their spec.egressIPs
@@ -1997,6 +1993,29 @@ func (eIPC *egressIPClusterController) removePendingOpsAndGetResyncs(ctx context
 		}
 	}
 	return resyncs, nil
+}
+
+// clearPendingDeleteOp drops a finalized delete from the pending cache; updates (toAdd set) stay until their add is processed, and a missing entry is a no-op.
+func (eIPC *egressIPClusterController) clearPendingDeleteOp(egressIPName, egressIPAddr string) {
+	eIPC.pendingCloudPrivateIPConfigsMutex.Lock()
+	defer eIPC.pendingCloudPrivateIPConfigsMutex.Unlock()
+	ops, pending := eIPC.pendingCloudPrivateIPConfigsOps[egressIPName]
+	if !pending {
+		klog.V(5).Infof("No pending operation found for EgressIP: %s while clearing finalized delete for %s", egressIPName, egressIPAddr)
+		return
+	}
+	op, exists := ops[egressIPAddr]
+	if !exists {
+		klog.V(5).Infof("Pending operations found for EgressIP: %s, but not for the finalized IP: %s", egressIPName, egressIPAddr)
+		return
+	}
+	// Update operations still need to process the add afterwards.
+	if op.toAdd == "" && op.toDelete != "" {
+		delete(ops, egressIPAddr)
+	}
+	if len(ops) == 0 {
+		delete(eIPC.pendingCloudPrivateIPConfigsOps, egressIPName)
+	}
 }
 
 // jsonPatchOperation contains all the info needed to perform a JSON path operation to a k8 object
