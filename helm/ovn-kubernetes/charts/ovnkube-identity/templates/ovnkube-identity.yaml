@@ -72,6 +72,10 @@ spec:
             value: {{ default 4 .Values.logLevel | quote }}
           - name: OVN_HYBRID_OVERLAY_ENABLE
             value: {{ default "" .Values.global.enableHybridOverlay | quote }}
+          - name: OVN_MULTI_NETWORK_ENABLE
+            value: {{ hasKey .Values.global "enableMultiNetwork" | ternary .Values.global.enableMultiNetwork false | quote }}
+          - name: OVN_NETWORK_SEGMENTATION_ENABLE
+            value: {{ default "" .Values.global.enableNetworkSegmentation | quote }}
       volumes:
         - name: webhook-cert
           secret:

@@ -9,14 +9,19 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"reflect"
 	"slices"
+
+	nadlisters "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/listers/k8s.cni.cncf.io/v1"
 
 	corev1 "k8s.io/api/core/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/util/sets"
 	listers "k8s.io/client-go/listers/core/v1"
+	"k8s.io/client-go/tools/cache"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kubevirt"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
@@ -114,6 +119,7 @@ func InitPodAdmissionConditionOptions(fileName string) (podAdmissions []PodAdmis
 // users. Everyone else is only prevented from changing ovnkube-node annotations.
 type PodAdmission struct {
 	nodeLister        listers.NodeLister
+	nadLister         nadlisters.NetworkAttachmentDefinitionLister
 	annotations       map[string]checkPodAnnot
 	annotationKeys    sets.Set[string]
 	extraAllowedUsers sets.Set[string]
@@ -122,9 +128,12 @@ type PodAdmission struct {
 
 // NewPodAdmissionWebhook returns a PodAdmission protecting the ovnkube-node pod
 // annotations. extraAllowedUsers may change those annotations on any pod.
-func NewPodAdmissionWebhook(nodeLister listers.NodeLister, podAdmissions []PodAdmissionConditionOption, extraAllowedUsers ...string) *PodAdmission {
+// nadLister resolves the networks referenced by the pod network annotation, it
+// is nil when multi-network is disabled and those networks are not validated.
+func NewPodAdmissionWebhook(nodeLister listers.NodeLister, nadLister nadlisters.NetworkAttachmentDefinitionLister, podAdmissions []PodAdmissionConditionOption, extraAllowedUsers ...string) *PodAdmission {
 	return &PodAdmission{
 		nodeLister:        nodeLister,
+		nadLister:         nadLister,
 		annotations:       interconnectPodAnnotations,
 		annotationKeys:    sets.KeySet(interconnectPodAnnotations),
 		extraAllowedUsers: sets.New[string](extraAllowedUsers...),
@@ -192,6 +201,15 @@ func (p PodAdmission) ValidateUpdate(ctx context.Context, oldPod, newPod *corev1
 		nodeName = newPod.Spec.NodeName
 	}
 
+	// additional check for UDN entries in the ovnkube-node annotation, as interconnectPodAnnotations entry
+	// only checks the default network.
+	if _, changed := changes[types.OvnPodAnnotationName]; changed && isOVNKubeNode && p.nadLister != nil {
+		if err := p.checkNodeNetworkEntries(oldPod, newPod, nodeName); err != nil {
+			return nil, fmt.Errorf("user: %q is not allowed to set %s on pod %q: %v",
+				req.UserInfo.Username, types.OvnPodAnnotationName, newPod.Name, err)
+		}
+	}
+
 	for _, key := range changedKeys {
 		if check := p.annotations[key]; check != nil {
 			if err := check(p.nodeLister, changes[key], newPod, nodeName); err != nil {
@@ -240,4 +258,83 @@ func (p PodAdmission) ValidateUpdate(ctx context.Context, oldPod, newPod *corev1
 	}
 
 	return nil, nil
+}
+
+// checkNodeNetworkEntries validates the entries of networks other than the
+// default one that ovnkube-node changes in the pod network annotation. Other
+// zones and cluster manager act on these entries, so a node must not be able
+// to claim addresses it was not given:
+//   - cluster manager allocates on layer2 networks and on localnet networks
+//     with IPAM, so ovnkube-node may not add, change or remove those entries.
+//   - on layer3 networks ovnkube-node allocates from its own node subnet, so
+//     the IPs must belong to that subnet.
+//   - localnet entries without IPAM or with DHCP IPAM are written on the node
+//     and have no subnet to check against.
+func (p PodAdmission) checkNodeNetworkEntries(oldPod, newPod *corev1.Pod, nodeName string) error {
+	// An unreadable old value marks every entry as changed.
+	oldNetworks, _ := util.UnmarshalPodAnnotationAllNetworks(oldPod.Annotations)
+	newNetworks, err := util.UnmarshalPodAnnotationAllNetworks(newPod.Annotations)
+	if err != nil {
+		return err
+	}
+	nadKeys := sets.KeySet(oldNetworks).Union(sets.KeySet(newNetworks))
+	nadKeys.Delete(types.DefaultNetworkName)
+	for _, nadKey := range sets.List(nadKeys) {
+		oldEntry, hadEntry := oldNetworks[nadKey]
+		newEntry, hasEntry := newNetworks[nadKey]
+		if hadEntry == hasEntry && reflect.DeepEqual(oldEntry, newEntry) {
+			continue
+		}
+		// A pod attached to the same NAD more than once has indexed keys,
+		// "namespace/name/1" for the second attachment.
+		nadNamespacedName, _, err := util.GetNadFromIndexedNADKey(nadKey)
+		if err != nil {
+			return err
+		}
+		nadNamespace, nadName, err := cache.SplitMetaNamespaceKey(nadNamespacedName)
+		if err != nil {
+			return fmt.Errorf("invalid network key %q: %w", nadKey, err)
+		}
+		nad, err := p.nadLister.NetworkAttachmentDefinitions(nadNamespace).Get(nadName)
+		if err != nil {
+			return fmt.Errorf("failed to get NetworkAttachmentDefinition %s: %w", nadKey, err)
+		}
+		netConf, err := config.ParseNetConf([]byte(nad.Spec.Config))
+		if err != nil {
+			return fmt.Errorf("failed to parse NetworkAttachmentDefinition %s: %w", nadKey, err)
+		}
+		switch netConf.Topology {
+		case types.Layer2Topology:
+			return fmt.Errorf("the %s entry of layer2 network %q is allocated by cluster manager", nadKey, netConf.Name)
+		case types.LocalnetTopology:
+			if netConf.Subnets != "" && netConf.IPAM.Type != types.IPAMTypeDHCP {
+				return fmt.Errorf("the %s entry of localnet network %q is allocated by cluster manager", nadKey, netConf.Name)
+			}
+		case types.Layer3Topology:
+			// The IP of a live migratable pod can cross node-subnet boundaries.
+			if !hasEntry || kubevirt.IsPodLiveMigratable(newPod) {
+				continue
+			}
+			podAnnot, err := util.UnmarshalPodAnnotation(newPod.Annotations, nadKey)
+			if err != nil {
+				return err
+			}
+			node, err := p.nodeLister.Get(nodeName)
+			if err != nil {
+				return fmt.Errorf("could not get info on node %s from client: %w", nodeName, err)
+			}
+			subnets, err := util.ParseNodeHostSubnetAnnotation(node, netConf.Name)
+			if err != nil {
+				return err
+			}
+			for _, ip := range podAnnot.IPs {
+				if !util.IsContainedInAnyCIDR(ip, subnets...) {
+					return fmt.Errorf("%s of network %q does not belong to %s node", ip, netConf.Name, nodeName)
+				}
+			}
+		default:
+			return fmt.Errorf("NetworkAttachmentDefinition %s does not define a user defined network", nadKey)
+		}
+	}
+	return nil
 }

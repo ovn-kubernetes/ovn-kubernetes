@@ -51,3 +51,42 @@ certificate and restricts its annotation writes to its own node and pods hosted
 there. Its admission checks also limit which annotations that identity may
 modify and validate selected annotation values. See the node identity document
 for certificate provisioning, webhook deployment, and per-node restrictions.
+
+### Pod network entries written by a node
+
+`k8s.ovn.org/pod-networks` holds one entry per network the pod is attached to.
+An `ovnkube-node` identity has to write this annotation for pods on its node,
+but it is not the allocator of every network. Other zones and cluster manager
+act on these entries, so a compromised node must not be able to claim addresses
+or tunnel keys of pods on other nodes.
+
+The pod admission webhook therefore checks every entry that an `ovnkube-node`
+identity adds, changes, or removes, according to who allocates on that network:
+
+| Network of the entry | Allocator | Rule for `ovnkube-node` |
+|----------------------|-----------|-------------------------|
+| Default network | Node | IPs must belong to the node's subnet |
+| Layer3 user defined network | Node | IPs must belong to the node's subnet of that network |
+| Layer2 user defined network | Cluster manager | The entry cannot be added, changed, or removed |
+| Localnet network with subnets | Cluster manager | The entry cannot be added, changed, or removed |
+| Localnet network without subnets or with DHCP IPAM | Node | Not validated, there is no subnet to check against |
+
+Entries that a request leaves unchanged are not checked, so a node can still
+set the default network entry of a pod whose layer2 entry was written by
+cluster manager. The node subnet checks are skipped for KubeVirt live
+migratable pods, whose IPs can cross node subnets. The layer2 and localnet
+rules still apply to them. An entry that references a
+NetworkAttachmentDefinition that does not exist is rejected.
+
+Cluster manager and other `--extra-allowed-user` identities are not subject to
+the per-network rules.
+
+The webhook reads the network topology from NetworkAttachmentDefinitions. Start
+`ovnkube-identity` with `--enable-multi-network` on clusters that run
+OVN-Kubernetes with multi-network or network segmentation enabled; the Helm
+chart does this from `global.enableMultiNetwork` and
+`global.enableNetworkSegmentation`. Without the flag the entries of user
+defined networks are not validated. `ovnkube-identity` needs `get`, `list`, and
+`watch` permissions on NetworkAttachmentDefinitions.
+
+These checks do not validate the MAC address, routes, or gateways of an entry.

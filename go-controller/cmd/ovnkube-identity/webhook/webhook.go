@@ -15,6 +15,9 @@ import (
 	"syscall"
 	"time"
 
+	nadclientset "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned"
+	nadinformers "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/informers/externalversions"
+	nadlisters "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/listers/k8s.cni.cncf.io/v1"
 	"golang.org/x/sys/unix"
 
 	"k8s.io/client-go/informers"
@@ -38,6 +41,7 @@ var logger = klog.NewKlogr()
 // Config contains configuration for the webhook server
 type Config struct {
 	EnableHybridOverlay     bool
+	EnableMultiNetwork      bool
 	ExtraAllowedUsers       []string
 	CSRAcceptanceConditions []csrapprover.CSRAcceptanceCondition
 	PodAdmissionConditions  []ovnwebhook.PodAdmissionConditionOption
@@ -100,9 +104,28 @@ func Run(ctx context.Context, restCfg *rest.Config, config Config) error {
 	}
 
 	nodeLister := listers.NewNodeLister(nodeInformer.GetIndexer())
+
+	// The NAD CRD is only installed with multi-network. Without it there are
+	// no user defined networks, and the pod webhook does not validate them.
+	var nadLister nadlisters.NetworkAttachmentDefinitionLister
+	if config.EnableMultiNetwork {
+		nadClient, err := nadclientset.NewForConfig(restCfg)
+		if err != nil {
+			return fmt.Errorf("error creating NetworkAttachmentDefinition clientset: %v", err)
+		}
+		nadInformerFactory := nadinformers.NewSharedInformerFactory(nadClient, 10*time.Minute)
+		nadInformer := nadInformerFactory.K8sCniCncfIo().V1().NetworkAttachmentDefinitions()
+		nadSynced := nadInformer.Informer().HasSynced
+		nadInformerFactory.Start(stopCh)
+		if !cache.WaitForCacheSync(ctx.Done(), nadSynced) {
+			return fmt.Errorf("failed to sync NetworkAttachmentDefinition informer cache")
+		}
+		nadLister = nadInformer.Lister()
+	}
+
 	podWebhook := admission.WithValidator(
 		scheme.Scheme,
-		ovnwebhook.NewPodAdmissionWebhook(nodeLister, config.PodAdmissionConditions, config.ExtraAllowedUsers...),
+		ovnwebhook.NewPodAdmissionWebhook(nodeLister, nadLister, config.PodAdmissionConditions, config.ExtraAllowedUsers...),
 	).WithRecoverPanic(true)
 	podHandler, err := admission.StandaloneWebhook(
 		podWebhook,
