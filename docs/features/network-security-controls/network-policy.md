@@ -177,7 +177,9 @@ Rules defined in `spec.Ingress` can match on two main sections, 1.`spec.Ingress.
     
 2. `spec.Ingress.ports`
     
-    The ports that the `Ingress` rule matches on, contains fields `spec.Ingress.ports.port` which can be either numerical or named, if set all port names and numbers will be matched, and `spec.Ingress.ports.protocol` matches to the protocol of the provided port 
+    The ports that the `Ingress` rule matches on, contains fields `spec.Ingress.ports.port` which is a port number (optionally a range with `endPort`), and `spec.Ingress.ports.protocol` matches to the protocol of the provided port.
+
+    Named ports (a string `spec.Ingress.ports.port`, such as `http`) are not supported: the name is not resolved to a container port and is ignored. A rule that lists only named ports therefore allows no traffic, and numeric ports listed in the same rule still apply. A rule with no `ports` allows all ports.
 
 
 
@@ -206,7 +208,9 @@ Rules defined in `spec.Egress` can match on two main sections, 1.`spec.Egress.to
     
 2. `spec.Egress.ports`
 
-    The ports that the `Egress` rule matches on, contains fields `spec.Egress.ports.port` which can be either numerical or named, if set all port names and numbers will be matched, and `spec.Egress.ports.protocol` matches to the protocol of the provided port 
+    The ports that the `Egress` rule matches on, contains fields `spec.Egress.ports.port` which is a port number (optionally a range with `endPort`), and `spec.Egress.ports.protocol` matches to the protocol of the provided port.
+
+    Named ports (a string `spec.Egress.ports.port`, such as `http`) are not supported: the name is not resolved to a container port and is ignored. A rule that lists only named ports therefore allows no traffic, and numeric ports listed in the same rule still apply. A rule with no `ports` allows all ports.
 
 ### `spec.ingress` and `spec.egress` OVN implementation 
 

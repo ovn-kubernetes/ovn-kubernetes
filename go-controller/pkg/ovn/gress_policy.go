@@ -12,6 +12,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	knet "k8s.io/api/networking/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	utilnet "k8s.io/utils/net"
 
 	libovsdbops "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
@@ -51,6 +52,9 @@ type gressPolicy struct {
 	// portPolicies represents all the ports to which traffic is allowed for
 	// the rule in question.
 	portPolicies []*libovsdbutil.NetworkPolicyPort
+	// hasNamedPort is true if the rule lists a named port, which is not supported
+	// and is never added to portPolicies.
+	hasNamedPort bool
 
 	ipBlocks []*knet.IPBlock
 
@@ -113,6 +117,10 @@ func (gp *gressPolicy) addPortPolicy(portJSON *knet.NetworkPolicyPort) {
 	protocol := corev1.ProtocolTCP
 	if portJSON.Protocol != nil {
 		protocol = *portJSON.Protocol
+	}
+	if portJSON.Port != nil && portJSON.Port.Type == intstr.String {
+		gp.hasNamedPort = true
+		return
 	}
 	if portJSON.Port != nil && portJSON.EndPort != nil {
 		pp = libovsdbutil.GetNetworkPolicyPort(protocol, portJSON.Port.IntVal, *portJSON.EndPort)
@@ -222,6 +230,10 @@ func (gp *gressPolicy) isEmpty() bool {
 // since creation, or are safe for concurrent use like peerVXAddressSets
 func (gp *gressPolicy) buildLocalPodACLs(portGroupName string, aclLogging *libovsdbutil.ACLLoggingLevels) (createdACLs []*nbdb.ACL,
 	skippedACLs []*nbdb.ACL) {
+	if gp.hasNamedPort && len(gp.portPolicies) == 0 {
+		// Without any supported port the rule would be treated as matching all ports.
+		return
+	}
 	var lportMatch string
 	if gp.policyType == knet.PolicyTypeIngress {
 		lportMatch = fmt.Sprintf("outport == @%s", portGroupName)

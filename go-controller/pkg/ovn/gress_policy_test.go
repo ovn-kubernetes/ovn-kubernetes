@@ -8,8 +8,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	corev1 "k8s.io/api/core/v1"
 	knet "k8s.io/api/networking/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 
+	libovsdbutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/libovsdb/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
@@ -121,5 +124,38 @@ func TestGetMatchFromIPBlock(t *testing.T) {
 		}
 		output := gressPolicy.getMatchFromIPBlock(tc.lportMatch, tc.l4Match)
 		assert.Equal(t, tc.expected, output)
+	}
+}
+
+func TestBuildLocalPodACLsNamedPorts(t *testing.T) {
+	named := knet.NetworkPolicyPort{Port: &intstr.IntOrString{Type: intstr.String, StrVal: "no-such-port"}}
+	tcp := corev1.ProtocolTCP
+	numeric := knet.NetworkPolicyPort{Protocol: &tcp, Port: &intstr.IntOrString{Type: intstr.Int, IntVal: 80}}
+
+	testcases := []struct {
+		desc         string
+		ports        []knet.NetworkPolicyPort
+		expectedACLs int
+	}{
+		{desc: "only a named port allows nothing", ports: []knet.NetworkPolicyPort{named}, expectedACLs: 0},
+		{desc: "named and numeric ports allow only the numeric port", ports: []knet.NetworkPolicyPort{named, numeric}, expectedACLs: 1},
+		{desc: "numeric port is allowed", ports: []knet.NetworkPolicyPort{numeric}, expectedACLs: 1},
+		{desc: "no ports allows all ports", expectedACLs: 1},
+	}
+	for _, tc := range testcases {
+		t.Run(tc.desc, func(t *testing.T) {
+			gp := newGressPolicy(knet.PolicyTypeIngress, 0, "testing", "test",
+				types.DefaultNetworkControllerName, false, &util.DefaultNetInfo{})
+			for i := range tc.ports {
+				gp.addPortPolicy(&tc.ports[i])
+			}
+			acls, _ := gp.buildLocalPodACLs("pg", &libovsdbutil.ACLLoggingLevels{})
+			assert.Len(t, acls, tc.expectedACLs)
+			for _, acl := range acls {
+				if len(tc.ports) > 0 {
+					assert.Contains(t, acl.Match, "tcp.dst==80")
+				}
+			}
+		})
 	}
 }
