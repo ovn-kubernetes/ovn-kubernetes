@@ -16,17 +16,17 @@ import (
 )
 
 func cleanupValidateCRsTest(ctx context.Context, scenarios []testscenario.ValidateCRScenario) {
-	objs, err := testscenario.ValidateScenariosToObjects(scenarios)
-	Expect(err).NotTo(HaveOccurred(), "must convert manifest to object")
-	for _, o := range objs {
-		err = k8sClient.Delete(ctx, o)
+	for _, scenario := range scenarios {
+		o := scenario.NewObject()
+		err := k8sClient.Delete(ctx, o)
 		err = controllerruntimeclient.IgnoreNotFound(err)
 		Expect(err).NotTo(HaveOccurred(), "expected the object to be deleted")
 	}
 	// Verify each named resource is gone individually — a global "no resources found"
 	// check is not parallel-safe since other concurrent tests may have live resources.
-	for _, o := range objs {
-		err = k8sClient.Get(ctx, types.NamespacedName{Namespace: o.GetNamespace(), Name: o.GetName()}, o)
+	for _, scenario := range scenarios {
+		o := scenario.NewObject()
+		err := k8sClient.Get(ctx, types.NamespacedName{Namespace: o.GetNamespace(), Name: o.GetName()}, o)
 		Expect(apierrors.IsNotFound(err)).To(BeTrue(), "expected the object to be deleted")
 	}
 }

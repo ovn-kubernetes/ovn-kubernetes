@@ -21,9 +21,8 @@ var _ = Describe("ClusterNetworkConnect: API validations", func() {
 			DeferCleanup(cleanupValidateCRsTest, scenarios, NodeTimeout(clusterNetworkConnectSpecTimeout))
 			for _, s := range scenarios {
 				By(s.Description)
-				obj, err := testscenario.ValidateScenarioToObject(s)
-				Expect(err).ToNot(HaveOccurred(), "must convert scenario to kubernetes object")
-				err = k8sClient.Create(ctx, obj)
+				obj := s.NewObject()
+				err := k8sClient.Create(ctx, obj)
 				Expect(err).To(HaveOccurred(), "should fail to create invalid ClusterNetworkConnect CR")
 				Expect(err.Error()).To(ContainSubstring(s.ExpectedErr))
 			}
@@ -36,9 +35,8 @@ var _ = Describe("ClusterNetworkConnect: API validations", func() {
 			DeferCleanup(cleanupValidateCRsTest, scenarios, NodeTimeout(clusterNetworkConnectSpecTimeout))
 			for _, s := range scenarios {
 				By(s.Description)
-				obj, err := testscenario.ValidateScenarioToObject(s)
-				Expect(err).ToNot(HaveOccurred(), "must convert scenario to kubernetes object")
-				err = k8sClient.Create(ctx, obj)
+				obj := s.NewObject()
+				err := k8sClient.Create(ctx, obj)
 				Expect(err).NotTo(HaveOccurred(), "should create valid ClusterNetworkConnect CR successfully")
 			}
 		},

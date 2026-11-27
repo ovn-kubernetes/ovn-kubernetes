@@ -3,40 +3,30 @@
 
 package cudn
 
-import "github.com/ovn-kubernetes/ovn-kubernetes/test/crd-integration/testscenario"
+import (
+	udnv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/crd-integration/testscenario"
+)
 
 var LocalnetInvalidRole = []testscenario.ValidateCRScenario{
 	{
 		Description: "role unset",
 		ExpectedErr: `spec.network.localnet.role: Required value`,
-		Manifest: `
-apiVersion: k8s.ovn.org/v1
-kind: ClusterUserDefinedNetwork
-metadata:
-  name: localnet-role-unset-should-fail
-spec:
-  namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: red}}
-  network:
-    topology: Localnet
-    localnet:
-      physicalNetworkName: test
-      subnets: [10.0.0.0/24]`,
+		Object: testscenario.WithoutFields(newCUDN("localnet-role-unset-should-fail", udnv1.NetworkSpec{
+			Topology: "Localnet",
+			Localnet: &udnv1.LocalnetConfig{PhysicalNetworkName: "test", Subnets: udnv1.DualStackCIDRs{"10.0.0.0/24"}},
+		}), "spec.network.localnet.role"),
 	},
 	{
 		Description: "role is primary",
 		ExpectedErr: `spec.network.localnet.role: Unsupported value: "Primary": supported values: "Secondary"`,
-		Manifest: `
-apiVersion: k8s.ovn.org/v1
-kind: ClusterUserDefinedNetwork
-metadata:
-  name: localnet-role-primary-should-fail
-spec:
-  namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: red}}
-  network:
-    topology: Localnet
-    localnet:
-      role: Primary
-      physicalNetworkName: test
-      subnets: [10.0.0.0/24]`,
+		Object: newCUDN("localnet-role-primary-should-fail", udnv1.NetworkSpec{
+			Topology: "Localnet",
+			Localnet: &udnv1.LocalnetConfig{
+				Role:                "Primary",
+				PhysicalNetworkName: "test",
+				Subnets:             udnv1.DualStackCIDRs{"10.0.0.0/24"},
+			},
+		}),
 	},
 }

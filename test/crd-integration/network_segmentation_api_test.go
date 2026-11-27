@@ -24,9 +24,8 @@ var _ = Describe("Network Segmentation: API validations", func() {
 
 			for _, s := range scenarios {
 				By(s.Description)
-				obj, err := testscenario.ValidateScenarioToObject(s)
-				Expect(err).ToNot(HaveOccurred(), "must convert scenario to kubernetes object")
-				err = k8sClient.Create(ctx, obj)
+				obj := s.NewObject()
+				err := k8sClient.Create(ctx, obj)
 				Expect(err).To(HaveOccurred(), "should fail to create invalid CR")
 				Expect(err.Error()).To(ContainSubstring(s.ExpectedErr))
 			}
@@ -49,11 +48,9 @@ var _ = Describe("Network Segmentation: API validations", func() {
 		func(ctx SpecContext, updateScenarios []testscenario.UpdateCRScenario) {
 			DeferCleanup(cleanupUpdateCRScenario, updateScenarios, NodeTimeout(networkSegmentationSpecTimeout))
 			for _, s := range updateScenarios {
-				By(s.Description + ": parsing objects")
-				initObject, updateObject, err := testscenario.UpdateCRScenarioToObject(s)
-				Expect(err).ToNot(HaveOccurred(), "must convert scenario to kubernetes object")
+				initObject, updateObject := s.NewInitialObject(), s.NewObject()
 				By(s.Description + ": creating initial CR")
-				err = k8sClient.Create(ctx, initObject)
+				err := k8sClient.Create(ctx, initObject)
 				Expect(err).NotTo(HaveOccurred(), "should create valid CR successfully")
 				By(s.Description + ": applying update to CR should fail")
 				// resource version must get set on update, therefore retrieve the newly created object and update the spec
@@ -73,9 +70,8 @@ var _ = Describe("Network Segmentation: API validations", func() {
 			DeferCleanup(cleanupValidateCRsTest, scenarios, NodeTimeout(networkSegmentationSpecTimeout))
 			for _, s := range scenarios {
 				By(s.Description)
-				obj, err := testscenario.ValidateScenarioToObject(s)
-				Expect(err).ToNot(HaveOccurred(), "must convert scenario to kubernetes object")
-				err = k8sClient.Create(ctx, obj)
+				obj := s.NewObject()
+				err := k8sClient.Create(ctx, obj)
 				Expect(err).NotTo(HaveOccurred(), "should create valid CR successfully")
 			}
 		},
@@ -92,11 +88,9 @@ var _ = Describe("Network Segmentation: API validations", func() {
 			DeferCleanup(cleanupUpdateCRScenario, scenarios, NodeTimeout(networkSegmentationSpecTimeout))
 			for _, s := range scenarios {
 				By(s.Description)
-				By(s.Description + ": parsing objects")
-				initObject, updateObject, err := testscenario.UpdateCRScenarioToObject(s)
-				Expect(err).ToNot(HaveOccurred(), "must convert scenario to kubernetes object")
+				initObject, updateObject := s.NewInitialObject(), s.NewObject()
 				By("Creating initial CR")
-				err = k8sClient.Create(ctx, initObject)
+				err := k8sClient.Create(ctx, initObject)
 				Expect(err).NotTo(HaveOccurred(), "should create valid CR successfully")
 
 				By("Updating CR")
@@ -118,11 +112,9 @@ var _ = Describe("Network Segmentation: API validations", func() {
 		func(ctx SpecContext, updateScenarios []testscenario.UpdateCRScenario) {
 			DeferCleanup(cleanupUpdateCRScenario, updateScenarios, NodeTimeout(networkSegmentationSpecTimeout))
 			for _, s := range updateScenarios {
-				By(s.Description + ": parsing objects")
-				initObject, updateObject, err := testscenario.UpdateCRScenarioToObject(s)
-				Expect(err).ToNot(HaveOccurred(), "must convert scenario to kubernetes object")
+				initObject, updateObject := s.NewInitialObject(), s.NewObject()
 				By(s.Description + ": creating initial CR")
-				err = k8sClient.Create(ctx, initObject)
+				err := k8sClient.Create(ctx, initObject)
 				Expect(err).NotTo(HaveOccurred(), "should create valid CR successfully")
 				By(s.Description + ": applying update to CR should succeed")
 				// resource version must get set on update, therefore retrieve the newly created object and update the spec

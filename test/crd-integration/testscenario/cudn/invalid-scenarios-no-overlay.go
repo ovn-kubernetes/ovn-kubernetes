@@ -3,117 +3,62 @@
 
 package cudn
 
-import "github.com/ovn-kubernetes/ovn-kubernetes/test/crd-integration/testscenario"
+import (
+	udnv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/crd-integration/testscenario"
+)
 
 var NoOverlayInvalid = []testscenario.ValidateCRScenario{
 	{
 		Description: "NoOverlay transport is only supported for Layer3 primary networks - Layer2 network",
 		ExpectedErr: `transport 'NoOverlay' is only supported for Layer3 primary networks`,
-		Manifest: `
-apiVersion: k8s.ovn.org/v1
-kind: ClusterUserDefinedNetwork
-metadata:
-  name: no-overlay-layer2-fail
-spec:
-  namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: red}}
-  network:
-    topology: Layer2
-    layer2:
-      role: Primary
-      subnets:
-      - 10.10.0.0/16
-    transport: NoOverlay
-    noOverlay:
-      outboundSNAT: Enabled
-      routing: Managed
-`,
+		Object: newCUDN("no-overlay-layer2-fail", udnv1.NetworkSpec{
+			Topology:  "Layer2",
+			Layer2:    &udnv1.Layer2Config{Role: "Primary", Subnets: udnv1.DualStackCIDRs{"10.10.0.0/16"}},
+			Transport: "NoOverlay",
+			NoOverlay: &udnv1.NoOverlayConfig{OutboundSNAT: "Enabled", Routing: "Managed"},
+		}),
 	},
 	{
 		Description: "NoOverlay transport is only supported for Layer3 primary networks - Layer3 secondary network",
 		ExpectedErr: `transport 'NoOverlay' is only supported for Layer3 primary networks`,
-		Manifest: `
-apiVersion: k8s.ovn.org/v1
-kind: ClusterUserDefinedNetwork
-metadata:
-  name: no-overlay-layer3-secondary-fail
-spec:
-  namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: red}}
-  network:
-    topology: Layer3
-    layer3:
-      role: Secondary
-      subnets:
-      - cidr: 10.10.0.0/16
-        hostSubnet: 24
-    transport: NoOverlay
-    noOverlay:
-      outboundSNAT: Enabled
-      routing: Managed
-`,
+		Object: newCUDN("no-overlay-layer3-secondary-fail", udnv1.NetworkSpec{
+			Topology:  "Layer3",
+			Layer3:    &udnv1.Layer3Config{Role: "Secondary", Subnets: []udnv1.Layer3Subnet{{CIDR: "10.10.0.0/16", HostSubnet: 24}}},
+			Transport: "NoOverlay",
+			NoOverlay: &udnv1.NoOverlayConfig{OutboundSNAT: "Enabled", Routing: "Managed"},
+		}),
 	},
 	{
 		Description: "NoOverlay transport is only supported for Layer3 primary networks - Localnet network",
 		ExpectedErr: `transport 'NoOverlay' is only supported for Layer3 primary networks`,
-		Manifest: `
-apiVersion: k8s.ovn.org/v1
-kind: ClusterUserDefinedNetwork
-metadata:
-  name: no-overlay-localnet-fail
-spec:
-  namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: red}}
-  network:
-    topology: Localnet
-    localnet:
-      role: Secondary
-      physicalNetworkName: physnet1
-      subnets:
-      - 10.10.0.0/16
-    transport: NoOverlay
-    noOverlay:
-      outboundSNAT: Enabled
-      routing: Managed
-`,
+		Object: newCUDN("no-overlay-localnet-fail", udnv1.NetworkSpec{
+			Topology: "Localnet",
+			Localnet: &udnv1.LocalnetConfig{
+				Role:                "Secondary",
+				PhysicalNetworkName: "physnet1",
+				Subnets:             udnv1.DualStackCIDRs{"10.10.0.0/16"},
+			},
+			Transport: "NoOverlay",
+			NoOverlay: &udnv1.NoOverlayConfig{OutboundSNAT: "Enabled", Routing: "Managed"},
+		}),
 	},
 	{
 		Description: "noOverlay is required when transport is NoOverlay",
 		ExpectedErr: `spec.noOverlay is required when type transport is 'NoOverlay'`,
-		Manifest: `
-apiVersion: k8s.ovn.org/v1
-kind: ClusterUserDefinedNetwork
-metadata:
-  name: no-overlay-missing-options-fail
-spec:
-  namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: red}}
-  network:
-    topology: Layer3
-    layer3:
-      role: Primary
-      subnets:
-      - cidr: 10.10.0.0/16
-        hostSubnet: 24
-    transport: NoOverlay
-`,
+		Object: newCUDN("no-overlay-missing-options-fail", udnv1.NetworkSpec{
+			Topology:  "Layer3",
+			Layer3:    &udnv1.Layer3Config{Role: "Primary", Subnets: []udnv1.Layer3Subnet{{CIDR: "10.10.0.0/16", HostSubnet: 24}}},
+			Transport: "NoOverlay",
+		}),
 	},
 	{
 		Description: "noOverlay is forbidden when transport is not set",
 		ExpectedErr: `spec.noOverlay is forbidden when transport type is not 'NoOverlay'`,
-		Manifest: `
-apiVersion: k8s.ovn.org/v1
-kind: ClusterUserDefinedNetwork
-metadata:
-  name: no-overlay-options-without-transport-fail
-spec:
-  namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: red}}
-  network:
-    topology: Layer3
-    layer3:
-      role: Primary
-      subnets:
-      - cidr: 10.10.0.0/16
-        hostSubnet: 24
-    noOverlay:
-      outboundSNAT: Enabled
-      routing: Managed
-`,
+		Object: newCUDN("no-overlay-options-without-transport-fail", udnv1.NetworkSpec{
+			Topology:  "Layer3",
+			Layer3:    &udnv1.Layer3Config{Role: "Primary", Subnets: []udnv1.Layer3Subnet{{CIDR: "10.10.0.0/16", HostSubnet: 24}}},
+			NoOverlay: &udnv1.NoOverlayConfig{OutboundSNAT: "Enabled", Routing: "Managed"},
+		}),
 	},
 }

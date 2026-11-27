@@ -3,90 +3,57 @@
 
 package cudn
 
-import "github.com/ovn-kubernetes/ovn-kubernetes/test/crd-integration/testscenario"
+import (
+	udnv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/crd-integration/testscenario"
+)
 
 var Layer3ValidSubnetsUpdates = []testscenario.UpdateCRScenario{
 	{
-		InitialManifest: `
-apiVersion: k8s.ovn.org/v1
-kind: ClusterUserDefinedNetwork
-metadata:
-  name: primary-with-multiple-subnets-ipv4
-spec:
-  namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: red}}
-  network:
-    topology: Layer3
-    layer3:
-      role: Primary
-      subnets:
-      - cidr: 10.1.0.0/16
-        hostSubnet: 24
-      - cidr: 10.2.0.0/16
-        hostSubnet: 24
-`,
+		InitialObject: newCUDN("primary-with-multiple-subnets-ipv4", udnv1.NetworkSpec{
+			Topology: "Layer3",
+			Layer3: &udnv1.Layer3Config{
+				Role:    "Primary",
+				Subnets: []udnv1.Layer3Subnet{{CIDR: "10.1.0.0/16", HostSubnet: 24}, {CIDR: "10.2.0.0/16", HostSubnet: 24}},
+			},
+		}),
 		ValidateCRScenario: testscenario.ValidateCRScenario{
 			Description: "IPv4: valid Primary network with multiple subnets - add subnet",
-			Manifest: `
-apiVersion: k8s.ovn.org/v1
-kind: ClusterUserDefinedNetwork
-metadata:
-  name: primary-with-multiple-subnets-ipv4
-spec:
-  namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: red}}
-  network:
-    topology: Layer3
-    layer3:
-      role: Primary
-      subnets:
-      - cidr: 10.1.0.0/16
-        hostSubnet: 24
-      - cidr: 10.2.0.0/16
-        hostSubnet: 24
-      - cidr: 10.3.0.0/16
-        hostSubnet: 24
-`,
+			Object: newCUDN("primary-with-multiple-subnets-ipv4", udnv1.NetworkSpec{
+				Topology: "Layer3",
+				Layer3: &udnv1.Layer3Config{
+					Role: "Primary",
+					Subnets: []udnv1.Layer3Subnet{
+						{CIDR: "10.1.0.0/16", HostSubnet: 24},
+						{CIDR: "10.2.0.0/16", HostSubnet: 24},
+						{CIDR: "10.3.0.0/16", HostSubnet: 24},
+					},
+				},
+			}),
 			ExpectedErr: "",
 		},
 	},
 	{
-		InitialManifest: `
-apiVersion: k8s.ovn.org/v1
-kind: ClusterUserDefinedNetwork
-metadata:
-  name: primary-with-multiple-subnets-ipv6
-spec:
-  namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: red}}
-  network:
-    topology: Layer3
-    layer3:
-      role: Primary
-      subnets:
-      - cidr: 2001:db8:1::/48
-        hostSubnet: 64
-      - cidr: 2001:db8:2::/48
-        hostSubnet: 64
-`,
+		InitialObject: newCUDN("primary-with-multiple-subnets-ipv6", udnv1.NetworkSpec{
+			Topology: "Layer3",
+			Layer3: &udnv1.Layer3Config{
+				Role:    "Primary",
+				Subnets: []udnv1.Layer3Subnet{{CIDR: "2001:db8:1::/48", HostSubnet: 64}, {CIDR: "2001:db8:2::/48", HostSubnet: 64}},
+			},
+		}),
 		ValidateCRScenario: testscenario.ValidateCRScenario{
 			Description: "IPv6: valid Primary network with multiple subnets - add subnet",
-			Manifest: `
-apiVersion: k8s.ovn.org/v1
-kind: ClusterUserDefinedNetwork
-metadata:
-  name: primary-with-multiple-subnets-ipv6
-spec:
-  namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: red}}
-  network:
-    topology: Layer3
-    layer3:
-      role: Primary
-      subnets:
-      - cidr: 2001:db8:1::/48
-        hostSubnet: 64
-      - cidr: 2001:db8:2::/48
-        hostSubnet: 64
-      - cidr: 2001:db8:3::/48
-        hostSubnet: 64
-`,
+			Object: newCUDN("primary-with-multiple-subnets-ipv6", udnv1.NetworkSpec{
+				Topology: "Layer3",
+				Layer3: &udnv1.Layer3Config{
+					Role: "Primary",
+					Subnets: []udnv1.Layer3Subnet{
+						{CIDR: "2001:db8:1::/48", HostSubnet: 64},
+						{CIDR: "2001:db8:2::/48", HostSubnet: 64},
+						{CIDR: "2001:db8:3::/48", HostSubnet: 64},
+					},
+				},
+			}),
 			ExpectedErr: "",
 		},
 	},
@@ -95,66 +62,37 @@ spec:
 var Layer3ValidSubnets = []testscenario.ValidateCRScenario{
 	{
 		Description: "IPv4: valid Primary network with multiple subnets",
-		Manifest: `
-apiVersion: k8s.ovn.org/v1
-kind: ClusterUserDefinedNetwork
-metadata:
-  name: primary-with-multiple-subnets-ipv4
-spec:
-  namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: red}}
-  network:
-    topology: Layer3
-    layer3:
-      role: Primary
-      subnets:
-      - cidr: 10.1.0.0/16
-        hostSubnet: 24
-      - cidr: 10.2.0.0/16
-        hostSubnet: 24
-`,
+		Object: newCUDN("primary-with-multiple-subnets-ipv4", udnv1.NetworkSpec{
+			Topology: "Layer3",
+			Layer3: &udnv1.Layer3Config{
+				Role:    "Primary",
+				Subnets: []udnv1.Layer3Subnet{{CIDR: "10.1.0.0/16", HostSubnet: 24}, {CIDR: "10.2.0.0/16", HostSubnet: 24}},
+			},
+		}),
 	},
 	{
 		Description: "IPv6: valid Primary network with multiple subnets",
-		Manifest: `
-apiVersion: k8s.ovn.org/v1
-kind: ClusterUserDefinedNetwork
-metadata:
-  name: primary-with-multiple-subnets-ipv6
-spec:
-  namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: red}}
-  network:
-    topology: Layer3
-    layer3:
-      role: Primary
-      subnets:
-      - cidr: 2001:db8:1::/48
-        hostSubnet: 64
-      - cidr: 2001:db8:2::/48
-        hostSubnet: 64
-`,
+		Object: newCUDN("primary-with-multiple-subnets-ipv6", udnv1.NetworkSpec{
+			Topology: "Layer3",
+			Layer3: &udnv1.Layer3Config{
+				Role:    "Primary",
+				Subnets: []udnv1.Layer3Subnet{{CIDR: "2001:db8:1::/48", HostSubnet: 64}, {CIDR: "2001:db8:2::/48", HostSubnet: 64}},
+			},
+		}),
 	},
 	{
 		Description: "dual-stack: valid Primary network with multiple subnets",
-		Manifest: `
-apiVersion: k8s.ovn.org/v1
-kind: ClusterUserDefinedNetwork
-metadata:
-  name: primary-with-multiple-subnets-dual-stack
-spec:
-  namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: red}}
-  network:
-    topology: Layer3
-    layer3:
-      role: Primary
-      subnets:
-      - cidr: 10.1.0.0/16
-        hostSubnet: 24
-      - cidr: 10.2.0.0/16
-        hostSubnet: 24
-      - cidr: 2001:db8:1::/48
-        hostSubnet: 64
-      - cidr: 2001:db8:2::/48
-        hostSubnet: 64
-`,
+		Object: newCUDN("primary-with-multiple-subnets-dual-stack", udnv1.NetworkSpec{
+			Topology: "Layer3",
+			Layer3: &udnv1.Layer3Config{
+				Role: "Primary",
+				Subnets: []udnv1.Layer3Subnet{
+					{CIDR: "10.1.0.0/16", HostSubnet: 24},
+					{CIDR: "10.2.0.0/16", HostSubnet: 24},
+					{CIDR: "2001:db8:1::/48", HostSubnet: 64},
+					{CIDR: "2001:db8:2::/48", HostSubnet: 64},
+				},
+			},
+		}),
 	},
 }
