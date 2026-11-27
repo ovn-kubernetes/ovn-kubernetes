@@ -1,0 +1,47 @@
+name: operator
+
+on:
+  pull_request:
+    branches: [ master, release-* ]
+    paths:
+      - 'operator/**'
+      - 'helm/ovn-kubernetes/crds/**'
+      - '.github/workflows/operator.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: operator-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Verify operator tests, lint and generated code
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: operator
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v6
+
+    - name: Set up Go
+      uses: actions/setup-go@v6
+      with:
+        go-version-file: 'go-controller/go.mod'
+        cache-dependency-path: 'operator/go.sum'
+
+    - name: Run tests
+      run: make test
+
+    - name: Verify generated code is up to date
+      run: |
+        git status --porcelain
+        test -z "$(git status --porcelain)"
+
+    - name: Verify bundled CRDs match the Helm chart
+      run: make verify-crds
+
+    - name: Verify linting rules are enforced
+      run: make lint

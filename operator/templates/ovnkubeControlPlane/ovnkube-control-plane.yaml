@@ -1,0 +1,251 @@
+# ovnkube-control-plane
+# daemonset version 3
+# starts ovnkube-cluster-manager
+# it is run on the control-plane node(s).
+kind: Deployment
+apiVersion: apps/v1
+metadata:
+  name: ovnkube-control-plane
+  # namespace set up by install
+  namespace: {{ .global.namespace }}
+  annotations:
+    kubernetes.io/description: |
+      This Deployment launches the ovn-kubernetes cluster manager networking component.
+spec:
+  progressDeadlineSeconds: 600
+  replicas: {{ or .ovnkubeControlPlane.replicas 1 }}
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      name: ovnkube-control-plane
+  strategy:
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        name: ovnkube-control-plane
+        component: network
+        type: infra
+        kubernetes.io/os: "linux"
+    spec:
+      {{- with .global.imagePullSecrets }}
+      imagePullSecrets:
+{{ toYaml . | indent 6 }}
+      {{- end }}
+      priorityClassName: "system-cluster-critical"
+      # Requires fairly broad permissions - ability to read all services and network functions as well
+      # as all pods.
+      serviceAccountName: ovnkube-cluster-manager
+      hostNetwork: true
+      dnsPolicy: Default
+      {{- with get .ovnkubeControlPlane "nodePlacement" "nodeSelector" }}
+      nodeSelector:
+{{ toYaml . | indent 8 }}
+      {{- end }}
+      affinity:
+      {{- with get .ovnkubeControlPlane "nodePlacement" "affinity" }}
+{{ toYaml . | indent 8 }}
+      {{- else }}
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: node-role.kubernetes.io/control-plane
+                    operator: Exists
+                  - key: kubernetes.io/os
+                    operator: In
+                    values:
+                      - "linux"
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: name
+                operator: In
+                values:
+                - ovnkube-control-plane
+            topologyKey: kubernetes.io/hostname
+      {{- end }}
+      containers:
+      - name: ovnkube-cluster-manager
+        {{- $image := .ovnkubeControlPlane.ovnkubeClusterManager.image }}
+        image: "{{ $image.repository }}:{{ $image.tag }}{{ if $image.sha256 }}@sha256:{{ $image.sha256 }}{{ end }}"
+        imagePullPolicy: IfNotPresent
+        command: ["/root/ovnkube.sh", "ovn-cluster-manager"]
+        securityContext:
+          runAsUser: 0
+        terminationMessagePolicy: FallbackToLogsOnError
+        volumeMounts:
+        # Run directories where we need to be able to access sockets
+        - mountPath: /var/run/dbus/
+          name: host-var-run-dbus
+          readOnly: true
+        - mountPath: /var/log/ovn-kubernetes/
+          name: host-var-log-ovnkube
+        - mountPath: /var/run/openvswitch/
+          name: host-var-run-ovs
+        - mountPath: /var/run/ovn/
+          name: host-var-run-ovs
+        - mountPath: /ovn-cert
+          name: host-ovn-cert
+          readOnly: true
+        - mountPath: /run/ovnkube-config
+          name: ovnkube-config
+          readOnly: true
+        resources:
+          requests:
+            cpu: 100m
+            memory: 300Mi
+        env:
+        {{- if .global.enableCoredump }}
+        - name: GOTRACEBACK
+          value: "crash"
+        {{- end }}
+        - name: OVN_DAEMONSET_VERSION
+          value: "1.4.0"
+        - name: OVNKUBE_LOGLEVEL
+          value: "{{ or .ovnkubeControlPlane.customVariables.logLevel 4 }}"
+        - name: OVNKUBE_LOGFILE_MAXSIZE
+          value: "{{ or .ovnkubeControlPlane.customVariables.logFileMaxSize 100 }}"
+        - name: OVNKUBE_LOGFILE_MAXBACKUPS
+          value: "{{ or .ovnkubeControlPlane.customVariables.logFileMaxBackups 5 }}"
+        - name: OVNKUBE_LOGFILE_MAXAGE
+          value: "{{ or .ovnkubeControlPlane.customVariables.logFileMaxAge 5 }}"
+        - name: OVNKUBE_CONFIG_DURATION_ENABLE
+          value: ""
+        - name: OVN_NET_CIDR
+          valueFrom:
+            configMapKeyRef:
+              name: ovn-config
+              key: net_cidr
+        - name: OVN_SVC_CIDR
+          valueFrom:
+            configMapKeyRef:
+              name: ovn-config
+              key: svc_cidr
+        - name: K8S_APISERVER
+          valueFrom:
+            configMapKeyRef:
+              name: ovn-config
+              key: k8s_apiserver
+        - name: K8S_NODE
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: K8S_NODE_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.hostIP
+        {{- with .global.metrics.ip }}
+        - name: METRICS_IP
+          value: "{{ . }}"
+        {{- end }}
+        - name: OVN_KUBERNETES_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: OVN_HYBRID_OVERLAY_ENABLE
+          value: "{{ if has "hybridOverlay" .global.featureGates }}true{{ end }}"
+        - name: OVN_ADMIN_NETWORK_POLICY_ENABLE
+          value: "{{ if has "networkPolicy.admin" .global.featureGates }}true{{ end }}"
+        - name: OVN_EGRESSIP_ENABLE
+          value: "{{ has "egress.ip" .global.featureGates }}"
+        - name: OVN_EGRESSSERVICE_ENABLE
+          value: "{{ has "egress.service" .global.featureGates }}"
+        - name: OVN_EGRESSFIREWALL_ENABLE
+          value: "{{ has "egress.firewall" .global.featureGates }}"
+        - name: OVN_EGRESSQOS_ENABLE
+          value: "{{ has "egress.qos" .global.featureGates }}"
+        # Network segmentation requires multi-network support.
+        - name: OVN_MULTI_NETWORK_ENABLE
+          value: "{{ has "userDefinedNetworks" .global.featureGates }}"
+        - name: OVN_NETWORK_SEGMENTATION_ENABLE
+          value: "{{ if has "userDefinedNetworks" .global.featureGates }}true{{ end }}"
+        - name: OVN_ROUTE_ADVERTISEMENTS_ENABLE
+          value: "{{ has "routing.routeAdvertisements" .global.featureGates }}"
+        - name: OVN_UPLINK_ENABLE
+          value: "{{ has "uplink" .global.featureGates }}"
+        - name: OVN_EVPN_ENABLE
+          value: "{{ has "routing.evpn" .global.featureGates }}"
+        - name: OVN_NETWORK_CONNECT_ENABLE
+          value: "{{ if has "userDefinedNetworks.networkConnect" .global.featureGates }}true{{ end }}"
+        - name: OVN_PRE_CONF_UDN_ADDR_ENABLE
+          value: "{{ if has "userDefinedNetworks.preconfiguredAddresses" .global.featureGates }}true{{ end }}"
+        - name: OVN_DYNAMIC_UDN_ALLOCATION
+          value: "{{ has "userDefinedNetworks.dynamicUDNAllocation" .global.featureGates }}"
+        - name: OVN_DYNAMIC_UDN_GRACE_PERIOD
+          value: "{{ get .global.featureGateConfig "userDefinedNetworks.dynamicUDNAllocation" "deletionGracePeriod" }}"
+        - name: OVN_ADVERTISED_UDN_ISOLATION_MODE
+          value: "{{ or (get .global.featureGateConfig "userDefinedNetworks" "advertisedIsolationMode") "strict" }}"
+        - name: OVNKUBE_CLUSTER_DEFAULT_NAD
+          value: ""
+        - name: OVN_NO_OVERLAY_ENABLE
+          value: "{{ has "userDefinedNetworks.noOverlay" .global.featureGates }}"
+        - name: OVN_HYBRID_OVERLAY_NET_CIDR
+          value: ""
+        - name: OVN_DISABLE_SNAT_MULTIPLE_GWS
+          value: ""
+        - name: OVN_EMPTY_LB_EVENTS
+          value: "{{ or .global.emptyLbEvents "" }}"
+        - name: OVN_V4_JOIN_SUBNET
+          value: "{{ or .global.v4JoinSubnet "100.64.0.0/16" }}"
+        - name: OVN_V6_JOIN_SUBNET
+          value: "{{ or .global.v6JoinSubnet "fd98::/64" }}"
+        - name: OVN_SSL_ENABLE
+          value: "no"
+        - name: OVN_GATEWAY_MODE
+          value: {{ or .global.gatewayMode "shared" }}
+        - name: OVN_MULTICAST_ENABLE
+          value: "{{ if has "multicast" .global.featureGates }}true{{ end }}"
+        - name: OVN_ACL_LOGGING_RATE_LIMIT
+          value: "20"
+        - name: OVN_HOST_NETWORK_NAMESPACE
+          valueFrom:
+            configMapKeyRef:
+              name: ovn-config
+              key: host_network_namespace
+        - name: OVN_ENABLE_MULTI_EXTERNAL_GATEWAY
+          value: "{{ has "multiExternalGateway" .global.featureGates }}"
+        - name: OVN_NETWORK_QOS_ENABLE
+          value: "{{ has "networkQoS" .global.featureGates }}"
+        - name: OVN_V4_TRANSIT_SUBNET
+          value: "{{ or (get .global.featureGateConfig "interconnect" "v4TransitSwitchSubnet") "100.88.0.0/16" }}"
+        - name: OVN_V6_TRANSIT_SUBNET
+          value: "{{ or (get .global.featureGateConfig "interconnect" "v6TransitSwitchSubnet") "fd97::/64" }}"
+        - name: OVN_ENABLE_PERSISTENT_IPS
+          value: "{{ has "persistentIPs" .global.featureGates }}"
+        - name: OVN_ENABLE_DNSNAMERESOLVER
+          value: "{{ has "dnsNameResolver" .global.featureGates }}"
+        - name: OVN_ALLOW_ICMP_NETPOL
+          value: "{{ has "networkPolicy.icmp" .global.featureGates }}"
+      # end of container
+      volumes:
+      # TODO: Need to check why we need this?
+      - name: host-var-run-dbus
+        hostPath:
+          path: /var/run/dbus
+      - name: host-var-log-ovs
+        hostPath:
+          path: /var/log/openvswitch
+      - name: host-var-log-ovnkube
+        hostPath:
+          path: /var/log/ovn-kubernetes
+      - name: host-var-run-ovs
+        hostPath:
+          path: /var/run/openvswitch
+      - name: host-ovn-cert
+        hostPath:
+          path: /etc/ovn
+          type: DirectoryOrCreate
+      - name: ovnkube-config
+        configMap:
+          name: ovnkube-config
+      tolerations:
+      {{- with get .ovnkubeControlPlane "nodePlacement" "tolerations" }}
+{{ toYaml . | indent 6 }}
+      {{- else }}
+      - operator: "Exists"
+      {{- end }}

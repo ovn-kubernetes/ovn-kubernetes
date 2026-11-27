@@ -1,0 +1,16 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  labels:
+    app.kubernetes.io/name: ovnk8s-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: cr-manager-rolebinding
+  namespace: ovnk8s-operator-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: cr-manager-role
+subjects:
+- kind: ServiceAccount
+  name: controller-manager
+  namespace: ovnk8s-operator-system

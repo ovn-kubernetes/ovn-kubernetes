@@ -1,0 +1,4 @@
+## Append samples of your project ##
+resources:
+- k8s_v1alpha1_ovnk8soperator.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples

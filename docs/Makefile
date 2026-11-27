@@ -62,4 +62,9 @@ generate-api-reference: crd-ref-docs
 			--renderer=markdown \
 			--output-path=./api-reference/$$out \
 			|| exit 1; \
-	done
+	done; \
+	echo "Generating docs/api-reference/ovnk8soperator-api-spec.md from operator/api/v1alpha1"; \
+	$(GO_BIN_DIR)/crd-ref-docs --source-path ../operator/api/v1alpha1 \
+		--config=../crd-docs-config.yaml \
+		--renderer=markdown \
+		--output-path=./api-reference/ovnk8soperator-api-spec.md
