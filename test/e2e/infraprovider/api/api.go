@@ -32,10 +32,6 @@ type ClusterProvider interface {
 	// GetK8HostPort returns a ConfigMap-reserved host port; providers choose the allowed range.
 	// Deallocation is registered on cleanup.
 	GetK8HostPort(f *framework.Framework, cleanup ContextCleanUp) uint16
-	// ShutdownNode shuts down the specified node
-	ShutdownNode(nodeName string) error
-	// StartNode starts the specified node
-	StartNode(nodeName string) error
 	// PreloadImages pulls the given images and loads them into the cluster
 	// so that they are available to pods without a runtime pull. Providers
 	// that do not support preloading may implement this as a no-op.
@@ -48,6 +44,12 @@ type ClusterProvider interface {
 	// (e.g., bastion host or hypervisor subnets) that should be excluded from
 	// test subnet allocations to prevent overlaps with external hosts.
 	InfrastructureNetworkExclusions() (ipv4, ipv6 sets.Set[string])
+}
+
+// NodeInfrastructure is optional; providers that do not own node lifecycle leave it unimplemented.
+type NodeInfrastructure interface {
+	ShutdownNode(nodeName string) error
+	StartNode(nodeName string) error
 }
 
 type ExternalContainerProvider interface {

@@ -14,6 +14,7 @@ import (
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider"
+	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/infraprovider/api"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -30,17 +31,19 @@ var _ = ginkgo.Describe("Node Shutdown and Startup", ginkgo.Serial, func() {
 	)
 
 	var (
-		f            *framework.Framework
-		testNodeName string
+		f                  *framework.Framework
+		testNodeName       string
+		nodeInfrastructure api.NodeInfrastructure
 	)
 
 	f = wrappedTestFramework("node-shutdown-startup")
 
 	ginkgo.BeforeEach(func() {
 		testNodeName = ""
-		// Skip test if not using kind provider
-		if infraprovider.Get().Name() != "kind" {
-			e2eskipper.Skipf("Node shutdown/startup test only supported for kind provider, got: %s", infraprovider.Get().Name())
+		var ok bool
+		nodeInfrastructure, ok = infraprovider.Get().(api.NodeInfrastructure)
+		if !ok {
+			e2eskipper.Skipf("provider %q does not support node shutdown/startup", infraprovider.Get().Name())
 		}
 
 		// Get a worker node for testing (skip master/control-plane nodes)
@@ -80,7 +83,7 @@ var _ = ginkgo.Describe("Node Shutdown and Startup", ginkgo.Serial, func() {
 
 		ginkgo.By("Shut down the node")
 		framework.Logf("Shutting down node %s", testNodeName)
-		err = infraprovider.Get().ShutdownNode(testNodeName)
+		err = nodeInfrastructure.ShutdownNode(testNodeName)
 		framework.ExpectNoError(err, "Failed to shutdown node %s", testNodeName)
 
 		// Ensure node is started back up regardless of test failure
@@ -92,7 +95,7 @@ var _ = ginkgo.Describe("Node Shutdown and Startup", ginkgo.Serial, func() {
 			}
 
 			framework.Logf("Ensuring node %s is started (cleanup)", testNodeName)
-			if startErr := infraprovider.Get().StartNode(testNodeName); startErr != nil {
+			if startErr := nodeInfrastructure.StartNode(testNodeName); startErr != nil {
 				framework.Logf("Failed to start node %s during cleanup: %v", testNodeName, startErr)
 			} else {
 				// Wait for the node to become Ready after startup in cleanup
@@ -107,7 +110,7 @@ var _ = ginkgo.Describe("Node Shutdown and Startup", ginkgo.Serial, func() {
 
 		ginkgo.By("Start the node")
 		framework.Logf("Starting node %s", testNodeName)
-		err = infraprovider.Get().StartNode(testNodeName)
+		err = nodeInfrastructure.StartNode(testNodeName)
 		framework.ExpectNoError(err, "Failed to start node %s", testNodeName)
 
 		// Wait for the node to become Ready again
