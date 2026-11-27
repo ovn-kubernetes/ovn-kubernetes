@@ -34,6 +34,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	ktypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/validation"
 	corelisters "k8s.io/client-go/listers/core/v1"
@@ -51,6 +52,7 @@ import (
 	ratypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
 	rafake "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1/apis/clientset/versioned/fake"
 	apitypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"
+	uplinkv1alpha1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/uplink/v1alpha1"
 	userdefinednetworkv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
 	vtepv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/vtep/v1"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
@@ -59,6 +61,7 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	ovntest "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/testing"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	uplinkutil "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/uplink"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
@@ -354,6 +357,204 @@ func TestConflictingVTEPNodes(t *testing.T) {
 	}
 }
 
+// TestConcurrentRAsResolveSharedVTEPOwnership checks that RAs in different
+// tenant VRFs agree on a conflicting underlay prefix, preserve an established
+// advertiser, and recover when the competing RA is removed.
+func TestConcurrentRAsResolveSharedVTEPOwnership(t *testing.T) {
+	const prefix = "100.64.0.1/32"
+	for _, scenario := range []struct {
+		name, decision string
+		established    bool
+	}{
+		{
+			name:     "new conflict rejects both nodes",
+			decision: "no unique established advertiser",
+		},
+		{
+			name:        "existing advertiser keeps ownership",
+			decision:    "preserving established advertiser node",
+			established: true,
+		},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			g := gomega.NewWithT(t)
+			tt := newFRRReconcileTest(t, g, "eth0")
+			nm := &networkmanager.FakeNetworkManager{PrimaryNetworks: map[string]util.NetInfo{}}
+			tt.c.nm = nm
+			// 1. Separate tenant VRFs still share the default-VRF underlay.
+			// Give their selected nodes the same VTEP address to force a conflict.
+			tt.addNetwork(nm, &testNAD{
+				Name:                 "blue",
+				Namespace:            "blue",
+				Network:              util.GenerateCUDNNetworkName("blue"),
+				Topology:             types.Layer3Topology,
+				Subnet:               "10.2.0.0/16",
+				Labels:               map[string]string{"tenant": "blue"},
+				EVPNVTEPName:         "shared",
+				EVPNIPVRFVNI:         2000,
+				EVPNIPVRFRouteTarget: "1:2000",
+			})
+			tt.addNetwork(nm, &testNAD{
+				Name:                 "red",
+				Namespace:            "red",
+				Network:              util.GenerateCUDNNetworkName("red"),
+				Topology:             types.Layer3Topology,
+				Subnet:               "10.3.0.0/16",
+				Labels:               map[string]string{"tenant": "red"},
+				EVPNVTEPName:         "shared",
+				EVPNIPVRFVNI:         2001,
+				EVPNIPVRFRouteTarget: "1:2001",
+			})
+			for _, namespaceName := range []string{"blue", "red"} {
+				namespace := (&testNamespace{
+					Name:   namespaceName,
+					Labels: map[string]string{"advertise": "true"},
+				}).Namespace()
+				_, err := tt.fakeClientset.KubeClient.CoreV1().Namespaces().Create(t.Context(), namespace, metav1.CreateOptions{})
+				g.Expect(err).To(gomega.Succeed(), "create a namespace on tenant network %s", namespaceName)
+				g.Eventually(func() (*corev1.Namespace, error) {
+					return tt.c.namespaceLister.Get(namespaceName)
+				}, 5*time.Second).Should(gomega.Equal(namespace), "cache tenant %s's EgressIP selection", namespaceName)
+			}
+
+			// The fixture already created node "node" and RA "ra". Update them
+			// for blue, then create the separate node and RA for red.
+			blueNode := (&testNode{
+				Name:              "node",
+				Labels:            map[string]string{"owner": "ra"},
+				SubnetsAnnotation: `{"cluster_udn_blue":"10.2.1.0/24"}`,
+				VTEPIPs:           map[string][]string{"shared": {"100.64.0.1"}},
+			}).Node()
+			_, err := tt.fakeClientset.KubeClient.CoreV1().Nodes().Update(t.Context(), blueNode, metav1.UpdateOptions{})
+			g.Expect(err).To(gomega.Succeed(), "update the fixture's node with blue's subnet and VTEP address")
+			tt.updateRA((&testRA{
+				Name:               "ra",
+				TargetVRF:          "blue",
+				AdvertiseEgressIPs: true,
+				NetworkSelector:    map[string]string{"tenant": "blue"},
+				NodeSelector:       map[string]string{"owner": "ra"},
+			}).RouteAdvertisements())
+
+			redNode := (&testNode{
+				Name:              "node1",
+				Labels:            map[string]string{"owner": "other"},
+				SubnetsAnnotation: `{"cluster_udn_red":"10.3.1.0/24"}`,
+				VTEPIPs:           map[string][]string{"shared": {"100.64.0.1"}},
+			}).Node()
+			_, err = tt.fakeClientset.KubeClient.CoreV1().Nodes().Create(t.Context(), redNode, metav1.CreateOptions{})
+			g.Expect(err).To(gomega.Succeed(), "create red's node with a conflicting VTEP address")
+			tt.createRAAndWaitForInformer((&testRA{
+				Name:               "other",
+				TargetVRF:          "red",
+				AdvertiseEgressIPs: true,
+				NetworkSelector:    map[string]string{"tenant": "red"},
+				NodeSelector:       map[string]string{"owner": "other"},
+			}).RouteAdvertisements())
+
+			for _, node := range []*corev1.Node{blueNode, redNode} {
+				g.Eventually(func() (*corev1.Node, error) {
+					return tt.c.nodeLister.Get(node.Name)
+				}, 5*time.Second).Should(gomega.Equal(node), "cache node %s before resolving ownership", node.Name)
+			}
+			vtep := &vtepv1.VTEP{ObjectMeta: metav1.ObjectMeta{Name: "shared"}, Spec: vtepv1.VTEPSpec{CIDRs: []vtepv1.CIDR{"100.64.0.0/16"}}}
+			_, err = tt.fakeClientset.VTEPClient.K8sV1().VTEPs().Create(t.Context(), vtep, metav1.CreateOptions{})
+			g.Expect(err).To(gomega.Succeed(), "create the VTEP referenced by both tenant networks")
+			g.Eventually(func() (*vtepv1.VTEP, error) { return tt.c.vtepLister.Get(vtep.Name) }, 5*time.Second).
+				Should(gomega.Equal(vtep), "cache the shared VTEP before resolving ownership")
+			eip := (&testEIP{Name: "shared", EIPs: map[string]string{"node": "192.0.2.1", "node1": "192.0.2.2"},
+				NamespaceSelector: map[string]string{"advertise": "true"}}).EgressIP()
+			_, err = tt.fakeClientset.EgressIPClient.K8sV1().EgressIPs().Create(t.Context(), eip, metav1.CreateOptions{})
+			g.Expect(err).To(gomega.Succeed(), "provide tenant routes that require underlay reachability")
+			g.Eventually(func() (*eiptypes.EgressIP, error) { return tt.c.eipLister.Get(eip.Name) }, 5*time.Second).
+				Should(gomega.Equal(eip), "cache EgressIP routes before generating both tenants' advertisements")
+			configs := tt.fakeClientset.FRRClient.ApiV1beta1().FRRConfigurations("frrNamespace")
+			source, err := configs.Get(t.Context(), "frrConfig", metav1.GetOptions{})
+			g.Expect(err).To(gomega.Succeed(), "read the template shared by both tenant RAs")
+			for _, vrf := range []string{"blue", "red"} {
+				router := *source.Spec.BGP.Routers[0].DeepCopy()
+				router.VRF = vrf
+				source.Spec.BGP.Routers = append(source.Spec.BGP.Routers, router)
+			}
+			_, err = configs.Update(t.Context(), source, metav1.UpdateOptions{})
+			g.Expect(err).To(gomega.Succeed(), "provide tenant routers alongside the shared underlay router")
+			want := []string{}
+			if scenario.established {
+				owner := generatedFRRConfig(generateName+"established", "node", true)
+				owner.Routers[0].Prefixes = []string{prefix}
+				owner.Routers[0].Neighbors[0].Advertise = []string{prefix}
+				_, err = configs.Create(t.Context(), owner.FRRConfiguration(), metav1.CreateOptions{})
+				g.Expect(err).To(gomega.Succeed(), "seed the established underlay advertiser")
+				want = append(want, "ra/frrConfig/node")
+			}
+			tt.waitForFRRCache()
+			// 2. Overlap both reconciliations and check every write, so convergence
+			// cannot hide a temporary competing advertisement or loss of ownership.
+			client := tt.fakeClientset.FRRClient.(*frrfake.Clientset)
+			initialActions := len(client.Actions())
+			tt.reconcileTogether("ra", "other")
+			for _, name := range []string{"ra", "other"} {
+				ra, err := tt.c.raClient.K8sV1().RouteAdvertisements().Get(t.Context(), name, metav1.GetOptions{})
+				g.Expect(err).To(gomega.Succeed(), "read RA %s after concurrent conflict resolution", name)
+				condition := meta.FindStatusCondition(ra.Status.Conditions, conditionTypeDegraded)
+				g.Expect(condition).NotTo(gomega.BeNil(), "RA %s must report its conflict decision", name)
+				g.Expect(condition.Status).To(gomega.Equal(metav1.ConditionTrue), "RA %s must report the VTEP conflict as degraded", name)
+				g.Expect(condition.Message).To(gomega.ContainSubstring("VTEP prefix "+prefix), "RA %s must identify the disputed prefix", name)
+				g.Expect(condition.Message).To(gomega.ContainSubstring(scenario.decision), "RA %s must agree on underlay ownership", name)
+			}
+			for _, action := range client.Actions()[initialActions:] {
+				var cfg *frrapi.FRRConfiguration
+				switch action.GetVerb() {
+				case "create":
+					cfg = action.(ctesting.CreateAction).GetObject().(*frrapi.FRRConfiguration)
+				case "update":
+					cfg = action.(ctesting.UpdateAction).GetObject().(*frrapi.FRRConfiguration)
+				case "delete":
+					g.Expect(action.(ctesting.DeleteAction).GetName()).NotTo(gomega.Equal(generateName+"established"), "conflict resolution must preserve the established configuration")
+					continue
+				default:
+					continue
+				}
+				exports := util.RouteAdvertisementsConfigurationExportsPrefix(cfg, "", prefix)
+				if exports {
+					g.Expect(want).To(gomega.ContainElement(cfg.Annotations[types.OvnRouteAdvertisementsKey]), "only the established owner may publish the disputed prefix")
+				}
+				if cfg.Name == generateName+"established" {
+					g.Expect(exports).To(gomega.BeTrue(), "updates must retain the established underlay prefix")
+				}
+			}
+			advertisers := func() []string {
+				var owners []string
+				for _, name := range []string{"ra", "other"} {
+					for key, cfg := range tt.generatedConfigs(name) {
+						if util.RouteAdvertisementsConfigurationExportsPrefix(cfg, "", prefix) {
+							owners = append(owners, key)
+						}
+					}
+				}
+				return owners
+			}
+			g.Expect(advertisers()).To(gomega.ConsistOf(want), "both reconciliations must leave the same ownership decision in the API")
+			tt.waitForFRRCache()
+			// 3. Remove the competing RA. The surviving node can now advertise
+			// the prefix even though the unselected node still has the same address.
+			err = tt.c.raClient.K8sV1().RouteAdvertisements().Delete(t.Context(), "other", metav1.DeleteOptions{})
+			g.Expect(err).To(gomega.Succeed(), "remove the competing RA")
+			g.Eventually(func() bool {
+				_, err := tt.c.raLister.Get("other")
+				return apierrors.IsNotFound(err)
+			}, 5*time.Second).
+				Should(gomega.BeTrue(), "cache the competing RA's deletion before recovery")
+			g.Expect(tt.c.reconcile(t.Context(), "other")).To(gomega.Succeed(), "clean up the deleted RA")
+			g.Expect(tt.c.reconcile(t.Context(), "ra")).To(gomega.Succeed(), "reconcile the surviving RA after the conflict clears")
+			g.Expect(advertisers()).To(gomega.ConsistOf("ra/frrConfig/node"), "the surviving node must advertise the released prefix")
+			ra, err := tt.c.raClient.K8sV1().RouteAdvertisements().Get(t.Context(), "ra", metav1.GetOptions{})
+			g.Expect(err).To(gomega.Succeed(), "read the surviving RA's recovery status")
+			g.Expect(meta.IsStatusConditionTrue(ra.Status.Conditions, conditionTypeAccepted)).To(gomega.BeTrue(), "the surviving RA must be accepted after recovery")
+			g.Expect(meta.IsStatusConditionFalse(ra.Status.Conditions, conditionTypeDegraded)).To(gomega.BeTrue(), "removing the competing claim must clear degradation")
+		})
+	}
+}
+
 // TestGetNodeVTEPPrefixes checks selection isolation, canonical host prefixes,
 // and enforcement of each VTEP's configured CIDRs.
 func TestGetNodeVTEPPrefixes(t *testing.T) {
@@ -434,6 +635,86 @@ func TestGetDPUHostGatewayNextHopsUsesDPUHostAddressAnnotation(t *testing.T) {
 	node.Annotations[util.OVNNodePrimaryDPUHostAddr] = `{"ipv4":"172.18.255.254/16"}`
 	_, err = c.getDPUHostGatewayNextHops(node, selected, types.DefaultNetworkName)
 	g.Expect(errors.Is(err, errPending)).To(gomega.BeTrue(), "a DPU host waits for its gateway state")
+}
+
+// TestConcurrentRAsReadSharedNodeAndUplink checks that both RAs generate routes
+// using the current node subnets and uplink addresses, then adopt changes to
+// those shared inputs during another round of concurrent reconciliation.
+func TestConcurrentRAsReadSharedNodeAndUplink(t *testing.T) {
+	g := gomega.NewWithT(t)
+	previousUplink := config.OVNKubernetesFeature.EnableUplink
+	t.Cleanup(func() { config.OVNKubernetesFeature.EnableUplink = previousUplink })
+	previousIPv4, previousIPv6 := config.IPv4Mode, config.IPv6Mode
+	t.Cleanup(func() { config.IPv4Mode, config.IPv6Mode = previousIPv4, previousIPv6 })
+	config.OVNKubernetesFeature.EnableUplink = true
+	tt := newFRRReconcileTest(t, g, "eth0")
+	config.Gateway.Mode = config.GatewayModeShared
+	config.IPv4Mode, config.IPv6Mode = true, true
+	config.Default.ClusterSubnets = append(config.Default.ClusterSubnets, config.CIDRNetworkEntry{
+		CIDR: ovntest.MustParseIPNet("fd01::/48"), HostSubnetLength: 64,
+	})
+	nm := &networkmanager.FakeNetworkManager{PrimaryNetworks: map[string]util.NetInfo{}}
+	tt.c.nm = nm
+	tt.addNetwork(nm, &testNAD{Name: "blue", Namespace: "blue", Network: util.GenerateCUDNNetworkName("blue"),
+		Topology: types.Layer3Topology, Subnet: "10.2.0.0/16,fd02::/48", Uplink: "shared", Labels: map[string]string{"selected": "true"}})
+	tt.updateRA((&testRA{Name: "ra", TargetVRF: "blue", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}}).RouteAdvertisements())
+	tt.createRAAndWaitForInformer((&testRA{Name: "other", TargetVRF: "blue", AdvertisePods: true, NetworkSelector: map[string]string{"selected": "true"}}).RouteAdvertisements())
+	sources := tt.fakeClientset.FRRClient.ApiV1beta1().FRRConfigurations("frrNamespace")
+	source, err := sources.Get(t.Context(), "frrConfig", metav1.GetOptions{})
+	g.Expect(err).To(gomega.Succeed(), "read the shared template before selecting the network's VRF")
+	source.Spec.BGP.Routers[0].VRF = "blue"
+	_, err = sources.Update(t.Context(), source, metav1.UpdateOptions{})
+	g.Expect(err).To(gomega.Succeed(), "peer through the network that owns the explicit uplink")
+	tt.waitForFRRCache()
+	node := (&testNode{Name: "node", DPUHostAddressAnnotation: `{"ipv4":"172.18.0.1/24","ipv6":"fd00::1/64"}`,
+		L3GatewayConfigAnnotation: `{"default":{"mode":"shared","mac-address":"52:54:00:4c:e6:00","ip-addresses":["172.18.0.1/24","fd00::1/64"],"next-hops":["172.18.0.254","fd00::ffff"]}}`,
+	}).Node()
+	state := &uplinkv1alpha1.UplinkState{
+		ObjectMeta: metav1.ObjectMeta{Name: uplinkutil.StateName("shared", "node")},
+		Spec:       uplinkv1alpha1.UplinkStateSpec{UplinkName: "shared", NodeName: "node"},
+		Status: uplinkv1alpha1.UplinkStateStatus{Conditions: []metav1.Condition{
+			{Type: uplinkv1alpha1.UplinkStateConditionResolved, Status: metav1.ConditionTrue},
+		}},
+	}
+	states := tt.fakeClientset.UplinkClient.K8sV1alpha1().UplinkStates()
+	_, err = states.Create(t.Context(), state, metav1.CreateOptions{})
+	g.Expect(err).To(gomega.Succeed(), "create the explicit uplink shared by both RAs")
+	for _, phase := range []struct {
+		name, subnet4, subnet6, nextHop4, nextHop6 string
+	}{
+		{"initial inputs", "10.2.1.0/24", "fd02:0:0:1::/64", "172.19.0.1", "fd19::1"},
+		{"changed inputs", "10.2.2.0/24", "fd02:0:0:2::/64", "172.19.0.2", "fd19::2"},
+	} {
+		// Publish the node and uplink changes before starting either RA, so
+		// both reconciliations must generate routes from the updated inputs.
+		node = node.DeepCopy()
+		node.Annotations[types.NodeSubnetsAnnotation] = fmt.Sprintf(`{"default":"1.1.0.0/24","cluster_udn_blue":[%q,%q]}`, phase.subnet4, phase.subnet6)
+		_, err = tt.fakeClientset.KubeClient.CoreV1().Nodes().Update(t.Context(), node, metav1.UpdateOptions{})
+		g.Expect(err).To(gomega.Succeed(), "%s: publish the shared node subnets", phase.name)
+		g.Eventually(func() (*corev1.Node, error) { return tt.c.nodeLister.Get(node.Name) }, 5*time.Second).
+			Should(gomega.Equal(node), "%s: cache the shared node before generation", phase.name)
+		state = state.DeepCopy()
+		state.Status.IPAddresses = []uplinkv1alpha1.IPAddressCIDR{
+			uplinkv1alpha1.IPAddressCIDR(phase.nextHop4 + "/24"), uplinkv1alpha1.IPAddressCIDR(phase.nextHop6 + "/64"),
+		}
+		_, err = states.Update(t.Context(), state, metav1.UpdateOptions{})
+		g.Expect(err).To(gomega.Succeed(), "%s: publish the shared uplink addresses", phase.name)
+		g.Eventually(func() (*uplinkv1alpha1.UplinkState, error) { return tt.c.uplinkStateLister.Get(state.Name) }, 5*time.Second).
+			Should(gomega.Equal(state), "%s: cache the resolved uplink before generation", phase.name)
+		tt.reconcileTogether("ra", "other")
+		for _, name := range []string{"ra", "other"} {
+			cfg := tt.generatedConfigs(name)[name+"/frrConfig/node"]
+			g.Expect(cfg).NotTo(gomega.BeNil(), "%s: RA %s must generate its own configuration", phase.name, name)
+			g.Expect(cfg.Spec.BGP.Routers).To(gomega.HaveLen(1), "%s: RA %s must render the shared template router", phase.name, name)
+			router := cfg.Spec.BGP.Routers[0]
+			g.Expect(router.Prefixes).To(gomega.ConsistOf(phase.subnet4, phase.subnet6), "%s: RA %s must use the current node subnets", phase.name, name)
+			g.Expect(router.Neighbors).To(gomega.HaveLen(1), "%s: RA %s must retain its peer", phase.name, name)
+			g.Expect(router.Neighbors[0].ToAdvertise.NextHop).To(gomega.Equal(frrapi.NextHop{IPv4: phase.nextHop4, IPv6: phase.nextHop6}),
+				"%s: RA %s must use the explicit uplink's current addresses", phase.name, name)
+		}
+		tt.waitForFRRCache()
+		tt.waitForDefaultNADCache()
+	}
 }
 
 type testPod struct {
@@ -651,6 +932,7 @@ type testNAD struct {
 	IsSecondary           bool
 	Topology              string
 	Transport             string
+	Uplink                string
 	OwnUpdate             bool
 	EVPNVTEPName          string
 	EVPNMACVRFVNI         int32
@@ -699,6 +981,9 @@ func (tn testNAD) NAD() *nadtypes.NetworkAttachmentDefinition {
 	}
 	if tn.Transport != "" {
 		cniConfig["transport"] = tn.Transport
+	}
+	if tn.Uplink != "" {
+		cniConfig["uplink"] = tn.Uplink
 	}
 
 	// Add EVPN configuration if present
@@ -4529,6 +4814,88 @@ func (tt *frrReconcileTest) addNetwork(nm *networkmanager.FakeNetworkManager, na
 	}, 5*time.Second).Should(gomega.Equal(object), "cache must observe NAD %s/%s", nad.Namespace, nad.Name)
 }
 
+// concurrentFRRLister holds the first template reads until all participating
+// reconciliations arrive, so the tests cannot pass by running them sequentially.
+type concurrentFRRLister struct {
+	frrlisters.FRRConfigurationLister
+	arrived chan struct{}
+	release chan struct{}
+}
+
+// List captures the selected templates and blocks until the test releases all
+// participating reconciliations. Later calls use the informer without blocking.
+func (l *concurrentFRRLister) List(selector labels.Selector) ([]*frrapi.FRRConfiguration, error) {
+	objects, err := l.FRRConfigurationLister.List(selector)
+	select {
+	case <-l.release:
+		return objects, err
+	default:
+	}
+	l.arrived <- struct{}{}
+	<-l.release
+	return objects, err
+}
+
+// runConcurrentRAActions starts each action in a separate goroutine behind a
+// shared gate, then releases them together and waits for all actions to finish.
+func runConcurrentRAActions(actions ...func()) {
+	start := make(chan struct{})
+	var workers sync.WaitGroup
+	for _, action := range actions {
+		workers.Go(func() {
+			<-start
+			action()
+		})
+	}
+	close(start)
+	workers.Wait()
+}
+
+// reconcileTogether runs one reconciliation per RA and waits until all of them
+// have read their templates before allowing any to continue. It checks each
+// result after the goroutines finish and restores the original lister.
+func (tt *frrReconcileTest) reconcileTogether(names ...string) {
+	tt.t.Helper()
+	lister := tt.c.frrLister
+	gate := &concurrentFRRLister{
+		FRRConfigurationLister: lister,
+		arrived:                make(chan struct{}, len(names)),
+		release:                make(chan struct{}),
+	}
+	tt.c.frrLister = gate
+	var workers sync.WaitGroup
+	var release sync.Once
+	defer func() {
+		release.Do(func() { close(gate.release) })
+		workers.Wait()
+		tt.c.frrLister = lister
+	}()
+	errs := make([]error, len(names))
+	for i, name := range names {
+		workers.Go(func() { errs[i] = tt.c.reconcile(tt.t.Context(), name) })
+	}
+	for range names {
+		tt.g.Eventually(gate.arrived, 5*time.Second).Should(gomega.Receive(),
+			"all RAs %v must reach template selection before any may finish", names)
+	}
+	release.Do(func() { close(gate.release) })
+	workers.Wait()
+	for i, name := range names {
+		tt.g.Expect(errs[i]).To(gomega.Succeed(), "concurrent reconciliation of RA %s", name)
+	}
+}
+
+// createRAAndWaitForInformer creates an RA through the fake client and waits
+// for the informer to observe it, so reconciliation can select it from the cache.
+func (tt *frrReconcileTest) createRAAndWaitForInformer(ra *ratypes.RouteAdvertisements) {
+	tt.t.Helper()
+	_, err := tt.c.raClient.K8sV1().RouteAdvertisements().Create(tt.t.Context(), ra, metav1.CreateOptions{})
+	tt.g.Expect(err).To(gomega.Succeed(), "create RA %s", ra.Name)
+	tt.g.Eventually(func() (*ratypes.RouteAdvertisements, error) {
+		return tt.c.raLister.Get(ra.Name)
+	}, 5*time.Second).Should(gomega.Equal(ra), "cache RA %s before starting concurrent reconciliation", ra.Name)
+}
+
 // generatedFRRConfig returns an FRRConfiguration generated for the test
 // RouteAdvertisements on the given node, carrying the validated marker
 // annotation or not.
@@ -4738,6 +5105,56 @@ func TestController_reconcileOnNetworkActivity(t *testing.T) {
 	err = fakeClientset.RouteAdvertisementsClient.K8sV1().RouteAdvertisements().Delete(context.Background(), "ra", metav1.DeleteOptions{})
 	g.Expect(err).ToNot(gomega.HaveOccurred())
 	g.Eventually(func() []string { return c.getRAsForNetwork(networkName) }, 5*time.Second).Should(gomega.BeEmpty())
+}
+
+// TestConcurrentRANetworkSubscriptions checks that concurrent subscription
+// updates and callback lookups preserve each RA's entries through withdrawal.
+func TestConcurrentRANetworkSubscriptions(t *testing.T) {
+	const advertisers = 16
+	g := gomega.NewWithT(t)
+	tt := newFRRReconcileTest(t, g, "eth0")
+	var actions []func()
+	var names, survivors []string
+	for i := range advertisers {
+		name := fmt.Sprintf("advertiser-%d", i)
+		names = append(names, name)
+		if i%2 != 0 {
+			survivors = append(survivors, name)
+		}
+		actions = append(actions, func() {
+			for range 32 {
+				tt.c.setRANetworks(name, []string{"shared", name})
+				tt.c.getRAsForNetwork("shared")
+			}
+		})
+	}
+	runConcurrentRAActions(actions...)
+	g.Expect(tt.c.getRAsForNetwork("shared")).To(gomega.ConsistOf(names), "all concurrent subscribers must remain registered")
+
+	// Half the RAs withdraw while the others change networks. Callback scans
+	// run alongside these writes, and must not erase surviving subscriptions.
+	actions = nil
+	for i, name := range names {
+		actions = append(actions, func() {
+			if i%2 == 0 {
+				tt.c.deleteRANetworks(name)
+			} else {
+				tt.c.setRANetworks(name, []string{"replacement", name})
+			}
+			for range 32 {
+				tt.c.getRAsForNetwork("shared")
+				tt.c.getRAsForNetwork("replacement")
+			}
+		})
+	}
+	runConcurrentRAActions(actions...)
+	g.Expect(tt.c.getRAsForNetwork("shared")).To(gomega.BeEmpty(), "no RA still selects the former shared network")
+	g.Expect(tt.c.getRAsForNetwork("replacement")).To(gomega.ConsistOf(survivors), "withdrawals must preserve all surviving RAs")
+	for _, name := range survivors {
+		g.Expect(tt.c.getRAsForNetwork(name)).To(gomega.ConsistOf(name), "RA %s must retain its independent network", name)
+		tt.c.deleteRANetworks(name)
+	}
+	g.Expect(tt.c.raNetworks).To(gomega.BeEmpty(), "removing the remaining RAs must leave no stale subscriptions")
 }
 
 // TestCrossRASelectionEvents checks that claims are reevaluated on RA changes
@@ -5978,6 +6395,70 @@ func TestControllerReconcileSwappedEgressIPs(t *testing.T) {
 	tt.expectRAStatus(true, false)
 }
 
+// TestConcurrentRAsFollowSharedEgressIP checks that both RAs move a shared
+// EgressIP to its new node and withdraw it when its namespace stops matching.
+func TestConcurrentRAsFollowSharedEgressIP(t *testing.T) {
+	for _, address := range []string{"192.0.2.10", "2001:db8::10"} {
+		t.Run(address, func(t *testing.T) {
+			g := gomega.NewWithT(t)
+			tt := newFRRReconcileTest(t, g, "eth0")
+			tt.updateRA((&testRA{Name: "ra", SelectsDefault: true, AdvertisePods: true, AdvertiseEgressIPs: true}).RouteAdvertisements())
+			tt.createRAAndWaitForInformer((&testRA{Name: "other", SelectsDefault: true, AdvertisePods: true, AdvertiseEgressIPs: true}).RouteAdvertisements())
+			node := (&testNode{Name: "node1", SubnetsAnnotation: `{"default":"1.1.1.0/24"}`}).Node()
+			_, err := tt.fakeClientset.KubeClient.CoreV1().Nodes().Create(t.Context(), node, metav1.CreateOptions{})
+			g.Expect(err).To(gomega.Succeed(), "create the second possible EgressIP owner")
+			g.Eventually(func() (*corev1.Node, error) { return tt.c.nodeLister.Get(node.Name) }, 5*time.Second).
+				Should(gomega.Equal(node), "cache both possible EgressIP owners")
+			namespace := (&testNamespace{Name: "egress-users", Labels: map[string]string{"advertise": "true"}}).Namespace()
+			_, err = tt.fakeClientset.KubeClient.CoreV1().Namespaces().Create(t.Context(), namespace, metav1.CreateOptions{})
+			g.Expect(err).To(gomega.Succeed(), "create a namespace selected by the shared EgressIP")
+			g.Eventually(func() (*corev1.Namespace, error) { return tt.c.namespaceLister.Get(namespace.Name) }, 5*time.Second).
+				Should(gomega.Equal(namespace), "cache the EgressIP's namespace selection")
+			eip := (&testEIP{Name: "shared", EIPs: map[string]string{"node": address}, NamespaceSelector: map[string]string{"advertise": "true"}}).EgressIP()
+			eips := tt.fakeClientset.EgressIPClient.K8sV1().EgressIPs()
+			_, err = eips.Create(t.Context(), eip, metav1.CreateOptions{})
+			g.Expect(err).To(gomega.Succeed(), "create the shared EgressIP with the first node already recorded in its status")
+			prefix := address + util.GetIPFullMaskString(address)
+			for _, owner := range []string{"node", "node1", ""} {
+				// Move the assignment, then remove its namespace selection. Pod
+				// routes remain throughout, so withdrawal must remove only the EgressIP.
+				if owner != "" {
+					eip = eip.DeepCopy()
+					eip.Status.Items[0].Node = owner
+					_, err = eips.Update(t.Context(), eip, metav1.UpdateOptions{})
+					g.Expect(err).To(gomega.Succeed(), "assign EgressIP %s to node %s", address, owner)
+				} else {
+					namespace = namespace.DeepCopy()
+					namespace.Labels["advertise"] = "false"
+					_, err = tt.fakeClientset.KubeClient.CoreV1().Namespaces().Update(t.Context(), namespace, metav1.UpdateOptions{})
+					g.Expect(err).To(gomega.Succeed(), "stop selecting the namespace while keeping the EgressIP object")
+				}
+				g.Eventually(func() (*eiptypes.EgressIP, error) { return tt.c.eipLister.Get(eip.Name) }, 5*time.Second).
+					Should(gomega.Equal(eip), "both RAs must see the current EgressIP assignment")
+				g.Eventually(func() (*corev1.Namespace, error) { return tt.c.namespaceLister.Get(namespace.Name) }, 5*time.Second).
+					Should(gomega.Equal(namespace), "both RAs must see the current namespace selection")
+				tt.reconcileTogether("ra", "other")
+				for _, name := range []string{"ra", "other"} {
+					configs := tt.generatedConfigs(name)
+					g.Expect(configs).To(gomega.HaveLen(2), "RA %s must keep both nodes' pod advertisements", name)
+					for nodeName, subnet := range map[string]string{"node": "1.1.0.0/24", "node1": "1.1.1.0/24"} {
+						cfg := configs[name+"/frrConfig/"+nodeName]
+						g.Expect(cfg).NotTo(gomega.BeNil(), "RA %s must retain its configuration for %s", name, nodeName)
+						g.Expect(cfg.Spec.BGP.Routers).To(gomega.HaveLen(1), "RA %s must render one router on %s", name, nodeName)
+						want := []string{subnet}
+						if nodeName == owner {
+							want = append(want, prefix)
+						}
+						g.Expect(cfg.Spec.BGP.Routers[0].Prefixes).To(gomega.ConsistOf(want), "RA %s on %s must reflect EgressIP owner %q", name, nodeName, owner)
+					}
+				}
+				tt.waitForFRRCache()
+				tt.waitForDefaultNADCache()
+			}
+		})
+	}
+}
+
 // Truncating diagnostics must not hide a transient error from retry logic.
 func TestNodeGenerationErrorReporting(t *testing.T) {
 	g := gomega.NewWithT(t)
@@ -6167,6 +6648,106 @@ func TestSharedNADRetainsBothAdvertisements(t *testing.T) {
 	egressOnly.Annotations[types.OvnRouteAdvertisementsIntentKey] = nad.Annotations[types.OvnRouteAdvertisementsIntentKey]
 	checkEvent(changedVRF, egressOnly) // West keeps its reference after dropping pod advertisement.
 	checkEvent(egressOnly, nad)
+}
+
+// TestConcurrentNADWithdrawalPreservesOtherRAUpdate races an RA's withdrawal
+// against another RA's intent update on the same NAD. After the conflicting
+// patch is retried, only the remaining RA and its updated intent must survive.
+func TestConcurrentNADWithdrawalPreservesOtherRAUpdate(t *testing.T) {
+	const withdrawingRA = "ra"
+	const updatingRA = "other"
+
+	g := gomega.NewWithT(t)
+	tt := newFRRReconcileTest(t, g, "eth0")
+	key := config.Default.ClusterDefaultNetworkNAD
+	nads := tt.c.nadClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(key.Namespace)
+	nad, err := nads.Get(t.Context(), key.Name, metav1.GetOptions{})
+	g.Expect(err).To(gomega.Succeed(), "read the shared NAD before seeding its resource version")
+	// 1. Both RAs already advertise this NAD. Keep the cache at this version
+	// while they prepare competing withdrawal and intent-update patches.
+	nad.ResourceVersion = "1"
+	nad.Annotations[types.OvnRouteAdvertisementsKey] = `["ra","other"]`
+	nad.Annotations[types.OvnRouteAdvertisementsIntentKey] = `{"ra":{"targetVRF":"red"},"other":{"targetVRF":"green"}}`
+	_, err = nads.Update(t.Context(), nad, metav1.UpdateOptions{})
+	g.Expect(err).To(gomega.Succeed(), "seed both RAs' references and initial intents on the shared NAD")
+
+	store := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+	g.Expect(store.Add(nad)).To(gomega.Succeed(), "seed the cache at resource version 1")
+	tt.c.nadLister = nadlisters.NewNetworkAttachmentDefinitionLister(store)
+	tt.c.pendingNAD = newPendingWrites(store)
+	// The fake API must reject stale resource versions, as a real API server
+	// would. Otherwise the second patch could silently overwrite the first.
+	client := tt.fakeClientset.NetworkAttchDefClient.(*nadfake.Clientset)
+	applyPatch := ctesting.ObjectReaction(client.Tracker())
+	version := 1
+	client.PrependReactor("patch", "network-attachment-definitions", func(action ctesting.Action) (bool, runtime.Object, error) {
+		var patch nadtypes.NetworkAttachmentDefinition
+		if err := json.Unmarshal(action.(ctesting.PatchAction).GetPatch(), &patch); err != nil {
+			return true, nil, fmt.Errorf("decode NAD patch: %w", err)
+		}
+		if patch.ResourceVersion != fmt.Sprint(version) {
+			return true, nil, apierrors.NewConflict(action.GetResource().GroupResource(), key.Name, errors.New("stale resource version"))
+		}
+		handled, obj, err := applyPatch(action)
+		if err != nil {
+			return handled, obj, err
+		}
+		updated := obj.(*nadtypes.NetworkAttachmentDefinition).DeepCopy()
+		version++
+		updated.ResourceVersion = fmt.Sprint(version)
+		return true, updated, client.Tracker().Update(action.GetResource(), updated, key.Namespace)
+	})
+	withdrawal, err := tt.c.getNADUpdates(withdrawingRA, nil, nil)
+	g.Expect(err).To(gomega.Succeed(), "prepare the withdrawing RA's patch")
+	g.Expect(withdrawal).To(gomega.HaveLen(1), "withdrawal must remove the RA's entries from the shared NAD")
+	newIntent := &util.RouteAdvertisementsIntent{TargetVRF: "blue"}
+	intentUpdate, err := tt.c.getNADUpdates(updatingRA, newIntent, []*nadtypes.NetworkAttachmentDefinition{nad})
+	g.Expect(err).To(gomega.Succeed(), "prepare the remaining RA's VRF change")
+	g.Expect(intentUpdate).To(gomega.HaveLen(1), "the remaining RA must update its intent on the shared NAD")
+
+	// 2. Race the patches prepared from the same resource version. One must
+	// succeed and the other must conflict, regardless of which arrives first.
+	var withdrawalErr, updateErr error
+	runConcurrentRAActions(
+		func() { _, withdrawalErr = tt.c.applyNADUpdates(t.Context(), withdrawingRA, withdrawal) },
+		func() { _, updateErr = tt.c.applyNADUpdates(t.Context(), updatingRA, intentUpdate) },
+	)
+
+	// 3. Deliver the winning write and rebuild the losing patch from that
+	// cache version. Retrying must preserve the winner's change.
+	nad, err = nads.Get(t.Context(), key.Name, metav1.GetOptions{})
+	g.Expect(err).To(gomega.Succeed(), "read the winning patch from the API")
+	g.Expect(store.Update(nad)).To(gomega.Succeed(), "let the losing RA observe the winner's patch")
+	if apierrors.IsConflict(withdrawalErr) {
+		g.Expect(updateErr).To(gomega.Succeed(), "the intent update must win when withdrawal conflicts")
+		withdrawal, err = tt.c.getNADUpdates(withdrawingRA, nil, nil)
+		g.Expect(err).To(gomega.Succeed(), "rebuild the withdrawal from the updated intent")
+		g.Expect(withdrawal).To(gomega.HaveLen(1), "the withdrawing RA must still remove its own entries")
+		_, err = tt.c.applyNADUpdates(t.Context(), withdrawingRA, withdrawal)
+		g.Expect(err).To(gomega.Succeed(), "retry withdrawal while preserving the other RA's new intent")
+	} else {
+		g.Expect(withdrawalErr).To(gomega.Succeed(), "withdrawal must win when it does not conflict")
+		g.Expect(apierrors.IsConflict(updateErr)).To(gomega.BeTrue(), "the intent update must conflict after withdrawal wins: %v", updateErr)
+		intentUpdate, err = tt.c.getNADUpdates(updatingRA, newIntent, []*nadtypes.NetworkAttachmentDefinition{nad})
+		g.Expect(err).To(gomega.Succeed(), "rebuild the intent update after withdrawal")
+		g.Expect(intentUpdate).To(gomega.HaveLen(1), "the remaining RA must still publish its new intent")
+		_, err = tt.c.applyNADUpdates(t.Context(), updatingRA, intentUpdate)
+		g.Expect(err).To(gomega.Succeed(), "retry the intent update without restoring the withdrawn RA")
+	}
+
+	nad, err = nads.Get(t.Context(), key.Name, metav1.GetOptions{})
+	g.Expect(err).To(gomega.Succeed(), "read the NAD after both patches complete")
+	refs, intents, err := parseNADAdvertisements(nad.Annotations)
+	g.Expect(err).To(gomega.Succeed(), "decode the final NAD annotations")
+	g.Expect(refs).To(gomega.ConsistOf(updatingRA), "withdrawal must leave only the remaining RA's reference")
+	g.Expect(intents).To(gomega.Equal(map[string]util.RouteAdvertisementsIntent{
+		updatingRA: *newIntent,
+	}), "withdrawal must preserve the remaining RA's updated intent")
+	g.Expect(store.Update(nad)).To(gomega.Succeed(), "observe both completed patches")
+	for _, name := range []string{withdrawingRA, updatingRA} {
+		g.Expect(tt.c.pendingNAD.waiting(name)).To(gomega.BeFalse(), "RA %s must no longer wait for its patch", name)
+	}
+	g.Expect(tt.c.pendingNAD.byKey).To(gomega.BeEmpty(), "completed NAD patches must leave no pending entries")
 }
 
 func TestController_rejectedUpdateWithdrawsConfigurations(t *testing.T) {
@@ -6840,6 +7421,103 @@ func TestPendingWritesHoldReconcile(t *testing.T) {
 	g.Expect(c.pendingFRR.waiting("ra")).To(gomega.BeTrue(), "absence in an older cache must not release the RA")
 	g.Expect(indexer.Replace(nil, "13")).To(gomega.Succeed(), "relist without the created object")
 	g.Expect(c.pendingFRR.waiting("ra")).To(gomega.BeFalse(), "a newer relist confirms the object is gone")
+}
+
+// TestConcurrentRAPendingWritesRemainIndependent checks both tracker types:
+// an older event cannot release a newer shared-object write, and completing
+// one RA's write or deletion must preserve another RA's pending entry.
+func TestConcurrentRAPendingWritesRemainIndependent(t *testing.T) {
+	for _, kind := range []string{"NAD", "FRR"} {
+		t.Run(kind, func(t *testing.T) {
+			g := gomega.NewWithT(t)
+			store := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+			pending := newPendingWrites(store)
+			object := func(name, version string) metav1.Object {
+				metadata := metav1.ObjectMeta{Namespace: "default", Name: name, UID: ktypes.UID(name), ResourceVersion: version}
+				if kind == "NAD" {
+					return &nadtypes.NetworkAttachmentDefinition{ObjectMeta: metadata}
+				}
+				return &frrapi.FRRConfiguration{ObjectMeta: metadata}
+			}
+			shared, independent := object("shared", "2"), object("independent", "2")
+			g.Expect(store.Add(object("shared", "1"))).To(gomega.Succeed(), "seed the shared object's older cache version")
+			g.Expect(store.Add(object("independent", "1"))).To(gomega.Succeed(), "seed the independent object's older cache version")
+			runConcurrentRAActions(
+				func() { pending.written("first", shared) },
+				func() { pending.written("other", independent) },
+			)
+			for _, name := range []string{"first", "other"} {
+				g.Expect(pending.waiting(name)).To(gomega.BeTrue(), "RA %s must wait for its uncached write", name)
+			}
+			g.Expect(pending.byKey).To(gomega.Equal(map[string]pendingWrite{
+				"default/shared": {ra: "first", version: "2"}, "default/independent": {ra: "other", version: "2"},
+			}), "recording concurrent writes must retain both object keys")
+
+			// 1. Resource version 2 reaches the cache. Another RA writes resource
+			// version 3 while the handler processes the older event; either order
+			// must preserve resource version 3 and the unrelated pending object.
+			g.Expect(store.Update(shared)).To(gomega.Succeed(), "cache the first shared-object write")
+			newer := object("shared", "3")
+			var observedRA string
+			var held, own bool
+			runConcurrentRAActions(
+				func() { pending.written("next", newer) },
+				func() { observedRA, held, own = pending.observed(shared) },
+			)
+			g.Expect(observedRA).To(gomega.Or(gomega.BeEmpty(), gomega.Equal("first")), "the older event may only identify its original writer")
+			g.Expect(held).To(gomega.Equal(observedRA == "first"), "only the original writer may be woken by the older event")
+			g.Expect(own).To(gomega.Equal(observedRA == "first"), "the older event cannot confirm the newer writer's resource version")
+			g.Expect(pending.waiting("first")).To(gomega.BeFalse(), "the first writer's resource version is already cached")
+			for _, name := range []string{"next", "other"} {
+				g.Expect(pending.waiting(name)).To(gomega.BeTrue(), "RA %s must remain held for its own unseen write", name)
+			}
+			g.Expect(pending.byKey).To(gomega.Equal(map[string]pendingWrite{
+				"default/shared": {ra: "next", version: "3"}, "default/independent": {ra: "other", version: "2"},
+			}), "the older event must preserve both outstanding expectations")
+
+			// 2. Complete both writes concurrently, then perform the cache checks
+			// that resumed reconciliations use to clear their held flags.
+			complete := func(name string, obj metav1.Object) func() {
+				return func() {
+					if err := store.Update(obj); err != nil {
+						t.Errorf("cache completed write for RA %s: %v", name, err)
+						return
+					}
+					if ra, held, own := pending.observed(obj); ra != name || !held || !own {
+						t.Errorf("completed write for RA %s: got owner=%q held=%t own=%t, want its held owner and exact write", name, ra, held, own)
+					}
+				}
+			}
+			runConcurrentRAActions(complete("next", newer), complete("other", independent))
+			for _, name := range []string{"next", "other"} {
+				g.Expect(pending.waiting(name)).To(gomega.BeFalse(), "RA %s must resume after its write reaches the cache", name)
+			}
+			g.Expect(pending.byKey).To(gomega.BeEmpty(), "observing both writes must remove their map entries")
+			g.Expect(pending.held).To(gomega.BeEmpty(), "resumed RAs must leave no held flags")
+
+			// 3. Delete the two objects independently. Observing the first deletion
+			// must retain the second object's expectation until it also disappears.
+			runConcurrentRAActions(
+				func() { pending.deleted("next", newer) },
+				func() { pending.deleted("other", independent) },
+			)
+			g.Expect(pending.waiting("next")).To(gomega.BeTrue(), "the shared object is still cached before deletion")
+			g.Expect(pending.waiting("other")).To(gomega.BeTrue(), "the independent object is still cached before deletion")
+			g.Expect(store.Delete(newer)).To(gomega.Succeed(), "remove only the shared object from the cache")
+			observedRA, held, own = pending.deletionObserved("default/shared")
+			g.Expect(observedRA).To(gomega.Equal("next"), "the deletion must identify the shared object's owner")
+			g.Expect(held && own).To(gomega.BeTrue(), "the deletion must wake its held owner as an owned event")
+			g.Expect(pending.waiting("next")).To(gomega.BeFalse(), "the deleted shared object must no longer hold its RA")
+			g.Expect(pending.byKey).To(gomega.Equal(map[string]pendingWrite{
+				"default/independent": {ra: "other", deletedUID: independent.GetUID()},
+			}), "the unrelated deletion must remain pending")
+			g.Expect(store.Delete(independent)).To(gomega.Succeed(), "observe the independent object's deletion")
+			g.Expect(pending.waiting("other")).To(gomega.BeFalse(), "a cache recheck must complete deletion even without its handler")
+			g.Expect(pending.byKey).To(gomega.BeEmpty(), "both deletions must remove their keys")
+			g.Expect(pending.held).To(gomega.BeEmpty(), "both completed deletions must release their RAs")
+			g.Expect(store.List()).To(gomega.BeEmpty(), "both deleted objects must be absent from the cache")
+		})
+	}
 }
 
 type replacingNetworkManager struct {
