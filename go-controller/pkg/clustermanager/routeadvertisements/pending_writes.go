@@ -71,7 +71,6 @@ func (p *pendingWrites) record(key string, write pendingWrite) {
 	defer p.Unlock()
 	// The watch may have delivered the event before the API call returned.
 	if p.seen(key, write) {
-		delete(p.byKey, key)
 		return
 	}
 	p.byKey[key] = write
