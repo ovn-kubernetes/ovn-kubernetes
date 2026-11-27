@@ -619,6 +619,17 @@ func TestUnmarshalUDNOpenPortsAnnotation(t *testing.T) {
 			errSubstr: "invalid port 80 for icmp protocol, should be empty",
 		},
 		{
+			desc:      "null entry",
+			input:     `[null]`,
+			errSubstr: "invalid null entry at index 0",
+		},
+		{
+			desc: "null entry after a valid one",
+			input: `- protocol: icmp
+- null`,
+			errSubstr: "invalid null entry at index 1",
+		},
+		{
 			desc:  "valid icmp",
 			input: `- protocol: icmp`,
 			result: []*OpenPort{

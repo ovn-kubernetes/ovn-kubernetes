@@ -2540,63 +2540,79 @@ spec:
 				}, 5*time.Second).Should(BeTrue())
 			}
 
-			By("Open UDN pod port")
+			invalidAnnotations := []struct {
+				desc       string
+				annotation string
+				errSubstr  string
+			}{
+				{
+					desc:       "unknown protocol",
+					annotation: fmt.Sprintf("- protocol: ppp\n  port: %d", podClusterNetPort),
+					errSubstr:  "invalid protocol ppp",
+				},
+				{
+					desc:       "null entry",
+					annotation: "[null]",
+					errSubstr:  "invalid null entry at index 0",
+				},
+			}
+			// Each invalid value starts from an open port, to check that it closes it.
+			for _, invalid := range invalidAnnotations {
+				By("Open UDN pod port")
 
-			udnPod.Annotations[openDefaultPortsAnnotation] = fmt.Sprintf(
-				`- protocol: tcp
+				udnPod.Annotations[openDefaultPortsAnnotation] = fmt.Sprintf(
+					`- protocol: tcp
   port: %d`, podClusterNetPort)
-			udnPod, err = cs.CoreV1().Pods(udnPod.Namespace).Update(context.Background(), udnPod, metav1.UpdateOptions{})
-			Expect(err).NotTo(HaveOccurred())
+				udnPod, err = cs.CoreV1().Pods(udnPod.Namespace).Update(context.Background(), udnPod, metav1.UpdateOptions{})
+				Expect(err).NotTo(HaveOccurred())
 
-			By(fmt.Sprintf("verify default network client pod can access UDN pod on open port %d", podClusterNetPort))
-			for _, destIP := range []string{udnIPv4, udnIPv6} {
-				if destIP == "" {
-					continue
+				By(fmt.Sprintf("verify default network client pod can access UDN pod on open port %d", podClusterNetPort))
+				for _, destIP := range []string{udnIPv4, udnIPv6} {
+					if destIP == "" {
+						continue
+					}
+					By("checking the default network pod can reach UDN pod on IP " + destIP)
+					Eventually(func() bool {
+						return connectToServer(podConfiguration{namespace: defaultClientPod.Namespace, name: defaultClientPod.Name}, destIP, podClusterNetPort) == nil
+					}, 5*time.Second).Should(BeTrue())
+
+					By("checking the default hostNetwork pod can reach UDN pod on IP " + destIP)
+					Eventually(func() bool {
+						return connectToServer(podConfiguration{namespace: hostNetPod.Namespace, name: hostNetPod.Name}, destIP, podClusterNetPort) == nil
+					}, 5*time.Second).Should(BeTrue())
 				}
-				By("checking the default network pod can reach UDN pod on IP " + destIP)
-				Eventually(func() bool {
-					return connectToServer(podConfiguration{namespace: defaultClientPod.Namespace, name: defaultClientPod.Name}, destIP, podClusterNetPort) == nil
-				}, 5*time.Second).Should(BeTrue())
 
-				By("checking the default hostNetwork pod can reach UDN pod on IP " + destIP)
-				Eventually(func() bool {
-					return connectToServer(podConfiguration{namespace: hostNetPod.Namespace, name: hostNetPod.Name}, destIP, podClusterNetPort) == nil
-				}, 5*time.Second).Should(BeTrue())
-			}
+				By("Update UDN pod port with an invalid value: " + invalid.desc)
+				// this should clean up open ports and throw an event
+				udnPod.Annotations[openDefaultPortsAnnotation] = invalid.annotation
+				udnPod, err = cs.CoreV1().Pods(udnPod.Namespace).Update(context.Background(), udnPod, metav1.UpdateOptions{})
+				Expect(err).NotTo(HaveOccurred())
 
-			By("Update UDN pod port with the wrong syntax")
-			// this should clean up open ports and throw an event
-			udnPod.Annotations[openDefaultPortsAnnotation] = fmt.Sprintf(
-				`- protocol: ppp
-  port: %d`, podClusterNetPort)
-			udnPod, err = cs.CoreV1().Pods(udnPod.Namespace).Update(context.Background(), udnPod, metav1.UpdateOptions{})
-			Expect(err).NotTo(HaveOccurred())
+				By(fmt.Sprintf("verify default network client pod can't access UDN pod on port %d", podClusterNetPort))
+				for _, destIP := range []string{udnIPv4, udnIPv6} {
+					if destIP == "" {
+						continue
+					}
+					By("checking the default network pod can't reach UDN pod on IP " + destIP)
+					Eventually(func() bool {
+						return connectToServer(podConfiguration{namespace: defaultClientPod.Namespace, name: defaultClientPod.Name}, destIP, podClusterNetPort) != nil
+					}, 5*time.Second).Should(BeTrue())
 
-			By(fmt.Sprintf("verify default network client pod can't access UDN pod on port %d", podClusterNetPort))
-			for _, destIP := range []string{udnIPv4, udnIPv6} {
-				if destIP == "" {
-					continue
+					By("checking the default hostNetwork pod can't reach UDN pod on IP " + destIP)
+					Eventually(func() bool {
+						return connectToServer(podConfiguration{namespace: hostNetPod.Namespace, name: hostNetPod.Name}, destIP, podClusterNetPort) != nil
+					}, 5*time.Second).Should(BeTrue())
 				}
-				By("checking the default network pod can't reach UDN pod on IP " + destIP)
-				Eventually(func() bool {
-					return connectToServer(podConfiguration{namespace: defaultClientPod.Namespace, name: defaultClientPod.Name}, destIP, podClusterNetPort) != nil
-				}, 5*time.Second).Should(BeTrue())
-
-				By("checking the default hostNetwork pod can't reach UDN pod on IP " + destIP)
-				Eventually(func() bool {
-					return connectToServer(podConfiguration{namespace: hostNetPod.Namespace, name: hostNetPod.Name}, destIP, podClusterNetPort) != nil
-				}, 5*time.Second).Should(BeTrue())
+				By("Verify the invalid value is reported via event")
+				Eventually(func(g Gomega) {
+					events, err := cs.CoreV1().Events(udnPod.Namespace).List(context.Background(), metav1.ListOptions{})
+					g.Expect(err).NotTo(HaveOccurred(), "failed to list events")
+					g.Expect(events.Items).To(ContainElement(And(
+						HaveField("Reason", "ErrorUpdatingResource"),
+						HaveField("Message", ContainSubstring(invalid.errSubstr)),
+					)), "should have found an event for %s", invalid.desc)
+				}, 30*time.Second, time.Second).Should(Succeed())
 			}
-			By("Verify syntax error is reported via event")
-			events, err := cs.CoreV1().Events(udnPod.Namespace).List(context.Background(), metav1.ListOptions{})
-			found := false
-			for _, event := range events.Items {
-				if event.Reason == "ErrorUpdatingResource" && strings.Contains(event.Message, "invalid protocol ppp") {
-					found = true
-					break
-				}
-			}
-			Expect(found).To(BeTrue(), "should have found an event for invalid protocol")
 		})
 	})
 
