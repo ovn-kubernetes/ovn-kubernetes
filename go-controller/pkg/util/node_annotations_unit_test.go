@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	jsonpatch "gopkg.in/evanphx/json-patch.v4"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -1145,6 +1146,11 @@ func TestIsNodeAnnotationPatchRetryable(t *testing.T) {
 		{
 			name:     "invalid error is retryable (JSON Patch test failure)",
 			err:      apierrors.NewInvalid(schema.GroupKind{Group: "", Kind: "Node"}, "node1", field.ErrorList{field.Invalid(field.NewPath("metadata"), nil, "test failed")}),
+			expected: true,
+		},
+		{
+			name:     "raw JSON Patch test failure is retryable",
+			err:      fmt.Errorf("testing annotation value failed: %w", jsonpatch.ErrTestFailed),
 			expected: true,
 		},
 		{
