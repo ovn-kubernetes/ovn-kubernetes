@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"reflect"
+	"slices"
 	"sync"
 
 	corev1 "k8s.io/api/core/v1"
@@ -128,19 +129,67 @@ func (nac *nodeAllocationController) Stop() {
 	}
 }
 
-func needsNodeAllocation(node *corev1.Node) bool {
+// needsNodeAllocation reports whether the node lacks a valid node ID or the
+// transit switch port addresses derived from that ID.
+func (nac *nodeAllocationController) needsNodeAllocation(node *corev1.Node) bool {
 	if config.HybridOverlay.Enabled && util.NoHostSubnet(node) {
 		// skip hybrid overlay nodes
 		return false
 	}
 
-	if _, err := util.GetNodeID(node); err != nil {
+	nodeID, err := util.GetNodeID(node)
+	if err != nil {
 		return true
 	}
-	if _, ok := node.Annotations[util.OvnTransitSwitchPortAddr]; !ok {
+	// Other zones program this node's transit switch port and their routes
+	// towards it from this annotation. Addresses that are not the ones derived
+	// from the node ID could belong to another node, so they are rewritten.
+	v4Addr, v6Addr, err := nac.transitSwitchPortAddrs(nodeID)
+	if err != nil {
+		return true
+	}
+	var expected []string
+	for _, addr := range []*net.IPNet{v4Addr, v6Addr} {
+		if addr != nil {
+			expected = append(expected, addr.String())
+		}
+	}
+	addrs, err := util.ParseNodeTransitSwitchPortAddrs(node)
+	if util.IsAnnotationNotSetError(err) {
+		return true
+	}
+	// Compare the text that consumers program: an IPv4-mapped IPv6 address is
+	// the same address as its IPv4 form but is printed with another prefix length.
+	current := make([]string, 0, len(addrs))
+	for _, addr := range addrs {
+		current = append(current, addr.String())
+	}
+	if err != nil || !slices.Equal(current, expected) {
+		klog.Warningf("Node %s has transit switch port addresses %q that do not match %v expected for node ID annotation %d, rewriting the node allocation",
+			node.Name, node.Annotations[util.OvnTransitSwitchPortAddr], expected, nodeID)
 		return true
 	}
 	return false
+}
+
+// transitSwitchPortAddrs returns the transit switch port addresses of a node
+// with the given ID. The address of an IP family that is not configured is nil.
+func (nac *nodeAllocationController) transitSwitchPortAddrs(nodeID int) (v4Addr, v6Addr *net.IPNet, err error) {
+	if config.IPv4Mode {
+		v4Addr, err = nac.transitSwitchIPv4Generator.GenerateIP(nodeID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to generate transit switch port IPv4 address for node ID %d: %w", nodeID, err)
+		}
+	}
+
+	if config.IPv6Mode {
+		v6Addr, err = nac.transitSwitchIPv6Generator.GenerateIP(nodeID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to generate transit switch port IPv6 address for node ID %d: %w", nodeID, err)
+		}
+	}
+
+	return v4Addr, v6Addr, nil
 }
 
 // handleAddUpdateNodeEvent handles the add or update node event
@@ -156,24 +205,10 @@ func (nac *nodeAllocationController) handleAddUpdateNodeEvent(ctx context.Contex
 	klog.V(5).Infof("Allocated id %d to the node %s", allocatedNodeID, node.Name)
 	nodeAnnotations := util.UpdateNodeIDAnnotation(nil, allocatedNodeID)
 
-	// Allocate the IP address(es) for the node Gateway router port connecting
-	// to the Join switch
-	var v4Addr, v6Addr *net.IPNet
-
-	if config.IPv4Mode {
-		v4Addr, err = nac.transitSwitchIPv4Generator.GenerateIP(allocatedNodeID)
-		if err != nil {
-			return fmt.Errorf("failed to generate transit switch port IPv4 address for node %s : err - %w", node.Name, err)
-		}
+	v4Addr, v6Addr, err := nac.transitSwitchPortAddrs(allocatedNodeID)
+	if err != nil {
+		return fmt.Errorf("failed to derive the transit switch port addresses of node %s: %w", node.Name, err)
 	}
-
-	if config.IPv6Mode {
-		v6Addr, err = nac.transitSwitchIPv6Generator.GenerateIP(allocatedNodeID)
-		if err != nil {
-			return fmt.Errorf("failed to generate transit switch port IPv6 address for node %s : err - %w", node.Name, err)
-		}
-	}
-
 	nodeAnnotations, err = util.CreateNodeTransitSwitchPortAddrAnnotation(nodeAnnotations, v4Addr, v6Addr)
 	if err != nil {
 		return fmt.Errorf("failed to marshal node %q transit switch port IP annotation, err : %w",
@@ -279,8 +314,7 @@ func (h *nodeAllocationControllerEventHandler) UpdateResource(ctx context.Contex
 			return fmt.Errorf("could not cast %T object to *corev1.Node", newObj)
 		}
 		_, nodeFailed := h.nodeSyncFailed.Load(node.GetName())
-		if !nodeFailed && !needsNodeAllocation(node) {
-			// node ID and transit switch IP are assigned by us and cannot change
+		if !nodeFailed && !h.nac.needsNodeAllocation(node) {
 			return nil
 		}
 		if err = h.nac.handleAddUpdateNodeEvent(ctx, node); err != nil {
