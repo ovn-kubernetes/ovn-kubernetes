@@ -1360,14 +1360,18 @@ func setupGatewayContainers(f *framework.Framework, providerCtx infraapi.Context
 		framework.Fail("No ipv4 nor ipv6 addresses found in nodes and src pod")
 	}
 
-	// This sets up a listener that replies with the hostname, both on tcp and on udp
+	const hostnameFile = "/tmp/ovn-kubernetes-gateway-hostname"
+
+	// Reopen the response file for each connection so every client gets the hostname.
+	// A closed exec stdout pipe makes netcat stop reading requests and can reset TCP
+	// connections, so discard received data instead of inheriting that pipe.
 	setupListenersOrDie := func(container infraapi.ExternalContainer, gwAddress string) {
 		_, err = infraprovider.Get().ExecExternalContainerCommand(container,
-			[]string{"bash", "-c", fmt.Sprintf("while true; do echo $(hostname) | nc -l -u -W 1 %s %d; done &", gwAddress, gwUDPPort)})
+			[]string{"bash", "-c", fmt.Sprintf("while true; do nc -l -u -W 1 %s %d < %s > /dev/null; done &", gwAddress, gwUDPPort, hostnameFile)})
 		framework.ExpectNoError(err, "failed to setup UDP listener for %s on %s", gwAddress, container)
 
 		_, err = infraprovider.Get().ExecExternalContainerCommand(container,
-			[]string{"bash", "-c", fmt.Sprintf("while true; do echo $(hostname) | nc -l -N %s %d; done &", gwAddress, gwTCPPort)})
+			[]string{"bash", "-c", fmt.Sprintf("while true; do nc -l -N %s %d < %s > /dev/null; done &", gwAddress, gwTCPPort, hostnameFile)})
 		framework.ExpectNoError(err, "failed to setup TCP listener for %s on %s", gwAddress, container)
 	}
 
@@ -1376,6 +1380,10 @@ func setupGatewayContainers(f *framework.Framework, providerCtx infraapi.Context
 	// the routing is able to reach the containers.
 	// A route back to the src pod must be set in order for the ping reply to work.
 	for _, gwContainer := range gwContainers {
+		_, err = infraprovider.Get().ExecExternalContainerCommand(gwContainer,
+			[]string{"bash", "-c", "hostname > " + hostnameFile})
+		framework.ExpectNoError(err, "failed to prepare hostname response on %s", gwContainer)
+
 		if testIPv4 {
 			ginkgo.By(fmt.Sprintf("Setting up the destination ips to %s", gwContainer.Name))
 			for _, address := range addressesv4.targetIPs {
