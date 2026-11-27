@@ -96,10 +96,10 @@ and the `AdminNetworkPolicy` controller is invoked.
 Always check the dependencies on the [Requirements page](../requirements.md)
 
 ```shell
-$ oc get crd adminnetworkpolicies.policy.networking.k8s.io
+$ kubectl get crd adminnetworkpolicies.policy.networking.k8s.io
 NAME                                            CREATED AT
 adminnetworkpolicies.policy.networking.k8s.io   2023-10-01T11:33:58Z
-$ oc get crd baselineadminnetworkpolicies.policy.networking.k8s.io
+$ kubectl get crd baselineadminnetworkpolicies.policy.networking.k8s.io
 NAME                                                    CREATED AT
 baselineadminnetworkpolicies.policy.networking.k8s.io   2023-10-01T11:33:58Z
 ```
@@ -113,7 +113,9 @@ Like mentioned above, the API lives in the
 
 #### AdminNetworkPolicy Sample API
 
-Let us look at a sample ANP yaml:
+Let us look at a sample ANP yaml. The DNS rule below is for upstream
+Kubernetes and KinD clusters with DNS pods in `kube-system` labeled
+`k8s-app: kube-dns`; it does not match OpenShift DNS pods.
 
 ```yaml
 apiVersion: policy.networking.k8s.io/v1alpha1
@@ -123,7 +125,11 @@ metadata:
 spec:
   priority: 34
   subject:
-    namespaces: {}
+    namespaces:
+      matchExpressions:
+      - key: kubernetes.io/metadata.name
+        operator: NotIn
+        values: [kube-system, ovn-kubernetes]
   ingress:
   - name: "allow-from-ingress-nginx" # rule0
     action: "Allow"
@@ -168,11 +174,14 @@ spec:
             kubernetes.io/metadata.name: kube-system
         podSelector:
           matchLabels:
-            app: dns
+            k8s-app: kube-dns
     ports:
     - portNumber:
         protocol: UDP
-        port: 5353
+        port: 53
+    - portNumber:
+        protocol: TCP
+        port: 53
   - name: "allow-to-kapi-server" # rule1
     action: "Allow"
     to:
@@ -226,8 +235,10 @@ spec:
 ```
 
 * `subject` is the set of pods selected by `cluster-control` ANP, to
-  which the rules in the policy apply. Here, that is all the pods
-  in the cluster.
+  which the rules in the policy apply. Here, that is all eligible
+  non-host-networked pods outside
+  the `kube-system` and `ovn-kubernetes` namespaces; pods in those namespaces
+  are not subject to this ANP.
 * Each AdminNetworkPolicy resource will have a`.spec.priority` field. `priority`
   is 34 here that determines the priority of this ANP versus other
   ANPs in your cluster.  The lower the number the higher the precedence.
@@ -235,17 +246,18 @@ spec:
   by OVN-Kubernetes) is the lowest priority.
 * `ingress` has 5 rules:
     * rule0: always allow ingress traffic coming from ingress-nginx namespace
-      to all the pods in the cluster
-    * rule1: always allow TCP ingress traffic coming from port 7564 of
-      pods in monitoring namespace
+      to selected pods
+    * rule1: always allow ingress traffic from pods in monitoring namespace to
+      TCP destination port 7564, or to the selected pods' named port `scrape`
+      with that container port's protocol
     * rule2: always allow all ingress traffic from `open` tenant's namespaces
     * rule3: always pass all ingress traffic from `restricted` tenant's namespaces
       (please check the following sections to learn more about what `pass` is)
     * rule4: deny all other ingress traffic including same namespace pods
 * `egress` has 6 rules:
-    * rule0: always allow egress traffic coming from all pods to dns pods
-    * rule1: always allow TCP egress traffic coming from all pods to KAPI pods
-    * rule2: always allow all egress traffic coming from all pods to splunk logging
+    * rule0: always allow egress traffic coming from selected pods to dns pods
+    * rule1: always allow TCP egress traffic coming from selected pods to the API server on control-plane nodes
+    * rule2: always allow all egress traffic coming from selected pods to splunk logging
       tenant at TCP ports 8991 and 8992
     * rule3: always allow all egress traffic to `open` tenant's namespaces, company's
       intranet CIDR ranges and all worker nodes in the cluster
@@ -253,9 +265,9 @@ spec:
       (please check the following sections to learn more about what `pass` is)
     * rule5: deny all other egress traffic including same namespace pods
 
-You can do `oc apply -f cluster-control.yaml` to create this ANP in your cluster
+You can do `kubectl apply -f cluster-control.yaml` to create this ANP in your cluster
 ```shell
-$ oc get anp
+$ kubectl get anp
 NAME              PRIORITY   AGE
 cluster-control   34         3s
 ```
@@ -288,9 +300,9 @@ spec:
     - namespaces: {}
 ```
 
-You can do `oc apply -f default.yaml` to create this ANP in your cluster
+You can do `kubectl apply -f default.yaml` to create this ANP in your cluster
 ```shell
-$ oc get banp
+$ kubectl get banp
 NAME      AGE
 default   16m
 ```
@@ -511,7 +523,7 @@ severity            : []
 tier                : 1
 ```
 
-The Egress ACLs for the above AdminNetworkPolicy are:
+The Egress ACLs for the above AdminNetworkPolicy are (UUIDs vary by cluster):
 
 ```shell
 _uuid               : fdb266b7-758a-4471-9cc1-84d00dc4f2ae
@@ -520,7 +532,21 @@ direction           : from-lport
 external_ids        : {direction=Egress, gress-index="0", "k8s.ovn.org/id"="default-network-controller:AdminNetworkPolicy:cluster-control:Egress:0:udp", "k8s.ovn.org/name"=cluster-control, "k8s.ovn.org/owner-controller"=default-network-controller, "k8s.ovn.org/owner-type"=AdminNetworkPolicy, port-policy-protocol=udp}
 label               : 0
 log                 : false
-match               : "inport == @a14645450421485494999 && ((ip4.dst == $a13517855690389298082)) && udp && udp.dst==5353"
+match               : "inport == @a14645450421485494999 && ((ip4.dst == $a13517855690389298082)) && udp && udp.dst==53"
+meter               : acl-logging
+name                : "ANP:cluster-control:Egress:0"
+options             : {apply-after-lb="true"}
+priority            : 26600
+severity            : []
+tier                : 1
+
+_uuid               : <cluster-generated UUID>
+action              : allow-related
+direction           : from-lport
+external_ids        : {direction=Egress, gress-index="0", "k8s.ovn.org/id"="default-network-controller:AdminNetworkPolicy:cluster-control:Egress:0:tcp", "k8s.ovn.org/name"=cluster-control, "k8s.ovn.org/owner-controller"=default-network-controller, "k8s.ovn.org/owner-type"=AdminNetworkPolicy, port-policy-protocol=tcp}
+label               : 0
+log                 : false
+match               : "inport == @a14645450421485494999 && ((ip4.dst == $a13517855690389298082)) && tcp && tcp.dst==53"
 meter               : acl-logging
 name                : "ANP:cluster-control:Egress:0"
 options             : {apply-after-lb="true"}
@@ -599,7 +625,7 @@ severity            : []
 tier                : 1
 ```
 
-`nbdb.AdressSet`: These can be listed using `ovn-nbctl list address-set`
+`nbdb.AddressSet`: These can be listed using `ovn-nbctl list address-set`
 
 The Ingress Address-Sets for the above AdminNetworkPolicy are:
 
@@ -630,11 +656,12 @@ external_ids        : {direction=Ingress, gress-index="4", ip-family=v4, "k8s.ov
 name                : a13814616246365836720
 ```
 
-The Egress Address-Sets for the above AdminNetworkPolicy are:
+The Egress Address-Sets for the above AdminNetworkPolicy are (replace the
+DNS address placeholder with the selected `kube-dns` pod IPs in your cluster):
 
 ```shell
 _uuid               : fef274ee-28bd-4c05-8e6a-893283fbd84c
-addresses           : ["10.244.1.3", "10.244.1.4", "10.244.2.3", "10.244.2.4", "10.244.2.5", "10.244.2.6", "10.244.2.7", "10.244.2.8"]
+addresses           : ["<kube-dns pod IP>"]
 external_ids        : {direction=Egress, gress-index="0", ip-family=v4, "k8s.ovn.org/id"="default-network-controller:AdminNetworkPolicy:cluster-control:Egress:0:v4", "k8s.ovn.org/name"=cluster-control, "k8s.ovn.org/owner-controller"=default-network-controller, "k8s.ovn.org/owner-type"=AdminNetworkPolicy}
 name                : a13517855690389298082
 
@@ -903,7 +930,7 @@ spec:
           matchExpressions:
           - key: tenant
             operator: NotIn
-            value: yellow
+            values: [yellow]
   egress:
     - action: Deny
       to:
@@ -911,7 +938,7 @@ spec:
           matchExpressions:
           - key: tenant
             operator: NotIn
-            value: yellow
+            values: [yellow]
 ```
 In that case you don't need a 43 priority ANP.
 However note that if you define it this way then each
@@ -1287,7 +1314,7 @@ help users understand what's happening in this feature.
   requirements for a strong `Allow`.
   On the other hand, if you don't (plan to) have any network policies in your cluster
   you can just use `Allow` instead to indicate you don't want to block the traffic.
-* Since `0-100` is the supported priority range, it is always better when designing
+* Since `0-99` is the supported priority range, it is always better when designing
   your admin policies to use a middle range like `30-70` by leaving some placeholder
   priorities before and after. Even in the middle range, be careful to leave gaps so
   that as your infrastructure requirements evolve over time, you are able to insert

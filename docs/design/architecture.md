@@ -16,7 +16,7 @@ which is super lightweight and running only on the control plane nodes in your c
     * ovnkube-cluster-manager container:
         * OVN-Kubernetes component
         * Watches K8s API for objects - nodes mainly
-        * Allocates pod subnet to each node
+        * Allocates node subnets for the default network and Layer 3 networks
         * Allocates join subnet IP to each node
         * Allocates transit subnet IP to each node
         * Consolidates zone statuses across all nodes for features like EgressFirewall
@@ -38,14 +38,14 @@ and more distributed.
         network policies, CRs
         * Translates K8s objects into OVN logical entities - stores them in OVN databases
         * Stores OVN entities in NorthBound Database (NBDB)
-        * Manages pod subnet allocation to nodes (pod IPAM)
         * Serves CNI ADD/DEL requests from the `ovn-k8s-cni-overlay` plugin that
         the container runtime invokes on the node
         * Digests the IPAM annotation set on pod
         * Creates the veth pair for the pod and the ovs port on bridge. In
         unprivileged mode (`--unprivileged-mode`) it only returns the pod's
         addresses to the plugin, which creates the veth and the ovs port itself
-        * Programs the necessary iptables and gateway service flows on a 
+        * Programs gateway nftables rules and service OpenFlow rules on gateway or uplink bridges
+        * When IPv6 and `disable-forwarding` are enabled on a kernel without per-interface IPv6 forwarding, sets the ip6tables `FORWARD` policy to `DROP` and adds `ACCEPT` rules for management-port traffic (local gateway) and for traffic to and from Pod and Service CIDRs and the OVN masquerade IP
     * nbdb container:
         * Native OVN component
         * Runs the OVN NBDB database
