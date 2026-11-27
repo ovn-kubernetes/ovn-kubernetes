@@ -313,7 +313,7 @@ func newNetworkQoS(name, namespace string) *networkqos.NetworkQoS {
 					Classifier: networkqos.Classifier{
 						To: []networkqos.Destination{
 							{
-								IPBlock: &knet.IPBlock{
+								IPBlock: &networkqos.IPBlock{
 									CIDR: "1.2.3.4/32",
 								},
 							},

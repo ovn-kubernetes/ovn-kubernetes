@@ -325,7 +325,11 @@ Each list element tells the controller **where** the pods' egress traffic must f
 | `dscp` | `int` (0 – 63) | **Yes** | DSCP value to stamp on the **inner** IP header. This value determines the traffic priority. |
 | `bandwidth.rate` | `int` (kbps) | No | Sustained rate for the token-bucket policer (in kilobits per second). |
 | `bandwidth.burst` | `int` (kilobits) | No | Maximum burst size that can accrue (in kilobits). |
-| `classifier.to` / `classifier.from` | list `TrafficSelector` | No | CIDRs the packet destination (or source) must match. Each entry is an `ipBlock` supporting an `except` list. |
-| `classifier.ports[]` | list | No | List of `{protocol, port}` tuples the packet must match; protocol is `TCP`, `UDP`, or `SCTP`. |
+| `classifier.to` | list `Destination` | No | Destinations the packet must match, at most 100. An entry is either an `ipBlock` supporting an `except` list of at most 25 entries, or a `podSelector` and/or `namespaceSelector`. The `cidr` and each `except` entry of an `ipBlock` must be a CIDR or an IP address; the `NetworkQoS` CRD rejects any other value. |
+| `classifier.ports[]` | list | No | List of `{protocol, port}` tuples the packet must match; protocol is exactly `TCP`, `UDP`, or `SCTP`; the `NetworkQoS` CRD rejects any other value. |
 
 If **all** specified classifier conditions match, the packet gets the DSCP mark and/or bandwidth policer defined above. This allows for fine-grained control over which traffic flows receive QoS treatment.
+
+A `NetworkQoS` stored with another protocol or `ipBlock` value, or with longer lists, admitted by an earlier version of the CRD, is left as it is: Kubernetes CRD validation ratcheting accepts updates that do not touch its `egress` rules, and a change to the `egress` rules requires correcting the value.
+
+While a zone reports a `Ready-In-Zone-<node>` condition that is `False`, the `STATUS` column of `kubectl get networkqoses` shows `NetworkQoS Destinations not correctly applied`.

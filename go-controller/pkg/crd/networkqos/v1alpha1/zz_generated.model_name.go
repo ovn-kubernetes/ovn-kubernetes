@@ -24,6 +24,11 @@ func (in Destination) OpenAPIModelName() string {
 }
 
 // OpenAPIModelName returns the OpenAPI model name for this type.
+func (in IPBlock) OpenAPIModelName() string {
+	return "com.github.ovn-kubernetes.ovn-kubernetes.go-controller.pkg.crd.networkqos.v1alpha1.IPBlock"
+}
+
+// OpenAPIModelName returns the OpenAPI model name for this type.
 func (in NetworkQoS) OpenAPIModelName() string {
 	return "com.github.ovn-kubernetes.ovn-kubernetes.go-controller.pkg.crd.networkqos.v1alpha1.NetworkQoS"
 }

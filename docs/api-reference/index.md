@@ -24,6 +24,10 @@ Route egress traffic through a Kubernetes Service's load balancer IP.
 
 Apply DSCP marking rules to egress traffic by namespace.
 
+**[NetworkQoS](network-qos-api-spec.md)**
+
+Apply DSCP marking and bandwidth limits to egress traffic from selected pods.
+
 **[EgressFirewall](egress-firewall-api-spec.md)**
 
 Control which external destinations pods in a namespace can reach.

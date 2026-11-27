@@ -17,10 +17,10 @@ import (
 	nadapi "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 
 	corev1 "k8s.io/api/core/v1"
-	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/ptr"
 
 	libovsdbclient "github.com/ovn-kubernetes/libovsdb/client"
 
@@ -187,9 +187,9 @@ func tableEntrySetup() {
 								},
 							},
 							{
-								IPBlock: &networkingv1.IPBlock{
+								IPBlock: &nqostype.IPBlock{
 									CIDR: "128.116.0.0/17",
-									Except: []string{
+									Except: []nqostype.CIDR{
 										"128.116.0.0",
 										"128.116.0.255",
 									},
@@ -225,9 +225,9 @@ func tableEntrySetup() {
 								},
 							},
 							{
-								IPBlock: &networkingv1.IPBlock{
+								IPBlock: &nqostype.IPBlock{
 									CIDR: "128.118.0.0/17",
-									Except: []string{
+									Except: []nqostype.CIDR{
 										"128.118.0.0",
 										"128.118.0.255",
 									},
@@ -387,6 +387,37 @@ var _ = Describe("NetworkQoS Controller", func() {
 			eventuallySwitchHasNoQoS("node1", qos)
 		}
 	})
+
+	DescribeTable("ToQosMatchString",
+		func(classifier *Classifier, expected string) {
+			Expect(classifier.ToQosMatchString(true, true)).To(Equal(expected), "unexpected classifier match")
+		},
+		Entry("an IPv4 CIDR",
+			&Classifier{Destinations: []*Destination{{IpBlock: &nqostype.IPBlock{CIDR: "128.116.0.0/17"}}}},
+			"ip4.dst == 128.116.0.0/17"),
+		Entry("an IPv4 address with exceptions",
+			&Classifier{Destinations: []*Destination{{IpBlock: &nqostype.IPBlock{CIDR: "128.116.0.1", Except: []nqostype.CIDR{"128.116.0.2", "128.116.1.0/24"}}}}},
+			"ip4.dst == 128.116.0.1 && ip4.dst != {128.116.0.2,128.116.1.0/24}"),
+		Entry("an IPv6 CIDR",
+			&Classifier{Destinations: []*Destination{{IpBlock: &nqostype.IPBlock{CIDR: "fd00:1::/64"}}}},
+			"ip6.dst == fd00:1::/64"),
+		Entry("an IPv6 address",
+			&Classifier{Destinations: []*Destination{{IpBlock: &nqostype.IPBlock{CIDR: "fd00:1::5"}}}},
+			"ip6.dst == fd00:1::5"),
+		Entry("no destination and no port", &Classifier{}, ""),
+		Entry("a destination and a port",
+			&Classifier{
+				Destinations: []*Destination{{IpBlock: &nqostype.IPBlock{CIDR: "128.116.0.0/17"}}},
+				Ports:        []*nqostype.Port{{Protocol: "TCP", Port: ptr.To(int32(8080))}},
+			},
+			"ip4.dst == 128.116.0.0/17 && tcp && tcp.dst == 8080"),
+		Entry("no destination and a port",
+			&Classifier{Ports: []*nqostype.Port{{Protocol: "TCP", Port: ptr.To(int32(8080))}}},
+			"tcp && tcp.dst == 8080"),
+		Entry("no destination and two protocols",
+			&Classifier{Ports: []*nqostype.Port{{Protocol: "TCP", Port: ptr.To(int32(8080))}, {Protocol: "UDP"}}},
+			"((tcp && tcp.dst == 8080) || (udp))"),
+	)
 
 	DescribeTable("When starting controller with NetworkQoS, Pod and Node objects",
 		func() {
@@ -636,9 +667,9 @@ var _ = Describe("NetworkQoS Controller", func() {
 							Classifier: nqostype.Classifier{
 								To: []nqostype.Destination{
 									{
-										IPBlock: &networkingv1.IPBlock{
+										IPBlock: &nqostype.IPBlock{
 											CIDR: "128.115.0.0/17",
-											Except: []string{
+											Except: []nqostype.CIDR{
 												"128.115.0.0",
 												"128.115.0.255",
 											},
@@ -724,9 +755,9 @@ var _ = Describe("NetworkQoS Controller", func() {
 								Classifier: nqostype.Classifier{
 									To: []nqostype.Destination{
 										{
-											IPBlock: &networkingv1.IPBlock{
+											IPBlock: &nqostype.IPBlock{
 												CIDR: "128.115.0.0/17",
-												Except: []string{
+												Except: []nqostype.CIDR{
 													"128.115.0.0",
 													"123.123.123.123",
 												},
@@ -765,9 +796,9 @@ var _ = Describe("NetworkQoS Controller", func() {
 								Classifier: nqostype.Classifier{
 									To: []nqostype.Destination{
 										{
-											IPBlock: &networkingv1.IPBlock{
+											IPBlock: &nqostype.IPBlock{
 												CIDR: "128.115.0.0/17",
-												Except: []string{
+												Except: []nqostype.CIDR{
 													"128.115.0.0",
 													"123.123.123.123",
 												},
@@ -914,7 +945,7 @@ var _ = Describe("NetworkQoS Controller", func() {
 								Classifier: nqostype.Classifier{
 									To: []nqostype.Destination{
 										{
-											IPBlock: &networkingv1.IPBlock{
+											IPBlock: &nqostype.IPBlock{
 												CIDR: "192.168.0.0/24",
 											},
 										},
@@ -1037,7 +1068,7 @@ var _ = Describe("NetworkQoS Controller", func() {
 								Classifier: nqostype.Classifier{
 									To: []nqostype.Destination{
 										{
-											IPBlock: &networkingv1.IPBlock{
+											IPBlock: &nqostype.IPBlock{
 												CIDR: "172.16.0.0/24",
 											},
 										},
@@ -1406,7 +1437,7 @@ var _ = Describe("NetworkQoS on a DHCP-IPAM localnet network", func() {
 					DSCP: 50,
 					Classifier: nqostype.Classifier{
 						To: []nqostype.Destination{{
-							IPBlock: &networkingv1.IPBlock{CIDR: "172.16.0.0/24"},
+							IPBlock: &nqostype.IPBlock{CIDR: "172.16.0.0/24"},
 						}},
 					},
 				}},
