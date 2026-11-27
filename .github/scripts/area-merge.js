@@ -18,6 +18,8 @@ module.exports = async ({ github, context, core }) => {
   // --- Determine which PRs to process and who triggered ---
   let pullNumbers = [];
   let commenter = null;
+  // On a review event, who submitted or dismissed the review.
+  let reviewer = null;
 
   if (context.eventName === 'issue_comment') {
     // Defense in depth (the workflow `if` also enforces this): only accept
@@ -32,6 +34,17 @@ module.exports = async ({ github, context, core }) => {
     }
     pullNumbers.push(context.payload.issue.number);
     commenter = comment.user.login.toLowerCase();
+  } else if (context.eventName === 'workflow_run' &&
+             context.payload.workflow_run.event === 'pull_request_review') {
+    // A review was submitted or dismissed. Its run cannot use the merge App
+    // for a fork PR, so pr-review.yml only relays the event, and only its run
+    // name tells which fork PR was reviewed. A PR can change that workflow,
+    // so the run name and actor merely select the review to read from GitHub
+    // below and authorize nothing.
+    const reviewRun = context.payload.workflow_run;
+    const match = /^Review PR ([1-9]\d*)$/.exec(reviewRun.display_title);
+    if (match) pullNumbers.push(Number(match[1]));
+    reviewer = reviewRun.actor.login.toLowerCase();
   } else if (context.eventName === 'check_suite' || context.eventName === 'workflow_run') {
     const source = context.payload[context.eventName];
     for (const pr of (source.pull_requests || [])) {
@@ -162,10 +175,36 @@ module.exports = async ({ github, context, core }) => {
       continue;
     }
 
+    // The command can also be given at the start of an approving review. Such
+    // a review only requests a merge of the commit it approved: the area
+    // maintainer has not seen commits pushed since, and a dismissed review is
+    // withdrawn.
+    const reviews = commenter ? [] : await github.paginate(github.rest.pulls.listReviews, {
+      owner: context.repo.owner,
+      repo: context.repo.repo,
+      pull_number: prNumber,
+      per_page: 100,
+    });
+    const requestsMerge = review =>
+      review.state === 'APPROVED' &&
+      review.commit_id === pr.head.sha &&
+      review.body.trim().startsWith('/area-maintainer-approved') &&
+      review.user.type !== 'Bot' &&
+      review.user.login.toLowerCase() !== prAuthor;
+
     // For CI completion retries, find who previously ran /area-maintainer-approved
     let requester = commenter;
     let allComments = null;
-    if (!requester) {
+    if (reviewer) {
+      // Only a review that was just submitted is a new request, and it is the
+      // reviewer's latest. An earlier one was answered when it was submitted;
+      // answering it again on every later review would repeat its outcome,
+      // such as a CI failure.
+      const submitted = reviews.findLast(r => r.user?.login.toLowerCase() === reviewer);
+      if (submitted && requestsMerge(submitted)) {
+        requester = reviewer;
+      }
+    } else if (!requester) {
       allComments = await fetchAllComments(prNumber);
       const mergeComment = [...allComments]
         .reverse()
@@ -174,6 +213,12 @@ module.exports = async ({ github, context, core }) => {
                    c.user.login.toLowerCase() !== prAuthor);
       if (mergeComment) {
         requester = mergeComment.user.login.toLowerCase();
+      }
+      // The most recent command counts, whether it is a comment or a review.
+      const mergeReview = reviews.findLast(requestsMerge);
+      if (mergeReview && !(mergeComment &&
+          new Date(mergeComment.created_at) > new Date(mergeReview.submitted_at))) {
+        requester = mergeReview.user.login.toLowerCase();
       }
     }
 
@@ -185,7 +230,8 @@ module.exports = async ({ github, context, core }) => {
     // For CI completion retries, verify the bot posted a "waiting" comment for the current head SHA.
     // If new commits were pushed after approval, the SHA won't match and we skip
     // to prevent merging code the area maintainer never reviewed.
-    if (context.eventName !== 'issue_comment') {
+    // A submitted review needs no waiting comment: it approved this SHA.
+    if (context.eventName !== 'issue_comment' && !reviewer) {
       if (!allComments) allComments = await fetchAllComments(prNumber);
       const waitingMarker = `<!-- area-merge-sha:${pr.head.sha} -->`;
       const isWaiting = allComments.some(c =>

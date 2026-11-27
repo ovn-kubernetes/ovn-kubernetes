@@ -19,7 +19,8 @@ in the governance docs.
 * GitHub automatically assigns reviewers from the listed owners when a PR
   touches files matching the area's patterns.
 * Area Maintainers can merge PRs that **exclusively** touch files within their
-  area by commenting `/area-maintainer-approved` on the PR. The merge bot
+  area by commenting `/area-maintainer-approved` on the PR, or by starting
+  their approving review with it. The merge bot
   (`.github/workflows/area-merge.yml`) verifies file scope, CI status, and
   authorization before merging.
 * PRs that touch files across multiple areas require a repo Maintainer to merge.
@@ -44,6 +45,13 @@ behalf of area maintainers once all checks pass.
 The workflow generates a short-lived installation token via
 [`actions/create-github-app-token`](https://github.com/actions/create-github-app-token)
 at the start of each run. No long-lived access tokens are used during workflow execution.
+
+`/area-maintainer-approved` must be at the start of a PR comment or of the
+body of an approving review. GitHub also requires an approving review from a
+code owner before the bot can merge, so an area maintainer who gives the
+command in their approving review needs no separate comment. In a review, the
+command applies only to the commit that was approved, and the bot ignores it
+unless the review approves the PR.
 
 If CI is still running when `/area-maintainer-approved` is issued, the bot
 posts a waiting comment for the PR's current head commit and merges once CI

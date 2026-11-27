@@ -1,5 +1,6 @@
 name: "Pull Request Review"
-# The labeler reads this run name to identify the PR on workflow_run events.
+# The labeler and the area merge bot read this run name to identify the PR on
+# workflow_run events.
 run-name: "Review PR ${{ github.event.pull_request.number }}"
 
 on:
