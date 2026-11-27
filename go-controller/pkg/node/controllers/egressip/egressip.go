@@ -645,6 +645,7 @@ func generateRoutesForLink(link netlink.Link, isV6 bool) ([]netlink.Route, error
 	linkRoutes = ensureAtLeastOneDefaultRoute(linkRoutes, link.Attrs().Index, isV6)
 	overwriteRoutesTableID(linkRoutes, util.CalculateRouteTableID(link.Attrs().Index))
 	clearSrcFromRoutes(linkRoutes)
+	markRoutesAsOVNKManaged(linkRoutes)
 	return linkRoutes, nil
 }
 
@@ -1356,6 +1357,15 @@ func overwriteRoutesTableID(routes []netlink.Route, tableID int) {
 func clearSrcFromRoutes(routes []netlink.Route) {
 	for i := range routes {
 		routes[i].Src = nil
+	}
+}
+
+// markRoutesAsOVNKManaged marks EgressIP policy routes with a protocol
+// that NMState excludes from captured configuration. This prevents them
+// from being saved in NetworkManager profiles and restored after removal.
+func markRoutesAsOVNKManaged(routes []netlink.Route) {
+	for i := range routes {
+		routes[i].Protocol = netlink.RouteProtocol(types.OVNKProtocol)
 	}
 }
 
