@@ -19,6 +19,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
@@ -74,6 +75,7 @@ func (tc testCNC) ClusterNetworkConnect() *networkconnectv1.ClusterNetworkConnec
 	cnc := &networkconnectv1.ClusterNetworkConnect{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: tc.Name,
+			UID:  k8stypes.UID(tc.Name + "-uid"),
 		},
 		Spec: networkconnectv1.ClusterNetworkConnectSpec{
 			NetworkSelectors: tc.NetworkSelectors,
@@ -2505,8 +2507,24 @@ type expectedSubnetAllocation struct {
 // It verifies that tunnel keys and subnet allocations are restored, and that re-allocating the same owner
 // returns the exact same subnet (idempotency).
 func TestController_initialSync(t *testing.T) {
+	// Use persisted annotations and the normal informer harness so restoration is
+	// checked before any worker can reconcile and overwrite an allocation.
+	// 1. Seed the fake API with the allocations left by a previous controller.
+	// 2. Run initialSync after the informer has observed those objects.
+	// 3. On failure, require an error, no published state, and unchanged annotations.
+	// 4. On success, reallocate each owner and require its original subnets.
+	invalidCNC := func(subnetAnnotation string) *networkconnectv1.ClusterNetworkConnect {
+		cnc := (testCNC{Name: "cnc-invalid"}).ClusterNetworkConnect()
+		cnc.Annotations = map[string]string{
+			util.OvnConnectRouterTunnelKeyAnnotation: "16715779",
+			"k8s.ovn.org/network-connect-subnet":     subnetAnnotation,
+		}
+		return cnc
+	}
 	tests := []struct {
 		name string
+		// wantErr identifies allocations that parse but cannot be restored.
+		wantErr string
 		// existingCNCs are CNC objects that exist before initialSync (with annotations set)
 		existingCNCs []*networkconnectv1.ClusterNetworkConnect
 		// expectCacheEntries maps CNC name to expected cache state after initialSync
@@ -2659,6 +2677,36 @@ func TestController_initialSync(t *testing.T) {
 			},
 		},
 		{
+			name: "rejects a layer3 IPv4 allocation outside the connect range",
+			existingCNCs: []*networkconnectv1.ClusterNetworkConnect{
+				invalidCNC(`{"layer3_1":{"ipv4":"10.1.0.0/24"}}`),
+			},
+			wantErr: "failed to restore subnets for CNC cnc-invalid",
+		},
+		{
+			name: "rejects a layer3 IPv6 allocation outside the connect range",
+			existingCNCs: []*networkconnectv1.ClusterNetworkConnect{
+				invalidCNC(`{"layer3_1":{"ipv6":"fd00:20::/120"}}`),
+			},
+			wantErr: "failed to restore subnets for CNC cnc-invalid",
+		},
+		{
+			name: "rejects a dual-stack allocation when IPv6 restoration fails",
+			// IPv4 is processed first and is valid. A later IPv6 failure must
+			// still prevent publishing state for workers to reconcile.
+			existingCNCs: []*networkconnectv1.ClusterNetworkConnect{
+				invalidCNC(`{"layer3_1":{"ipv4":"192.168.7.0/24","ipv6":"fd00:20::/120"}}`),
+			},
+			wantErr: "failed to restore subnets for CNC cnc-invalid",
+		},
+		{
+			name: "rejects a layer2 allocation outside the connect range",
+			existingCNCs: []*networkconnectv1.ClusterNetworkConnect{
+				invalidCNC(`{"layer2_1":{"ipv4":"10.1.0.0/31"}}`),
+			},
+			wantErr: "failed to restore subnets for CNC cnc-invalid",
+		},
+		{
 			name: "handles CNC with empty annotations gracefully",
 			existingCNCs: []*networkconnectv1.ClusterNetworkConnect{
 				{
@@ -2694,16 +2742,17 @@ func TestController_initialSync(t *testing.T) {
 
 			// Create existing CNCs (simulating state from before restart)
 			for _, cnc := range tt.existingCNCs {
+				cnc.UID = k8stypes.UID(cnc.Name + "-uid")
 				_, err := fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Create(
 					context.Background(), cnc, metav1.CreateOptions{})
-				g.Expect(err).ToNot(gomega.HaveOccurred())
+				g.Expect(err).ToNot(gomega.HaveOccurred(), "persisted CNC %s must be created before restoration", cnc.Name)
 			}
 
 			wf, err := factory.NewClusterManagerWatchFactory(fakeClientset)
-			g.Expect(err).ToNot(gomega.HaveOccurred())
+			g.Expect(err).ToNot(gomega.HaveOccurred(), "the watch factory must initialize for CNC restoration")
 
 			err = wf.Start()
-			g.Expect(err).ToNot(gomega.HaveOccurred())
+			g.Expect(err).ToNot(gomega.HaveOccurred(), "the watch factory must start before CNC restoration")
 			defer wf.Shutdown()
 
 			// Wait for informer caches to sync
@@ -2724,12 +2773,25 @@ func TestController_initialSync(t *testing.T) {
 
 			// Run initialSync
 			err = c.initialSync()
-			g.Expect(err).ToNot(gomega.HaveOccurred())
+			if tt.wantErr != "" {
+				g.Expect(err).To(gomega.MatchError(gomega.ContainSubstring(tt.wantErr)), "initial sync must report the subnet restoration failure")
+				g.Expect(c.cncCache).To(gomega.BeEmpty(), "failed restoration must not publish an allocator")
+				for _, cnc := range tt.existingCNCs {
+					persisted, getErr := fakeClientset.NetworkConnectClient.K8sV1().ClusterNetworkConnects().Get(
+						context.Background(), cnc.Name, metav1.GetOptions{})
+					g.Expect(getErr).NotTo(gomega.HaveOccurred(), "CNC %s must remain readable after failed restoration", cnc.Name)
+					g.Expect(persisted.Annotations).To(gomega.Equal(cnc.Annotations),
+						"failed restoration must preserve CNC %s's persisted allocations", cnc.Name)
+				}
+				return
+			}
+			g.Expect(err).ToNot(gomega.HaveOccurred(), "initial sync must restore valid persisted allocations")
 
 			// Verify cache entries
 			for cncName, expected := range tt.expectCacheEntries {
 				cncState, exists := c.cncCache[cncName]
 				g.Expect(exists).To(gomega.BeTrue(), "cache entry for %s should exist", cncName)
+				g.Expect(cncState.uid).To(gomega.Equal(k8stypes.UID(cncName+"-uid")), "restored state must belong to CNC %s's current UID", cncName)
 
 				// Verify tunnel ID
 				g.Expect(cncState.tunnelID).To(gomega.Equal(expected.tunnelID),
@@ -2789,6 +2851,175 @@ func TestController_initialSync(t *testing.T) {
 					}
 				}
 			}
+		})
+	}
+}
+
+func TestController_reconcileClusterNetworkConnectRecreated(t *testing.T) {
+	// Delete and add events share a queue key, so a worker may only observe the
+	// replacement object. Drive that ordering explicitly using the existing fake
+	// clients and informer harness, without starting background CNC workers:
+	// 1. Reconcile the original CNC to allocate subnets and a tunnel key.
+	// 2. Optionally restore a fresh controller from its annotations, covering both
+	//    ways the old object's UID can enter the cache.
+	// 3. Delete and recreate the CNC with the same name, a new UID, and new ranges
+	//    and selectors; reconcile only after the informer sees the replacement.
+	// 4. Require fresh state and annotations, then reconcile the same UID again
+	//    to verify that ordinary retries preserve allocations without API writes.
+	// 5. For a replacement rejected by validation, require another owner to be
+	//    able to reserve the old key. Successful recreation could reuse that key
+	//    and hide a missing release, so rejection is essential to this check.
+	for _, tt := range []struct {
+		name               string
+		restore            bool
+		invalidReplacement bool
+	}{
+		{name: "reconciled state"},
+		{name: "restored state", restore: true},
+		{name: "rejected replacement releases reconciled key", invalidReplacement: true},
+		{name: "rejected replacement releases restored key", restore: true, invalidReplacement: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			g := gomega.NewWithT(t)
+			g.Expect(config.PrepareTestConfig()).To(gomega.Succeed(), "test configuration must initialize")
+			config.IPv4Mode = true
+			config.IPv6Mode = true
+			config.OVNKubernetesFeature.EnableMultiNetwork = true
+			config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+			config.OVNKubernetesFeature.EnableNetworkConnect = true
+
+			oldCNC := (testCNC{
+				Name: "test-cnc",
+				NetworkSelectors: []apitypes.NetworkSelector{{
+					NetworkSelectionType: apitypes.ClusterUserDefinedNetworks,
+					ClusterUserDefinedNetworkSelector: &apitypes.ClusterUserDefinedNetworkSelector{
+						NetworkSelector: metav1.LabelSelector{MatchLabels: map[string]string{"selected": "old"}},
+					},
+				}},
+			}).ClusterNetworkConnect()
+			newCNC := oldCNC.DeepCopy()
+			newCNC.UID = "replacement-uid"
+			newCNC.Spec.ConnectSubnets = []networkconnectv1.ConnectSubnet{
+				{CIDR: "192.169.0.0/16", NetworkPrefix: 24},
+				{CIDR: "fd00:20::/112", NetworkPrefix: 120},
+			}
+			if tt.invalidReplacement {
+				// This is a valid CIDR, but it overlaps the selected NAD's pod
+				// subnet and must fail controller validation before allocation.
+				newCNC.Spec.ConnectSubnets[0].CIDR = "10.1.0.0/16"
+			}
+			newCNC.Spec.NetworkSelectors[0].ClusterUserDefinedNetworkSelector.NetworkSelector.MatchLabels["selected"] = "new"
+			oldNAD := (testNAD{
+				Name: "old", Namespace: "old", Network: util.GenerateCUDNNetworkName("old"),
+				Labels: map[string]string{"selected": "old"}, IsCUDN: true, IsPrimary: true,
+				Topology: types.Layer3Topology, Subnet: "10.0.0.0/16", NetworkID: "1",
+			}).NAD()
+			newNAD := (testNAD{
+				Name: "new", Namespace: "new", Network: util.GenerateCUDNNetworkName("new"),
+				Labels: map[string]string{"selected": "new"}, IsCUDN: true, IsPrimary: true,
+				Topology: types.Layer3Topology, Subnet: "10.1.0.0/16", NetworkID: "2",
+			}).NAD()
+			clients := util.GetOVNClientset(oldCNC, oldNAD, newNAD).GetClusterManagerClientset()
+			cncClient := clients.NetworkConnectClient.(*networkconnectfake.Clientset)
+			ovntest.AddNetworkConnectApplyReactor(cncClient)
+			wf, err := factory.NewClusterManagerWatchFactory(clients)
+			g.Expect(err).NotTo(gomega.HaveOccurred(), "the watch factory must initialize for CNC recreation")
+			g.Expect(wf.Start()).To(gomega.Succeed(), "the watch factory must start before reconciling the original CNC")
+			defer wf.Shutdown()
+			fakeNM := &networkmanager.FakeNetworkManager{NADNetworks: make(map[string]util.NetInfo)}
+			for _, nad := range []*nadv1.NetworkAttachmentDefinition{oldNAD, newNAD} {
+				netInfo, parseErr := util.ParseNADInfo(nad)
+				g.Expect(parseErr).NotTo(gomega.HaveOccurred(), "network fixture %s/%s must parse", nad.Namespace, nad.Name)
+				fakeNM.NADNetworks[nad.Namespace+"/"+nad.Name] = netInfo
+			}
+			allocator := id.NewTunnelKeyAllocator("TunnelKeys")
+			c := NewController(wf, clients, fakeNM.Interface(), allocator)
+			ctx := context.Background()
+			g.Expect(c.reconcileClusterNetworkConnect(ctx, oldCNC.Name)).To(gomega.Succeed(), "the original CNC must reconcile before recreation")
+			persisted, err := cncClient.K8sV1().ClusterNetworkConnects().Get(ctx, oldCNC.Name, metav1.GetOptions{})
+			g.Expect(err).NotTo(gomega.HaveOccurred(), "the original CNC must remain readable after reconciliation")
+			if tt.restore {
+				g.Eventually(func() (map[string]string, error) {
+					cached, getErr := wf.ClusterNetworkConnectInformer().Lister().Get(oldCNC.Name)
+					if getErr != nil {
+						return nil, getErr
+					}
+					return cached.Annotations, nil
+				}).Should(gomega.Equal(persisted.Annotations), "the informer must observe persisted allocations before controller restoration")
+				allocator = id.NewTunnelKeyAllocator("TunnelKeys")
+				c = NewController(wf, clients, fakeNM.Interface(), allocator)
+				g.Expect(c.initialSync()).To(gomega.Succeed(), "initial sync must restore the original CNC before recreation")
+			}
+			oldState := c.cncCache[oldCNC.Name]
+			g.Expect(oldState.uid).To(gomega.Equal(oldCNC.UID), "cached state must initially belong to the original CNC")
+			g.Expect(oldState.selectedNetworks.UnsortedList()).To(gomega.ConsistOf("layer3_1"), "the original CNC must select only the old network")
+			g.Expect(oldState.tunnelID).NotTo(gomega.BeZero(), "the original CNC must have a tunnel key before recreation")
+			g.Expect(allocator.ReserveKeys("other-cnc", []int{oldState.tunnelID})).NotTo(gomega.Succeed(),
+				"the original CNC tunnel key must be reserved before recreation")
+
+			// A network with the same name uses a different allocator owner and
+			// must retain its reservation when the CNC's old key is released.
+			const networkTunnelKey = 16715790
+			g.Expect(allocator.ReserveKeys(id.NetworkTunnelKeyOwner(oldCNC.Name), []int{networkTunnelKey})).To(gomega.Succeed(),
+				"a same-named network must be able to reserve its separate tunnel key")
+			g.Expect(cncClient.K8sV1().ClusterNetworkConnects().Delete(ctx, oldCNC.Name, metav1.DeleteOptions{})).To(gomega.Succeed(),
+				"the original CNC must be deleted before creating its replacement")
+			_, err = cncClient.K8sV1().ClusterNetworkConnects().Create(ctx, newCNC, metav1.CreateOptions{})
+			g.Expect(err).NotTo(gomega.HaveOccurred(), "the replacement CNC must be created under the original name")
+			g.Eventually(func() (k8stypes.UID, error) {
+				cached, getErr := wf.ClusterNetworkConnectInformer().Lister().Get(newCNC.Name)
+				if getErr != nil {
+					return "", getErr
+				}
+				return cached.UID, nil
+			}).Should(gomega.Equal(newCNC.UID), "the informer must observe the replacement UID before reconciliation")
+			err = c.reconcileClusterNetworkConnect(ctx, newCNC.Name)
+			if tt.invalidReplacement {
+				g.Expect(err).To(gomega.MatchError(gomega.ContainSubstring("selected networks overlap with cluster network connect subnets")),
+					"an overlapping replacement must fail validation before allocating a tunnel key")
+				g.Expect(c.cncCache[newCNC.Name].uid).To(gomega.Equal(newCNC.UID), "even a rejected replacement must discard the original UID")
+				g.Expect(c.cncCache[newCNC.Name].tunnelID).To(gomega.BeZero(), "a replacement rejected by validation must not retain the original tunnel key")
+				g.Expect(allocator.ReserveKeys("other-cnc", []int{oldState.tunnelID})).To(gomega.Succeed(),
+					"the old object's key must be released even when its replacement fails validation")
+				g.Expect(allocator.ReserveKeys("other-network", []int{networkTunnelKey})).NotTo(gomega.Succeed(),
+					"rejecting a replacement CNC must preserve the same-named network's tunnel key")
+				return
+			}
+			g.Expect(err).NotTo(gomega.HaveOccurred(), "the valid replacement CNC must reconcile successfully")
+
+			newState := c.cncCache[newCNC.Name]
+			g.Expect(newState).NotTo(gomega.BeIdenticalTo(oldState), "recreation must replace the original cached state")
+			g.Expect(newState.uid).To(gomega.Equal(newCNC.UID), "replacement state must belong to the new UID")
+			g.Expect(newState.allocator).NotTo(gomega.BeIdenticalTo(oldState.allocator), "recreation must replace the original subnet allocator")
+			g.Expect(newState.selectedNADs.UnsortedList()).To(gomega.ConsistOf("new/new"), "the replacement must select only its new NAD")
+			g.Expect(newState.selectedNetworks.UnsortedList()).To(gomega.ConsistOf("layer3_2"), "the replacement must select only its new network")
+			updated, err := cncClient.K8sV1().ClusterNetworkConnects().Get(ctx, newCNC.Name, metav1.GetOptions{})
+			g.Expect(err).NotTo(gomega.HaveOccurred(), "the replacement CNC must remain readable after reconciliation")
+			// Reusing the old numeric key is valid; the replacement still needs
+			// its own annotation and a matching allocator reservation.
+			g.Expect(newState.tunnelID).NotTo(gomega.BeZero(), "the replacement must have a tunnel key")
+			g.Expect(util.ParseNetworkConnectTunnelKeyAnnotation(updated)).To(gomega.Equal(newState.tunnelID),
+				"the replacement annotation must match its cached tunnel key")
+			g.Expect(allocator.ReserveKeys(id.NetworkConnectTunnelKeyOwner(newCNC.Name), []int{newState.tunnelID})).To(gomega.Succeed(),
+				"the replacement tunnel key must be reservable by its CNC owner")
+			g.Expect(allocator.ReserveKeys("other", []int{networkTunnelKey})).NotTo(gomega.Succeed(),
+				"successful CNC recreation must preserve the same-named network's tunnel key")
+			subnets, err := util.ParseNetworkConnectSubnetAnnotation(updated)
+			g.Expect(err).NotTo(gomega.HaveOccurred(), "the replacement subnet annotations must parse")
+			g.Expect(subnets).To(gomega.Equal(map[string][]*net.IPNet{
+				"layer3_2": ovntest.MustParseIPNets("192.169.0.0/24", "fd00:20::/120"),
+			}), "the replacement must allocate both address families from its new ranges")
+
+			tunnelID := newState.tunnelID
+			subnetAllocator := newState.allocator
+			cncClient.ClearActions()
+			g.Expect(c.syncClusterNetworkConnect(updated.Name, updated)).To(gomega.Succeed(), "reconciling the same UID again must succeed")
+			g.Expect(c.cncCache[updated.Name]).To(gomega.BeIdenticalTo(newState), "same-UID reconciliation must retain the cached state")
+			g.Expect(newState.tunnelID).To(gomega.Equal(tunnelID), "same-UID reconciliation must retain the tunnel key")
+			g.Expect(newState.allocator).To(gomega.BeIdenticalTo(subnetAllocator), "same-UID reconciliation must retain the subnet allocator")
+			g.Expect(newState.allocator.AllocateLayer3Subnet("layer3_2")).To(gomega.Equal(subnets["layer3_2"]),
+				"same-UID reconciliation must preserve the replacement network's subnet allocation")
+			g.Expect(cncClient.Actions()).To(gomega.BeEmpty(), "same-UID reconciliation should not rewrite annotations")
 		})
 	}
 }

@@ -18,6 +18,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	corelisters "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
@@ -69,6 +70,9 @@ type clusterNetworkConnectState struct {
 	selectedNetworks sets.Set[string]
 	// tunnelID for this CNC's connect router
 	tunnelID int
+	// uid of the CNC object this state was created for. It is used to detect
+	// a CNC that was deleted and recreated with the same name.
+	uid types.UID
 }
 
 type Controller struct {
@@ -205,6 +209,7 @@ func (c *Controller) initialSync() error {
 		// Initialize CNC state in cache
 		cncState := &clusterNetworkConnectState{
 			name: cnc.Name,
+			uid:  cnc.UID,
 			// NOTE: We intentionally don't restore selectedNADs as its not strictly needed.
 			// Why this is okay:
 			// selectedNADs tracks NAD keys (e.g., "namespace/name") which aren't stored in
@@ -237,7 +242,6 @@ func (c *Controller) initialSync() error {
 		}
 		cncState.connectSubnets = connectSubnets
 		cncState.allocator = connectSubnetAllocator
-		c.cncCache[cnc.Name] = cncState
 
 		// Restore tunnel key in allocator if present
 		if tunnelID > 0 {
@@ -250,8 +254,10 @@ func (c *Controller) initialSync() error {
 		// Restore subnets if present
 		if len(allocatedSubnets) > 0 {
 			if err := cncState.allocator.MarkAllocatedSubnets(allocatedSubnets); err != nil {
-				klog.Warningf("Failed to restore subnets for CNC %s: %v", cnc.Name, err)
-				continue
+				// Publishing an unrestored allocator would make the first
+				// reconcile allocate new subnets and rewrite the live
+				// annotation, so fail instead of reconciling with empty state.
+				return fmt.Errorf("failed to restore subnets for CNC %s: %w", cnc.Name, err)
 			}
 
 			// Populate selectedNetworks from the restored allocations
@@ -260,6 +266,9 @@ func (c *Controller) initialSync() error {
 			}
 			klog.V(4).Infof("Restored %d subnet allocations for CNC %s", len(allocatedSubnets), cnc.Name)
 		}
+
+		// Only publish the state once the allocations have been restored.
+		c.cncCache[cnc.Name] = cncState
 	}
 
 	klog.Infof("Initial sync completed: restored state for %d CNCs", len(cncs))
