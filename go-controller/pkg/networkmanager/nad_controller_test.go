@@ -242,6 +242,12 @@ func (tr *testNetworkRefReconciler) Reconcile(node, networkName string) {
 
 func (tnc *testNetworkController) Start(context.Context) error {
 	tnc.tcm.Lock()
+	beforeStart := tnc.tcm.beforeStart
+	tnc.tcm.Unlock()
+	if beforeStart != nil {
+		beforeStart()
+	}
+	tnc.tcm.Lock()
 	defer tnc.tcm.Unlock()
 	fmt.Printf("starting network: %s\n", testNetworkKey(tnc))
 	tnc.tcm.started = append(tnc.tcm.started, testNetworkKey(tnc))
@@ -423,6 +429,7 @@ type testControllerManager struct {
 	raiseErrorWhenCreatingController error
 	raiseErrorWhenStartingController error
 	raiseErrorWhenCleaningController error
+	beforeStart                      func()
 
 	valid []util.NetInfo
 }
