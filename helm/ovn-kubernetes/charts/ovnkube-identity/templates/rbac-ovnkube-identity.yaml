@@ -44,6 +44,10 @@ rules:
       resources:
           - nodes
       verbs: ["get", "list", "watch"]
+    - apiGroups: ["k8s.cni.cncf.io"]
+      resources:
+          - network-attachment-definitions
+      verbs: ["get", "list", "watch"]
     - apiGroups: ["certificates.k8s.io"]
       resources:
           - certificatesigningrequests

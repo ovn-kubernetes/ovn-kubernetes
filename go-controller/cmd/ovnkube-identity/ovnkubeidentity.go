@@ -48,6 +48,7 @@ type config struct {
 	metricsAddress             string
 	leaseNamespace             string
 	enableHybridOverlay        bool
+	enableMultiNetwork         bool
 	disableWebhook             bool
 	disableApprover            bool
 	waitForKAPIDuration        time.Duration
@@ -238,6 +239,12 @@ func main() {
 			Destination: &cliCfg.enableHybridOverlay,
 			Value:       false,
 		},
+		&cli.BoolFlag{
+			Name:        "enable-multi-network",
+			Usage:       "Configure to validate pod network annotations of user defined networks, requires the NetworkAttachmentDefinition CRD",
+			Destination: &cliCfg.enableMultiNetwork,
+			Value:       false,
+		},
 		&cli.StringSliceFlag{
 			Name:        "extra-allowed-user",
 			Usage:       "Configure extra user that is allowed to modify annotations protected by the webhook, can be used multiple times",
@@ -328,6 +335,7 @@ func runWebhook(ctx context.Context, restCfg *rest.Config) error {
 
 	return identitywebhook.Run(ctx, restCfg, identitywebhook.Config{
 		EnableHybridOverlay:     cliCfg.enableHybridOverlay,
+		EnableMultiNetwork:      cliCfg.enableMultiNetwork,
 		ExtraAllowedUsers:       cliCfg.extraAllowedUsers.Value(),
 		CSRAcceptanceConditions: cliCfg.csrAcceptanceConditions,
 		PodAdmissionConditions:  cliCfg.podAdmissionConditions,

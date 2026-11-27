@@ -104,6 +104,7 @@ The allowed annotations list contains both common and feature specific values:
 
  - By default, the webhook will verify common node annotations and pod/node annotations set by the ovnkube-node component.
  - When `enable-hybrid-overlay` parameter is provided the webhook will validate additional node annotations set by the ovnkube-node component for hybrid overlay.
+ - When `enable-multi-network` parameter is provided the webhook will validate the user defined network entries that the ovnkube-node component writes to the pod network annotation, see [Pod network entries written by a node](security.md#pod-network-entries-written-by-a-node).
 
 Cluster-manager's allocation annotations, including `k8s.ovn.org/node-id` and
 `k8s.ovn.org/udn-layer2-node-gateway-router-lrp-tunnel-ids`, are protected by a
@@ -132,6 +133,7 @@ The specific annotation values can be found in `go-controller/pkg/ovnwebhook/nod
 
 Some of the allowed annotations have additional checks; for instance, the IP addresses in [k8s.ovn.org/pod-networks](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/5d56a53df520a085e629cdc71be092afed9c3f0f/go-controller/pkg/util/pod_annotation.go#L20-L51)
 must match the node's [k8s.ovn.org/node-subnets](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/5d56a53df520a085e629cdc71be092afed9c3f0f/go-controller/pkg/util/subnet_annotations.go#L15-L39) networks.
+Entries of networks that cluster manager allocates, such as layer2 user defined networks, cannot be changed by ovnkube-node at all.
 
 
 ## DaemonSet

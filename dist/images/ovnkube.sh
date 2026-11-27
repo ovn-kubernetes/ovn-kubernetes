@@ -979,11 +979,18 @@ ovnkube-identity() {
       ovnkube_enable_hybrid_overlay_flag="--enable-hybrid-overlay"
     fi
 
+    # ovnkube also enables multi-network when network segmentation is enabled
+    ovnkube_enable_multi_network_flag=
+    if [[ ${ovn_multi_network_enable} == "true" || ${ovn_network_segmentation_enable} == "true" ]]; then
+      ovnkube_enable_multi_network_flag="--enable-multi-network"
+    fi
+
     # extra-allowed-user:
     #   ovnkube-cluster-manager service account - required for multi-homing
     exec /usr/bin/ovnkube-identity  --k8s-apiserver="${K8S_APISERVER}" \
     --webhook-cert-dir="/etc/webhook-cert" \
     ${ovnkube_enable_hybrid_overlay_flag} \
+    ${ovnkube_enable_multi_network_flag} \
     --extra-allowed-user="system:serviceaccount:${ovn_kubernetes_namespace}:ovnkube-cluster-manager" \
     --loglevel="${ovnkube_loglevel}"
 

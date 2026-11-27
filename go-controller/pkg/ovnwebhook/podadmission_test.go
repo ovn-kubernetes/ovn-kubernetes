@@ -7,8 +7,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
+	nadv1 "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
+	nadlisters "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/listers/k8s.cni.cncf.io/v1"
 	kubevirtv1 "kubevirt.io/api/core/v1"
 
 	admv1 "k8s.io/api/admission/v1"
@@ -18,6 +21,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/sets"
 	listersv1 "k8s.io/client-go/listers/core/v1"
+	"k8s.io/client-go/tools/cache"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
@@ -560,7 +564,7 @@ func TestPodAdmission_ValidateUpdate(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			padm := NewPodAdmissionWebhook(&fakeNodeLister{
 				nodes: map[string]*corev1.Node{tt.node.Name: tt.node},
-			}, []PodAdmissionConditionOption{
+			}, nil, []PodAdmissionConditionOption{
 				additionalPodAdmissions,
 			})
 			_, err := padm.ValidateUpdate(tt.ctx, tt.oldObj, tt.newObj)
@@ -650,7 +654,7 @@ func TestPodAdmission_ValidateUpdateExtraUsers(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			padm := NewPodAdmissionWebhook(&fakeNodeLister{
 				nodes: map[string]*corev1.Node{tt.node.Name: tt.node},
-			}, []PodAdmissionConditionOption{
+			}, nil, []PodAdmissionConditionOption{
 				additionalPodAdmissions,
 			}, extraUser)
 			_, err := padm.ValidateUpdate(tt.ctx, tt.oldObj, tt.newObj)
@@ -664,7 +668,7 @@ func TestPodAdmission_ValidateUpdateExtraUsers(t *testing.T) {
 
 // TestPodNetworkAnnotationCreate checks allocation output is rejected while network requests remain valid.
 func TestPodNetworkAnnotationCreate(t *testing.T) {
-	validator := NewPodAdmissionWebhook(nil, nil)
+	validator := NewPodAdmissionWebhook(nil, nil, nil)
 	for _, tc := range []struct {
 		name        string
 		annotations map[string]string
@@ -686,7 +690,7 @@ func TestPodNetworkAnnotationCreate(t *testing.T) {
 
 // TestProtectedPodAnnotationsCreate checks creation restrictions also apply to newly registered keys.
 func TestProtectedPodAnnotationsCreate(t *testing.T) {
-	validator := NewPodAdmissionWebhook(nil, nil)
+	validator := NewPodAdmissionWebhook(nil, nil, nil)
 	// A newly registered key must inherit creation protection automatically.
 	validator.annotationKeys.Insert("k8s.ovn.org/future-controller-state")
 	for key := range validator.annotationKeys {
@@ -705,7 +709,7 @@ func TestProtectedPodAnnotationsCreate(t *testing.T) {
 
 // TestPodNetworkAnnotationUpdate checks allocation protection on both pod update endpoints.
 func TestPodNetworkAnnotationUpdate(t *testing.T) {
-	validator := NewPodAdmissionWebhook(nil, nil)
+	validator := NewPodAdmissionWebhook(nil, nil, nil)
 	for _, subresource := range []string{"", "status"} {
 		for _, tc := range []struct {
 			name     string
@@ -727,5 +731,212 @@ func TestPodNetworkAnnotationUpdate(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestPodAdmission_ValidateUpdateUserDefinedNetworks(t *testing.T) {
+	const (
+		clusterManager = "system:serviceaccount:ovnkube-cluster-manager"
+		nadNamespace   = "tenant"
+		defaultEntry   = `"default":{"ip_addresses":["192.168.0.5/24"],"mac_address":"0a:58:0a:80:00:05"}`
+	)
+	nad := func(name, topology, extraConfig string) *nadv1.NetworkAttachmentDefinition {
+		return &nadv1.NetworkAttachmentDefinition{
+			ObjectMeta: metav1.ObjectMeta{Namespace: nadNamespace, Name: name},
+			Spec: nadv1.NetworkAttachmentDefinitionSpec{Config: fmt.Sprintf(
+				`{"cniVersion":"1.0.0","name":%q,"type":"ovn-k8s-cni-overlay","topology":%q,"netAttachDefName":%q%s}`,
+				"net-"+name, topology, nadNamespace+"/"+name, extraConfig)},
+		}
+	}
+	nadIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
+	for _, n := range []*nadv1.NetworkAttachmentDefinition{
+		nad("l3", types.Layer3Topology, `,"subnets":"10.30.0.0/16/24","role":"primary"`),
+		nad("l2", types.Layer2Topology, `,"subnets":"10.20.0.0/16","role":"primary"`),
+		nad("localnet-ipam", types.LocalnetTopology, `,"subnets":"10.40.0.0/16"`),
+		nad("localnet-no-ipam", types.LocalnetTopology, ``),
+		nad("localnet-dhcp", types.LocalnetTopology, `,"ipam":{"type":"dhcp"}`),
+	} {
+		if err := nadIndexer.Add(n); err != nil {
+			t.Fatal(err)
+		}
+	}
+	nadLister := nadlisters.NewNetworkAttachmentDefinitionLister(nadIndexer)
+
+	// entry returns the pod network annotation entry of a NAD from nadNamespace.
+	entry := func(nadName, ips, extra string) string {
+		return fmt.Sprintf(`"%s/%s":{"ip_addresses":[%s],"mac_address":"0a:58:0a:80:00:06"%s}`, nadNamespace, nadName, ips, extra)
+	}
+	pod := func(annotations map[string]string, entries ...string) *corev1.Pod {
+		if len(entries) > 0 {
+			if annotations == nil {
+				annotations = map[string]string{}
+			}
+			annotations[types.OvnPodAnnotationName] = "{" + strings.Join(entries, ",") + "}"
+		}
+		return &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: podName, Annotations: annotations},
+			Spec:       corev1.PodSpec{NodeName: nodeName},
+		}
+	}
+	liveMigratable := func() map[string]string {
+		return map[string]string{kubevirtv1.AllowPodBridgeNetworkLiveMigrationAnnotation: ""}
+	}
+	notAllowed := func(format string, args ...any) error {
+		return fmt.Errorf("user: %q is not allowed to set %s on pod %q: %s",
+			userName, types.OvnPodAnnotationName, podName, fmt.Sprintf(format, args...))
+	}
+	clusterManagerAllocated := func(nadName, topology string) error {
+		return notAllowed("the %s/%s entry of %s network %q is allocated by cluster manager", nadNamespace, nadName, topology, "net-"+nadName)
+	}
+
+	tests := []struct {
+		name string
+		// user defaults to the ovnkube-node identity of the pod's node
+		user string
+		// multiNetworkDisabled runs the webhook without a NAD lister
+		multiNetworkDisabled bool
+		oldObj               *corev1.Pod
+		newObj               *corev1.Pod
+		expectedErr          error
+	}{
+		{
+			name:   "ovnkube-node can set a layer3 network IP from its node subnet",
+			oldObj: pod(nil, defaultEntry),
+			newObj: pod(nil, defaultEntry, entry("l3", `"10.30.1.7/24"`, "")),
+		},
+		{
+			name:        "ovnkube-node cannot set a layer3 network IP from another node subnet",
+			oldObj:      pod(nil, defaultEntry),
+			newObj:      pod(nil, defaultEntry, entry("l3", `"10.30.2.7/24"`, "")),
+			expectedErr: notAllowed("10.30.2.7/24 of network %q does not belong to %s node", "net-l3", nodeName),
+		},
+		{
+			name:        "ovnkube-node cannot modify a layer3 network IP to an invalid value",
+			oldObj:      pod(nil, defaultEntry, entry("l3", `"10.30.1.7/24"`, "")),
+			newObj:      pod(nil, defaultEntry, entry("l3", `"10.30.2.7/24"`, "")),
+			expectedErr: notAllowed("10.30.2.7/24 of network %q does not belong to %s node", "net-l3", nodeName),
+		},
+		{
+			name:   "ovnkube-node can use a layer3 network IP that belongs to a different node in kubevirt live-migration",
+			oldObj: pod(liveMigratable(), defaultEntry),
+			newObj: pod(liveMigratable(), defaultEntry, entry("l3", `"10.30.2.7/24"`, "")),
+		},
+		{
+			name:   "ovnkube-node can set layer3 network IPs for several attachments to the same network",
+			oldObj: pod(nil, defaultEntry),
+			newObj: pod(nil, defaultEntry, entry("l3", `"10.30.1.7/24"`, ""), entry("l3/1", `"10.30.1.8/24"`, "")),
+		},
+		{
+			name:        "ovnkube-node cannot set a layer3 network IP from another node subnet for a second attachment",
+			oldObj:      pod(nil, defaultEntry, entry("l3", `"10.30.1.7/24"`, "")),
+			newObj:      pod(nil, defaultEntry, entry("l3", `"10.30.1.7/24"`, ""), entry("l3/1", `"10.30.2.8/24"`, "")),
+			expectedErr: notAllowed("10.30.2.8/24 of network %q does not belong to %s node", "net-l3", nodeName),
+		},
+		{
+			name:        "ovnkube-node cannot add a second attachment entry of a layer2 network",
+			oldObj:      pod(nil, defaultEntry, entry("l2", `"10.20.0.5/16"`, `,"tunnel_id":3`)),
+			newObj:      pod(nil, defaultEntry, entry("l2", `"10.20.0.5/16"`, `,"tunnel_id":3`), entry("l2/1", `"10.20.0.6/16"`, `,"tunnel_id":4`)),
+			expectedErr: notAllowed("the %s/l2/1 entry of %s network %q is allocated by cluster manager", nadNamespace, types.Layer2Topology, "net-l2"),
+		},
+		{
+			name:   "ovnkube-node can remove a layer3 network entry",
+			oldObj: pod(nil, defaultEntry, entry("l3", `"10.30.1.7/24"`, "")),
+			newObj: pod(nil, defaultEntry),
+		},
+		{
+			name:        "ovnkube-node cannot add a layer2 network entry",
+			oldObj:      pod(nil, defaultEntry),
+			newObj:      pod(nil, defaultEntry, entry("l2", `"10.20.0.5/16"`, `,"tunnel_id":3`)),
+			expectedErr: clusterManagerAllocated("l2", types.Layer2Topology),
+		},
+		{
+			name:        "ovnkube-node cannot add a layer2 network entry without a default network entry",
+			oldObj:      pod(nil),
+			newObj:      pod(nil, entry("l2", `"10.20.0.5/16"`, `,"tunnel_id":3`)),
+			expectedErr: clusterManagerAllocated("l2", types.Layer2Topology),
+		},
+		{
+			name:        "ovnkube-node cannot modify a layer2 network entry",
+			oldObj:      pod(nil, defaultEntry, entry("l2", `"10.20.0.5/16"`, `,"tunnel_id":3`)),
+			newObj:      pod(nil, defaultEntry, entry("l2", `"10.20.0.9/16"`, `,"tunnel_id":4`)),
+			expectedErr: clusterManagerAllocated("l2", types.Layer2Topology),
+		},
+		{
+			name:        "ovnkube-node cannot remove a layer2 network entry",
+			oldObj:      pod(nil, defaultEntry, entry("l2", `"10.20.0.5/16"`, `,"tunnel_id":3`)),
+			newObj:      pod(nil, defaultEntry),
+			expectedErr: clusterManagerAllocated("l2", types.Layer2Topology),
+		},
+		{
+			name:        "ovnkube-node cannot modify a layer2 network entry in kubevirt live-migration",
+			oldObj:      pod(liveMigratable(), defaultEntry, entry("l2", `"10.20.0.5/16"`, `,"tunnel_id":3`)),
+			newObj:      pod(liveMigratable(), defaultEntry, entry("l2", `"10.20.0.9/16"`, `,"tunnel_id":3`)),
+			expectedErr: clusterManagerAllocated("l2", types.Layer2Topology),
+		},
+		{
+			name:   "ovnkube-node can set the default network entry next to an unchanged layer2 network entry",
+			oldObj: pod(nil, entry("l2", `"10.20.0.5/16"`, `,"tunnel_id":3`)),
+			newObj: pod(nil, entry("l2", `"10.20.0.5/16"`, `,"tunnel_id":3`), defaultEntry),
+		},
+		{
+			name:   "cluster manager can add a layer2 network entry",
+			user:   clusterManager,
+			oldObj: pod(nil, defaultEntry),
+			newObj: pod(nil, defaultEntry, entry("l2", `"10.20.0.5/16"`, `,"tunnel_id":3`)),
+		},
+		{
+			name:        "ovnkube-node cannot add an entry of a localnet network with IPAM",
+			oldObj:      pod(nil, defaultEntry),
+			newObj:      pod(nil, defaultEntry, entry("localnet-ipam", `"10.40.0.7/16"`, "")),
+			expectedErr: clusterManagerAllocated("localnet-ipam", types.LocalnetTopology),
+		},
+		{
+			name:   "ovnkube-node can add an entry of a localnet network without IPAM",
+			oldObj: pod(nil, defaultEntry),
+			newObj: pod(nil, defaultEntry, entry("localnet-no-ipam", ``, "")),
+		},
+		{
+			name:   "ovnkube-node can add an entry of a localnet network with DHCP IPAM",
+			oldObj: pod(nil, defaultEntry),
+			newObj: pod(nil, defaultEntry, entry("localnet-dhcp", `"172.16.0.9/24"`, "")),
+		},
+		{
+			name:   "ovnkube-node cannot add an entry of an unknown network",
+			oldObj: pod(nil, defaultEntry),
+			newObj: pod(nil, defaultEntry, entry("unknown", `"10.1.1.1/24"`, "")),
+			expectedErr: notAllowed("failed to get NetworkAttachmentDefinition %s/unknown: networkattachmentdefinition.k8s.cni.cncf.io %q not found",
+				nadNamespace, "unknown"),
+		},
+		{
+			name:                 "user defined network entries are not validated when multi-network is disabled",
+			multiNetworkDisabled: true,
+			oldObj:               pod(nil, defaultEntry),
+			newObj:               pod(nil, defaultEntry, entry("l2", `"10.20.0.5/16"`, `,"tunnel_id":3`)),
+		},
+	}
+
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{
+		Name:        nodeName,
+		Annotations: map[string]string{"k8s.ovn.org/node-subnets": `{"default":"192.168.0.0/24","net-l3":"10.30.1.0/24"}`},
+	}}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var lister nadlisters.NetworkAttachmentDefinitionLister
+			if !tt.multiNetworkDisabled {
+				lister = nadLister
+			}
+			user := tt.user
+			if user == "" {
+				user = userName
+			}
+			ctx := admission.NewContextWithRequest(context.TODO(), admission.Request{
+				AdmissionRequest: admv1.AdmissionRequest{UserInfo: authenticationv1.UserInfo{Username: user}},
+			})
+			padm := NewPodAdmissionWebhook(&fakeNodeLister{nodes: map[string]*corev1.Node{nodeName: node}}, lister, nil, clusterManager)
+			_, err := padm.ValidateUpdate(ctx, tt.oldObj, tt.newObj)
+			if err != tt.expectedErr && (err == nil || tt.expectedErr == nil || err.Error() != tt.expectedErr.Error()) {
+				t.Errorf("ValidateUpdate() error = %v, expectedErr %v", err, tt.expectedErr)
+			}
+		})
 	}
 }
