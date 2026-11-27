@@ -105,7 +105,8 @@ The allowed annotations list contains both common and feature specific values:
  - By default, the webhook will verify common node annotations and pod/node annotations set by the ovnkube-node component.
  - When `enable-hybrid-overlay` parameter is provided the webhook will validate additional node annotations set by the ovnkube-node component for hybrid overlay.
 
-Cluster-manager's allocation annotations, including `k8s.ovn.org/node-id` and
+Cluster-manager's allocation annotations, including `k8s.ovn.org/node-id`,
+`k8s.ovn.org/node-transit-switch-port-ifaddr` and
 `k8s.ovn.org/udn-layer2-node-gateway-router-lrp-tunnel-ids`, are protected by a
 separate [admission policy](index.md#controller-owned-node-annotations).
 That protection remains active when NodeIdentity is disabled and authorizes

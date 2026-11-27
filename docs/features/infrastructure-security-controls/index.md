@@ -19,6 +19,7 @@ annotations, permitting only `ovnkube-cluster-manager` to add, change, or remove
 
 - `k8s.ovn.org/node-subnets`: pod subnet allocations.
 - `k8s.ovn.org/node-id`: node IDs used to derive network resources.
+- `k8s.ovn.org/node-transit-switch-port-ifaddr`: transit switch port addresses that other zones use to reach the node.
 - `k8s.ovn.org/udn-layer2-node-gateway-router-lrp-tunnel-ids`: per-network router port tunnel IDs.
 
 When hybrid overlay is enabled, the policy also protects

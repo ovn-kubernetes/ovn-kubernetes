@@ -51,6 +51,7 @@ var _ = ginkgo.Describe("Node subnet claims", func() {
 		annotations, err := util.UpdateNodeHostSubnetAnnotation(nil, []*net.IPNet{claimedSubnet}, ovntypes.DefaultNetworkName)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		annotations[util.OvnNodeID] = nodes.Items[0].Annotations[util.OvnNodeID]
+		annotations[util.OvnTransitSwitchPortAddr] = nodes.Items[0].Annotations[util.OvnTransitSwitchPortAddr]
 		annotations[ovntypes.UDNLayer2NodeGRLRPTunnelIDAnnotation] = `{"test-network":"1"}`
 
 		remoteNodeName := "node-subnet-claim-" + framework.RandomSuffix()
