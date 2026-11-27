@@ -14,6 +14,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/feature"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/images"
@@ -171,7 +173,8 @@ var _ = ginkgo.Describe("External Gateway", feature.ExternalGateway, func() {
 					tcpDumpSync.Add(len(gwContainers))
 
 					for _, gwContainer := range gwContainers {
-						go checkReceivedPacketsOnExternalContainer(gwContainer, srcPingPodName, anyLink, []string{icmpCommand}, &tcpDumpSync)
+						filter := []string{icmpCommand, "and", "src", "host", addresses.srcPodIP}
+						go checkReceivedPacketsOnExternalContainer(gwContainer, srcPingPodName, anyLink, filter, &tcpDumpSync)
 					}
 
 					pingSync := sync.WaitGroup{}
@@ -248,7 +251,7 @@ var _ = ginkgo.Describe("External Gateway", feature.ExternalGateway, func() {
 				func(protocol string, addresses *gatewayTestIPs, gwPort, podPort int) {
 					ncCmd := func(sourcePort int, target string) []string {
 						if protocol == "tcp" {
-							return []string{"exec", srcPingPodName, "--", "bash", "-c", fmt.Sprintf("echo | nc -p %d -s %s -w 1 %s %d", sourcePort, addresses.srcPodIP, target, gwPort)}
+							return []string{"exec", srcPingPodName, "--", "bash", "-c", fmt.Sprintf("nc -d -p %d -s %s -w 1 %s %d", sourcePort, addresses.srcPodIP, target, gwPort)}
 						} else {
 							return []string{"exec", srcPingPodName, "--", "bash", "-c", fmt.Sprintf("echo | nc -p %d -s %s -w 1 -u %s %d", sourcePort, addresses.srcPodIP, target, gwPort)}
 						}
@@ -1360,14 +1363,15 @@ func setupGatewayContainers(f *framework.Framework, providerCtx infraapi.Context
 		framework.Fail("No ipv4 nor ipv6 addresses found in nodes and src pod")
 	}
 
-	// This sets up a listener that replies with the hostname, both on tcp and on udp
+	// This sets up listeners that reply with the hostname on TCP and UDP.
+	// Ncat keeps the TCP socket bound and runs hostname for each connection.
 	setupListenersOrDie := func(container infraapi.ExternalContainer, gwAddress string) {
 		_, err = infraprovider.Get().ExecExternalContainerCommand(container,
 			[]string{"bash", "-c", fmt.Sprintf("while true; do echo $(hostname) | nc -l -u -W 1 %s %d; done &", gwAddress, gwUDPPort)})
 		framework.ExpectNoError(err, "failed to setup UDP listener for %s on %s", gwAddress, container)
 
 		_, err = infraprovider.Get().ExecExternalContainerCommand(container,
-			[]string{"bash", "-c", fmt.Sprintf("while true; do echo $(hostname) | nc -l -N %s %d; done &", gwAddress, gwTCPPort)})
+			[]string{"bash", "-c", fmt.Sprintf("ncat --listen --keep-open --sh-exec hostname %s %d > /tmp/eg-tcp-hostname.log 2>&1 &", gwAddress, gwTCPPort)})
 		framework.ExpectNoError(err, "failed to setup TCP listener for %s on %s", gwAddress, container)
 	}
 
@@ -1426,6 +1430,9 @@ func setupGatewayContainers(f *framework.Framework, providerCtx infraapi.Context
 			setupListenersOrDie(gwContainer, addressesv6.targetIPs[0])
 		}
 	}
+	if testIPv6 && network.Name() != "host" {
+		advertiseGatewayIPv6Bindings(f, node.Name, network, gwContainers)
+	}
 	if setupBFD {
 		for _, gwContainer := range gwContainers {
 			setupBFDOnExternalContainer(network, gwContainer, nodes.Items)
@@ -1433,6 +1440,85 @@ func setupGatewayContainers(f *framework.Framework, providerCtx infraapi.Context
 	}
 
 	return gwContainers, addressesv4, addressesv6
+}
+
+// advertiseGatewayIPv6Bindings replaces neighbors left by earlier containers
+// reusing these addresses. Check OVN itself, not the host kernel neighbor table.
+func advertiseGatewayIPv6Bindings(f *framework.Framework, nodeName string, network infraapi.Network, gateways []infraapi.ExternalContainer) {
+	ginkgo.By("Advertising external gateway global IPv6 addresses and waiting for OVN MAC bindings")
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	node, err := f.ClientSet.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
+	cancel()
+	framework.ExpectNoError(err, "failed to get source node %s", nodeName)
+	gatewayConfig, err := util.ParseNodeL3GatewayAnnotation(node)
+	framework.ExpectNoError(err, "failed to parse source node gateway configuration")
+	port := types.GWRouterToExtSwitchPrefix + types.GWRouterPrefix + nodeName
+	if gatewayConfig.EgressGWInterfaceID != "" {
+		port = types.EgressGWSwitchPrefix + port
+	}
+
+	ns := deploymentconfig.Get().OVNKubernetesNamespace()
+	ctx, cancel = context.WithTimeout(context.Background(), time.Minute)
+	pods, err := f.ClientSet.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{})
+	cancel()
+	framework.ExpectNoError(err, "failed to locate OVN database for source node %s", nodeName)
+	type database struct{ pod, container string }
+	var databases []database
+	for _, pod := range pods.Items {
+		if pod.Status.Phase != corev1.PodRunning {
+			continue
+		}
+		// Interconnect keeps the source gateway router in its node's database;
+		// centralized deployments put it in the dedicated database pods instead.
+		if !(pod.Labels["app"] == "ovnkube-node" && pod.Spec.NodeName == nodeName || pod.Labels["ovn-db-pod"] == "true") {
+			continue
+		}
+		db := database{pod: pod.Name}
+		for _, container := range pod.Spec.Containers {
+			if container.Name == "sbdb" || container.Name == "sb-ovsdb" {
+				db.container = container.Name
+				break
+			}
+		}
+		// In interconnect only query this node's database, even when all node
+		// pods also carry the ovn-db-pod label.
+		if pod.Labels["app"] == "ovnkube-node" && pod.Spec.NodeName != nodeName {
+			continue
+		}
+		databases = append(databases, db)
+	}
+	gomega.Expect(databases).NotTo(gomega.BeEmpty(), "no OVN database found for source node %s", nodeName)
+	for _, gateway := range gateways {
+		info, err := infraprovider.Get().GetExternalContainerNetworkInterface(gateway, network)
+		framework.ExpectNoError(err, "failed to inspect gateway %s", gateway.Name)
+		gomega.Expect(info.IPv6).NotTo(gomega.BeEmpty(), "missing global IPv6 address for gateway %s", gateway.Name)
+		gomega.Expect(info.MAC).NotTo(gomega.BeEmpty(), "missing MAC address for gateway %s", gateway.Name)
+		gomega.Eventually(func() error {
+			_, err := infraprovider.Get().ExecExternalContainerCommand(gateway, []string{"ndptool", "-t", "na", "-U", "-i", infraprovider.Get().ExternalContainerPrimaryInterfaceName(), "-T", info.IPv6, "send"})
+			if err != nil {
+				return fmt.Errorf("advertise %s on %s: %w", info.IPv6, gateway.Name, err)
+			}
+			var observed []string
+			for _, db := range databases {
+				args := []string{"exec", db.pod}
+				if db.container != "" {
+					args = append(args, "-c", db.container)
+				}
+				args = append(args, "--", "ovn-sbctl", "--timeout=5", "--bare", "--no-heading", "--columns=mac", "find", "MAC_Binding", "logical_port="+port, fmt.Sprintf("ip=%q", info.IPv6))
+				out, err := e2ekubectl.RunKubectl(ns, args...)
+				if err != nil {
+					observed = append(observed, fmt.Sprintf("%s: %v", db.pod, err))
+					continue
+				}
+				observed = append(observed, fmt.Sprintf("%s: %q", db.pod, strings.TrimSpace(out)))
+				if strings.EqualFold(strings.Trim(strings.TrimSpace(out), "\""), info.MAC) {
+					framework.Logf("OVN gateway IPv6 binding converged: node=%s ip=%s mac=%s database=%s", nodeName, info.IPv6, info.MAC, db.pod)
+					return nil
+				}
+			}
+			return fmt.Errorf("OVN gateway binding on %s for %s has not converged to %s: %v", nodeName, info.IPv6, info.MAC, observed)
+		}).WithTimeout(time.Minute).WithPolling(2 * time.Second).Should(gomega.Succeed())
+	}
 }
 
 func setupPolicyBasedGatewayPods(f *framework.Framework, nodes *corev1.NodeList, network infraapi.Network, pod1, pod2, ns string, cmd []string, addressesv4, addressesv6 gatewayTestIPs) []string {
@@ -1619,12 +1705,7 @@ spec:
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	gomega.Expect(stdout).To(gomega.Equal(fmt.Sprintf("adminpolicybasedexternalroute.k8s.ovn.org/%s created\n", policyName)))
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	gwIPs := sets.List(sets.New(gateways...))
-	gomega.Eventually(func() string {
-		lastMsg, err := e2ekubectl.RunKubectl("", "get", "apbexternalroute", policyName, "-ojsonpath={.status.messages[-1:]}")
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		return lastMsg
-	}, time.Minute, 1).Should(gomega.ContainSubstring(fmt.Sprintf("configured external gateway IPs: %s", strings.Join(gwIPs, ","))))
+	expectAPBExternalRouteConfiguredIPs(policyName, time.Minute, gateways...)
 	gomega.Eventually(func() string {
 		status, err := e2ekubectl.RunKubectl("", "get", "apbexternalroute", policyName, "-ojsonpath={.status.status}")
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1640,12 +1721,7 @@ func checkAPBExternalRouteStatus(policyName string) {
 
 func createAPBExternalRouteCRWithStaticHop(policyName, namespaceName string, bfd bool, gateways ...string) {
 	createAPBExternalRouteCRWithStaticHopAndStatus(policyName, namespaceName, bfd, "Success", gateways...)
-	gwIPs := sets.List(sets.New(gateways...))
-	gomega.Eventually(func() string {
-		lastMsg, err := e2ekubectl.RunKubectl("", "get", "apbexternalroute", policyName, "-ojsonpath={.status.messages[-1:]}")
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		return lastMsg
-	}, time.Minute, 1).Should(gomega.ContainSubstring(fmt.Sprintf("configured external gateway IPs: %s", strings.Join(gwIPs, ","))))
+	expectAPBExternalRouteConfiguredIPs(policyName, time.Minute, gateways...)
 }
 
 func createAPBExternalRouteCRWithStaticHopAndStatus(policyName, namespaceName string, bfd bool, status string, gateways ...string) {
@@ -1692,11 +1768,7 @@ spec:
 `, policyName, namespaceName, formatStaticHops(bfd, gateways...))
 	_, err = e2ekubectl.RunKubectlInput(namespaceName, data, "apply", "-f", "-")
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	gomega.Eventually(func() string {
-		lastMsg, err := e2ekubectl.RunKubectl("", "get", "apbexternalroute", policyName, "-ojsonpath={.status.messages[-1:]}")
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-		return lastMsg
-	}, 10).Should(gomega.ContainSubstring(fmt.Sprintf("configured external gateway IPs: %s", strings.Join(gateways, ","))))
+	expectAPBExternalRouteConfiguredIPs(policyName, 10*time.Second, gateways...)
 
 	gomega.Eventually(func() string {
 		s, err := e2ekubectl.RunKubectl("", "get", "apbexternalroute", policyName, "-ojsonpath={.status.status}")
@@ -1709,6 +1781,30 @@ spec:
 		return t
 	}, 10, 1).ShouldNot(gomega.Equal(lastUpdatetime))
 
+}
+
+// expectAPBExternalRouteConfiguredIPs waits until the APB status message reports each
+// expected gateway IP as a complete list member. Substring matching is unsafe (e.g.
+// "10.0.0.1" matches inside "10.0.0.10"); dual-stack messages may also list a
+// superset of families, so membership against the parsed list is required.
+func expectAPBExternalRouteConfiguredIPs(policyName string, timeout time.Duration, gateways ...string) {
+	expected := sets.New(gateways...)
+	gomega.Eventually(func(g gomega.Gomega) {
+		lastMsg, err := e2ekubectl.RunKubectl("", "get", "apbexternalroute", policyName, "-ojsonpath={.status.messages[-1:]}")
+		g.Expect(err).NotTo(gomega.HaveOccurred(), "failed to get APB external route %s status messages", policyName)
+		_, list, found := strings.Cut(lastMsg, "configured external gateway IPs:")
+		g.Expect(found).To(gomega.BeTrue(), "missing configured gateway IPs in %q", lastMsg)
+		configured := sets.New[string]()
+		for ip := range strings.SplitSeq(list, ",") {
+			ip = strings.TrimSpace(ip)
+			if ip == "" {
+				continue
+			}
+			configured.Insert(ip)
+		}
+		g.Expect(configured.HasAll(expected.UnsortedList()...)).To(gomega.BeTrue(),
+			"missing gateway IPs in %q; configured=%v expected=%v", lastMsg, sets.List(configured), sets.List(expected))
+	}).WithTimeout(timeout).WithPolling(time.Second).Should(gomega.Succeed())
 }
 
 func deleteAPBExternalRouteCR(policyName string) {
@@ -1771,7 +1867,7 @@ func hostNameForExternalContainer(container infraapi.ExternalContainer) string {
 func pokeHostnameViaNC(podName, namespace, protocol, target string, port int) string {
 	args := []string{"exec", podName, "--"}
 	if protocol == "tcp" {
-		args = append(args, "bash", "-c", fmt.Sprintf("echo | nc -w 1 -N %s %d", target, port))
+		args = append(args, "bash", "-c", fmt.Sprintf("nc -d -w 1 %s %d", target, port))
 	} else {
 		args = append(args, "bash", "-c", fmt.Sprintf("echo | nc -w 1 -u %s %d", target, port))
 	}
@@ -1783,7 +1879,7 @@ func pokeHostnameViaNC(podName, namespace, protocol, target string, port int) st
 
 // pokeConntrackEntries returns the number of conntrack entries that match the provided pattern, protocol and podIP
 func pokeConntrackEntries(nodeName, podIP, protocol string, patterns []string) int {
-	args := []string{"get", "pods", "--selector=app=ovs-node", "--field-selector", fmt.Sprintf("spec.nodeName=%s", nodeName), "-o", "jsonpath={.items..metadata.name}"}
+	args := []string{"get", "pods", "--selector=app=ovnkube-node", "--field-selector", fmt.Sprintf("spec.nodeName=%s", nodeName), "-o", "jsonpath={.items..metadata.name}"}
 	ovnKubernetesNamespace := deploymentconfig.Get().OVNKubernetesNamespace()
 	ovsPodName, err := e2ekubectl.RunKubectl(ovnKubernetesNamespace, args...)
 	framework.ExpectNoError(err, "failed to get the ovs pod on node %s", nodeName)
@@ -1813,7 +1909,7 @@ func pokeConntrackEntries(nodeName, podIP, protocol string, patterns []string) i
 // does not include but that external-gateway e2e needs.
 func prepareExternalGatewayContainer(container infraapi.ExternalContainer) {
 	_, err := infraprovider.Get().ExecExternalContainerCommand(container, []string{
-		"apk", "add", "--no-cache", "tcpdump", "iputils", "iproute2", "netcat-openbsd", "curl", "libndp",
+		"apk", "add", "--no-cache", "tcpdump", "iputils", "iproute2", "netcat-openbsd", "nmap-ncat", "curl", "libndp",
 	})
 	framework.ExpectNoError(err, "failed to install gateway tools on external gateway %s", container.Name)
 }
@@ -1932,7 +2028,7 @@ func recreatePodWithReadinessProbe(f *framework.Framework, podName, nodeSelector
 			}
 		}
 		return false
-	}).Should(gomega.Equal(true), fmt.Sprintf("Readiness probe for second external gateway pod %s from ns %s, failed: %v", podName, namespace, err))
+	}).WithTimeout(5*time.Minute).Should(gomega.Equal(true), fmt.Sprintf("Readiness probe for second external gateway pod %s from ns %s, failed: %v", podName, namespace, err))
 }
 
 func handleGatewayPodRemoval(f *framework.Framework, removalType GatewayRemovalType, gatewayPodName, servingNamespace string) func() {
