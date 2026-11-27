@@ -1137,7 +1137,7 @@ func networkReadyConfig(t *testing.T, raName string, intent util.RouteAdvertisem
 		}}},
 	}
 	return &frrtypes.FRRConfiguration{ObjectMeta: metav1.ObjectMeta{Name: key, Namespace: "frr",
-		Labels:      map[string]string{types.OvnRouteAdvertisementsKey: raName, types.OvnRouteAdvertisementsNodeKey: util.RouteAdvertisementsNodeLabel(node.Name)},
+		Labels:      map[string]string{types.OvnRouteAdvertisementsKey: raName, types.OvnRouteAdvertisementsNodeKey: util.RouteAdvertisementsNodeLabel(node.Name), types.OvnRouteAdvertisementsUIDKey: string(intent.UID)},
 		Annotations: map[string]string{types.OvnRouteAdvertisementsKey: key}},
 		Spec: frrtypes.FRRConfigurationSpec{BGP: frrtypes.BGPConfig{Routers: []frrtypes.Router{router}}}}
 }
@@ -1158,7 +1158,7 @@ func TestNodeAdvertisementsReady(t *testing.T) {
 			network := &util.DefaultNetInfo{}
 			node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: nodeName, Annotations: map[string]string{types.NodeSubnetsAnnotation: `{"default":"10.0.0.0/24"}`}}}
 			const raName = "ra"
-			intent := util.RouteAdvertisementsIntent{}
+			intent := util.RouteAdvertisementsIntent{UID: "uid-ra"}
 			check := func(expected bool) {
 				t.Helper()
 				ready, err := c.nodeAdvertisementsReady(raName, intent, network, node)
@@ -1289,16 +1289,16 @@ func TestSetAdvertisementsFollowsNADIntent(t *testing.T) {
 				updated.Annotations = map[string]string{types.OvnRouteAdvertisementsIntentKey: string(value)}
 				g.Expect(wf.NADInformer().Informer().GetIndexer().Update(updated)).To(gomega.Succeed(), "update the NAD in %s", namespace)
 			}
-			a := util.RouteAdvertisementsIntent{TargetVRF: "vrf-a", EgressIP: true}
+			a := util.RouteAdvertisementsIntent{UID: "uid-a", TargetVRF: "vrf-a", EgressIP: true}
 			b := util.RouteAdvertisementsIntent{UID: "uid-b", Generation: 4, TargetVRF: "vrf-b", EgressIP: true}
 			setIntents("test", map[string]util.RouteAdvertisementsIntent{"a": a, "b": b})
 			c.getNADKeysForNetwork = func(string) []string { return []string{"test/nad"} }
 			node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node", Annotations: map[string]string{types.NodeSubnetsAnnotation: `{"primary":"10.1.0.0/24"}`}}}
 			g.Expect(wf.NodeCoreInformer().Informer().GetIndexer().Add(node)).To(gomega.Succeed())
-			configFor := func(name, vrf string) *frrtypes.FRRConfiguration {
-				return networkReadyConfig(t, name, util.RouteAdvertisementsIntent{TargetVRF: vrf}, netInfo, node, name+"/peers/node")
+			configFor := func(name string, intent util.RouteAdvertisementsIntent) *frrtypes.FRRConfiguration {
+				return networkReadyConfig(t, name, intent, netInfo, node, name+"/peers/node")
 			}
-			cfgA, cfgB := configFor("a", "vrf-a"), configFor("b", "vrf-b")
+			cfgA, cfgB := configFor("a", a), configFor("b", b)
 			g.Expect(c.frrIndexer.Add(cfgA)).To(gomega.Succeed())
 			g.Expect(c.frrIndexer.Add(cfgB)).To(gomega.Succeed())
 			check := func(vrfs ...string) {
@@ -1309,6 +1309,14 @@ func TestSetAdvertisementsFollowsNADIntent(t *testing.T) {
 				g.Expect(netInfo.GetEgressIPAdvertisedVRFs()[node.Name]).To(gomega.ConsistOf(vrfs), "EgressIP advertisement VRFs on node %s", node.Name)
 			}
 			check("vrf-a", "vrf-b")
+			if transport == "" {
+				unlabeled := cfgB.DeepCopy()
+				delete(unlabeled.Labels, types.OvnRouteAdvertisementsUIDKey)
+				g.Expect(c.frrIndexer.Update(unlabeled)).To(gomega.Succeed(), "observe B's export without an owner")
+				check("vrf-a")
+				g.Expect(c.frrIndexer.Update(cfgB)).To(gomega.Succeed(), "observe B's export with the matching UID")
+				check("vrf-a", "vrf-b")
+			}
 			// Only overlay depends on the generated configurations.
 			g.Expect(c.frrIndexer.Delete(cfgB)).To(gomega.Succeed())
 			if transport == "" {
@@ -1333,7 +1341,7 @@ func TestSetAdvertisementsFollowsNADIntent(t *testing.T) {
 			if transport == "" {
 				checkBothOrders("vrf-a")
 			}
-			g.Expect(c.frrIndexer.Update(configFor("b", "vrf-b-new"))).To(gomega.Succeed(), "observe B's export in the new VRF")
+			g.Expect(c.frrIndexer.Update(configFor("b", newB))).To(gomega.Succeed(), "observe B's export in the new VRF")
 			checkBothOrders("vrf-a", "vrf-b-new")
 
 			legacyB := util.RouteAdvertisementsIntent{TargetVRF: "vrf-b"}
@@ -1349,6 +1357,10 @@ func TestSetAdvertisementsFollowsNADIntent(t *testing.T) {
 			setIntents("other", map[string]util.RouteAdvertisementsIntent{"b": b})
 			checkBothOrders("vrf-a")
 			setIntents("other", map[string]util.RouteAdvertisementsIntent{"b": newB})
+			if transport == "" {
+				checkBothOrders("vrf-a") // B's old export still has the right prefixes and VRF.
+			}
+			g.Expect(c.frrIndexer.Update(configFor("b", newB))).To(gomega.Succeed(), "observe the recreated RA's export")
 			checkBothOrders("vrf-a", "vrf-b-new")
 			g.Expect(c.frrIndexer.Delete(cfgA)).To(gomega.Succeed())
 			if transport == "" {
