@@ -5013,7 +5013,7 @@
 <td><code>protocol</code> <em>string</em></td>
 <td>protocol (tcp, udp, sctp) that the traffic must match.</td>
 <td></td>
-<td>Pattern: <code>^TCP|UDP|SCTP$</code> <br></td>
+<td>Enum: [TCP UDP SCTP] <br></td>
 </tr>
 <tr>
 <td><code>port</code> <em>integer</em></td>
@@ -5041,13 +5041,13 @@
 <td><code>type</code> <em><a href="#egressfirewallruletype">EgressFirewallRuleType</a></em></td>
 <td>type marks this as an "Allow" or "Deny" rule</td>
 <td></td>
-<td>Pattern: <code>^Allow|Deny$</code> <br></td>
+<td>Enum: [Allow Deny] <br></td>
 </tr>
 <tr>
 <td><code>ports</code> <em><a href="#egressfirewallport">EgressFirewallPort</a> array</em></td>
 <td>ports specify what ports and protocols the rule applies to</td>
 <td></td>
-<td></td>
+<td>Optional: {} <br></td>
 </tr>
 <tr>
 <td><code>to</code> <em><a href="#egressfirewalldestination">EgressFirewallDestination</a></em></td>
@@ -5061,7 +5061,7 @@
 <p><em>Underlying type:</em> <em>string</em></p>
 <p>EgressNetworkFirewallRuleType indicates whether an EgressNetworkFirewallRule allows or denies traffic</p>
 <p><em>Validation:</em>
-- Pattern: <code>^Allow|Deny$</code></p>
+- Enum: [Allow Deny]</p>
 <p><em>Appears in:</em>
 - <a href="#egressfirewallrule">EgressFirewallRule</a></p>
 <h4 id="egressfirewallspec">EgressFirewallSpec<a class="headerlink" href="#egressfirewallspec" title="Permanent link">¶</a></h4>
