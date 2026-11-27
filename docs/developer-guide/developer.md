@@ -113,3 +113,26 @@ We prefer level-driven controllers built with `pkg/controller/controller.go`. Wh
 - The network manager is the source of truth for NADs; register a lightweight, non-blocking handler via `RegisterNADReconciler` that will queue keys to the Reconciler.
 - RegisterNADReconciler  **before** starting controller workers to avoid missing events during startup.
 - For a concrete example, see `go-controller/pkg/ovn/controller/egressfirewall/egressfirewall.go`.
+
+### Network-aware reconciliation
+
+Shared event handling can delegate network-specific work to registered handlers.
+For example, the shared node controller manages the work queue and node caches,
+while each [`NodeHandler`](https://github.com/ovn-kubernetes/ovn-kubernetes/blob/master/go-controller/pkg/controllers/node/node_controller.go)
+reconciles topology for one network. Handlers must keep track of unfinished work
+for their network independently of the shared input cache.
+
+For ordinary node add/update attempts, `oldNode` and `oldState` describe the
+previous attempt, even if it failed; `newNode` and `newState` describe the latest
+desired state. Matching inputs therefore do not mean that reconciliation has
+completed. Track pending work per component, such as gateway setup or pod
+enqueueing, and clear each retry flag only when that component succeeds. This
+lets retries finish failed work while still detecting changes to inputs that
+other components have already applied.
+
+Some transitions require cleanup using the original node inputs. If that cleanup
+fails, return `RetryWithPreviousNode(err)` before running ordinary add/update
+components so the next attempt retains those inputs. Also retain any work needed
+to restore resources removed by partial teardown if the desired state reverts.
+Deletion must be idempotent and tolerate a name-only node when no prior attempt
+was cached. See the `NodeHandler.ReconcileNode` comments for the full contract.
