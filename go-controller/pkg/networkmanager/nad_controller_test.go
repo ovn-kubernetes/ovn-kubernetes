@@ -41,6 +41,102 @@ import (
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 )
 
+func TestStartupPreservesActiveDynamicNetworks(t *testing.T) {
+	for _, async := range []bool{false, true} {
+		t.Run(fmt.Sprintf("async=%t", async), func(t *testing.T) {
+			g := gomega.NewWithT(t)
+			t.Setenv("KUBE_FEATURE_WatchListClient", "false")
+			g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+			t.Cleanup(func() { g.Expect(config.PrepareTestConfig()).To(gomega.Succeed()) })
+			config.OVNKubernetesFeature.EnableMultiNetwork = true
+			config.OVNKubernetesFeature.EnableNetworkSegmentation = true
+			config.OVNKubernetesFeature.EnableDynamicUDNAllocation = true
+
+			nad, err := ovntesting.BuildNAD("nad", "ns", &ovncnitypes.NetConf{
+				NetConf:  cnitypes.NetConf{Name: "live-network", Type: "ovn-k8s-cni-overlay"},
+				Topology: types.Layer3Topology, Role: types.NetworkRolePrimary,
+				Subnets: "10.200.0.0/16/24", MTU: 1400, NADName: "ns/nad",
+			})
+			g.Expect(err).NotTo(gomega.HaveOccurred())
+			nad.Annotations = map[string]string{types.OvnNetworkIDAnnotation: "2"}
+			owned := true
+			nad.OwnerReferences = []metav1.OwnerReference{{Kind: "UserDefinedNetwork", Name: "network", Controller: &owned}}
+			ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
+				Name: "ns", Labels: map[string]string{types.RequiredUDNNamespaceLabel: ""},
+			}}
+			pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod", Namespace: "ns"}, Spec: corev1.PodSpec{NodeName: "node1"}}
+			node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node1"}}
+			clients := util.GetOVNClientset(ns, nad, pod, node).GetClusterManagerClientset()
+			wf, err := factory.NewClusterManagerWatchFactory(clients)
+			g.Expect(err).NotTo(gomega.HaveOccurred())
+			g.Expect(wf.Start()).To(gomega.Succeed())
+			t.Cleanup(wf.Shutdown)
+			cm := &testControllerManager{controllers: map[string]NetworkController{}}
+			cm.defaultNetwork = &testNetworkController{ReconcilableNetInfo: &util.DefaultNetInfo{}, tcm: cm}
+			c, err := newController("test", "node1", cm, wf, nil, nil, nil, "node1", async)
+			g.Expect(err).NotTo(gomega.HaveOccurred())
+
+			// Keep NAD refreshes queued until startup cleanup has taken its inventory.
+			gate := make(chan struct{})
+			c.controller = controller.NewController(c.name, &controller.ControllerConfig[nettypes.NetworkAttachmentDefinition]{
+				Informer: wf.NADInformer().Informer(), Lister: c.nadLister.List,
+				ObjNeedsUpdate: c.nadNeedsUpdate, Threadiness: 1,
+				RateLimiter: workqueue.DefaultTypedControllerRateLimiter[string](),
+				Reconcile: func(ctx context.Context, key string) error {
+					<-gate
+					return c.sync(ctx, key)
+				},
+			})
+			t.Cleanup(func() {
+				close(gate)
+				c.Stop()
+			})
+			g.Expect(c.Start()).To(gomega.Succeed())
+			g.Expect(c.podTracker.NodeHasNAD("node1", "ns/nad")).To(gomega.BeTrue())
+			names := sets.New[string]()
+			for _, network := range cm.valid {
+				names.Insert(network.GetNetworkName())
+			}
+			g.Expect(names.Has("live-network")).To(gomega.BeTrue(), "cleanup must preserve networks with active pods")
+		})
+	}
+}
+
+func TestStartupFailureStopsControllers(t *testing.T) {
+	g := gomega.NewWithT(t)
+	t.Setenv("KUBE_FEATURE_WatchListClient", "false")
+	g.Expect(config.PrepareTestConfig()).To(gomega.Succeed())
+	t.Cleanup(func() { g.Expect(config.PrepareTestConfig()).To(gomega.Succeed()) })
+	config.OVNKubernetesFeature.EnableMultiNetwork = true
+
+	nad, err := ovntesting.BuildNAD("nad", "ns", &ovncnitypes.NetConf{
+		NetConf:  cnitypes.NetConf{Name: "network", Type: "ovn-k8s-cni-overlay"},
+		Topology: types.Layer3Topology, Subnets: "10.200.0.0/16/24", MTU: 1400, NADName: "ns/nad",
+	})
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	nad.Annotations = map[string]string{types.OvnNetworkIDAnnotation: "2"}
+	clients := util.GetOVNClientset(nad).GetClusterManagerClientset()
+	wf, err := factory.NewClusterManagerWatchFactory(clients)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	t.Cleanup(wf.Shutdown)
+	g.Expect(wf.Start()).To(gomega.Succeed())
+	startErr := fmt.Errorf("network startup failed")
+	cm := &testControllerManager{
+		controllers: map[string]NetworkController{}, raiseErrorWhenStartingController: startErr,
+	}
+	cm.defaultNetwork = &testNetworkController{ReconcilableNetInfo: &util.DefaultNetInfo{}, tcm: cm}
+	c, err := newController("test", "node1", cm, wf, nil, nil, nil, "node1", false)
+	g.Expect(err).NotTo(gomega.HaveOccurred())
+	t.Cleanup(c.Stop)
+
+	g.Expect(c.Start()).To(gomega.MatchError(gomega.ContainSubstring(startErr.Error())))
+	select {
+	case <-c.stopChan:
+	default:
+		t.Fatal("startup failure did not stop the NAD controller")
+	}
+}
+
 func TestNADNeedsUpdate_NotifiesReconcilersOnNoopUpdate(t *testing.T) {
 	g := gomega.NewWithT(t)
 
