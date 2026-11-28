@@ -11,9 +11,12 @@ import (
 	discovery "k8s.io/api/discovery/v1"
 	ktypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/klog/v2"
 
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kube/healthcheck"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/networkmanager"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	utilerrors "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util/errors"
@@ -24,21 +27,39 @@ import (
 
 type loadBalancerHealthChecker struct {
 	sync.Mutex
-	nodeName     string
-	server       healthcheck.Server
-	services     map[ktypes.NamespacedName]uint16
-	endpoints    map[ktypes.NamespacedName]int
-	watchFactory factory.NodeWatchFactory
+	nodeName       string
+	server         healthcheck.Server
+	services       map[ktypes.NamespacedName]uint16
+	endpoints      map[ktypes.NamespacedName]int
+	watchFactory   factory.NodeWatchFactory
+	networkManager networkmanager.Interface
 }
 
-func newLoadBalancerHealthChecker(nodeName string, watchFactory factory.NodeWatchFactory) *loadBalancerHealthChecker {
-	return &loadBalancerHealthChecker{
-		nodeName:     nodeName,
-		server:       healthcheck.NewServer(nodeName, nil, nil, nil),
-		services:     make(map[ktypes.NamespacedName]uint16),
-		endpoints:    make(map[ktypes.NamespacedName]int),
-		watchFactory: watchFactory,
+func newLoadBalancerHealthChecker(nodeName string, watchFactory factory.NodeWatchFactory, networkManager networkmanager.Interface) *loadBalancerHealthChecker {
+	l := &loadBalancerHealthChecker{
+		nodeName:       nodeName,
+		services:       make(map[ktypes.NamespacedName]uint16),
+		endpoints:      make(map[ktypes.NamespacedName]int),
+		watchFactory:   watchFactory,
+		networkManager: networkManager,
 	}
+	l.server = healthcheck.NewServer(nodeName, nil, nil, nil, l.networkAvailable)
+	return l
+}
+
+func (l *loadBalancerHealthChecker) networkAvailable(namespace string) bool {
+	if !config.OVNKubernetesFeature.EnableDynamicUDNAllocation {
+		return true
+	}
+	// Use the same local network lookup as service programming. This retains
+	// networks during the deletion grace period and excludes dynamically removed
+	// networks even if EndpointSlices still report local ready endpoints.
+	network, err := l.networkManager.GetActiveNetworkForNamespace(namespace)
+	if err != nil {
+		klog.V(5).Infof("Service health check cannot resolve network for namespace %s: %v", namespace, err)
+		return false
+	}
+	return network != nil
 }
 
 func (l *loadBalancerHealthChecker) AddService(svc *corev1.Service) error {

@@ -114,7 +114,7 @@ func TestServer(t *testing.T) {
 	listener := newFakeListener()
 	httpFactory := newFakeHTTPServerFactory()
 
-	hcsi := NewServer("hostname", nil, listener, httpFactory)
+	hcsi := NewServer("hostname", nil, listener, httpFactory, func(string) bool { return true })
 	hcs := hcsi.(*server)
 	if len(hcs.services) != 0 {
 		t.Errorf("expected 0 services, got %d", len(hcs.services))
@@ -376,6 +376,41 @@ func TestServer(t *testing.T) {
 	testHandler(t, hcs, nsn2, http.StatusServiceUnavailable, 0)
 	testHandler(t, hcs, nsn3, http.StatusOK, 7)
 	testHandler(t, hcs, nsn4, http.StatusOK, 6)
+}
+
+func TestNetworkAvailability(t *testing.T) {
+	udnService := mknsn("udn", "service")
+	defaultService := mknsn("default", "service")
+	available := sets.New("default")
+	hcs := NewServer("hostname", nil, newFakeListener(), newFakeHTTPServerFactory(), available.Has).(*server)
+	if err := hcs.SyncServices(map[types.NamespacedName]uint16{udnService: 9376, defaultService: 9377}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := hcs.SyncServices(nil); err != nil {
+			t.Error(err)
+		}
+	})
+	if err := hcs.SyncEndpoints(map[types.NamespacedName]int{udnService: 1, defaultService: 1}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Keep the endpoint counts unchanged: network activity alone must change
+	// the HTTP response without affecting a service on another network.
+	testHandler(t, hcs, udnService, http.StatusServiceUnavailable, 1)
+	testHandler(t, hcs, defaultService, http.StatusOK, 1)
+	available.Insert("udn")
+	testHandler(t, hcs, udnService, http.StatusOK, 1)
+	available.Delete("udn")
+	testHandler(t, hcs, udnService, http.StatusServiceUnavailable, 1)
+	testHandler(t, hcs, defaultService, http.StatusOK, 1)
+	available.Insert("udn")
+	testHandler(t, hcs, udnService, http.StatusOK, 1)
+
+	if err := hcs.SyncEndpoints(nil); err != nil {
+		t.Fatal(err)
+	}
+	testHandler(t, hcs, udnService, http.StatusServiceUnavailable, 0)
 }
 
 func testHandler(t *testing.T, hcs *server, nsn types.NamespacedName, status int, endpoints int) {

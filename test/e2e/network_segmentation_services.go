@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"slices"
+	"strings"
 	"time"
 
 	nadclient "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/typed/k8s.cni.cncf.io/v1"
@@ -71,6 +72,80 @@ var _ = Describe("Network Segmentation: services", feature.NetworkSegmentation, 
 			})
 			f.Namespace = namespace
 			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("fails service health checks while a Dynamic UDN is inactive on the node", func() {
+			if !isDynamicUDNEnabled() {
+				Skip("test requires DYNAMIC_UDN_ALLOCATION=true")
+			}
+			ctx := context.Background()
+			nodes, err := e2enode.GetBoundedReadySchedulableNodes(ctx, cs, 2)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(nodes.Items).To(HaveLen(2))
+			node := &nodes.Items[0]
+
+			cudnName := randomNetworkMetaName()
+			cleanupManifest, err := createManifest("", newPrimaryClusterUDNManifest(cs, cudnName, f.Namespace.Name))
+			DeferCleanup(cleanupManifest)
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() {
+				Expect(cs.CoreV1().Pods(f.Namespace.Name).DeleteCollection(ctx, metav1.DeleteOptions{}, metav1.ListOptions{})).To(Succeed())
+				_, err := e2ekubectl.RunKubectl("", "delete", "clusteruserdefinednetwork", cudnName, "--wait", "--timeout=120s")
+				Expect(err).NotTo(HaveOccurred())
+			})
+			Eventually(clusterUserDefinedNetworkReadyFunc(ctx, f.DynamicClient, cudnName), 30*time.Second, time.Second).Should(Succeed())
+
+			By("creating a local ready endpoint that does not activate the UDN")
+			jig := e2eservice.NewTestJig(cs, f.Namespace.Name, "udn-health-check")
+			service, err := jig.CreateTCPService(ctx, func(s *v1.Service) {
+				s.Spec.Type = v1.ServiceTypeLoadBalancer
+				s.Spec.ExternalTrafficPolicy = v1.ServiceExternalTrafficPolicyLocal
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(service.Spec.HealthCheckNodePort).NotTo(BeZero())
+			endpointPod := e2epod.NewAgnhostPod(f.Namespace.Name, "host-endpoint", nil, nil, nil)
+			endpointPod.Spec.NodeName = node.Name
+			endpointPod.Spec.HostNetwork = true
+			endpointPod.Labels = jig.Labels
+			e2epod.NewPodClient(f).CreateSync(ctx, endpointPod)
+
+			// Probe the node directly: this tests the cloud LB health-check
+			// responder without depending on a provider provisioning a load balancer.
+			addresses := e2enode.GetAddressesByTypeAndFamily(node, v1.NodeInternalIP, service.Spec.IPFamilies[0])
+			Expect(addresses).NotTo(BeEmpty())
+			url := "http://" + net.JoinHostPort(addresses[0], fmt.Sprint(service.Spec.HealthCheckNodePort)) + "/healthz"
+			expectHealth := func(status string) {
+				Eventually(func(g Gomega) {
+					output, err := infraprovider.Get().ExecK8NodeCommand(nodes.Items[1].Name, []string{
+						"curl", "--noproxy", "*", "--silent", "--show-error", "--max-time", "5",
+						"--write-out", "\n%{http_code}", url,
+					})
+					g.Expect(err).NotTo(HaveOccurred())
+					parts := strings.SplitN(strings.TrimSpace(output), "\n", 2)
+					g.Expect(parts).To(HaveLen(2))
+					var payload struct {
+						LocalEndpoints int `json:"localEndpoints"`
+					}
+					g.Expect(json.Unmarshal([]byte(parts[0]), &payload)).To(Succeed())
+					g.Expect(payload.LocalEndpoints).To(Equal(1), "the endpoint must remain ready throughout network transitions")
+					g.Expect(parts[1]).To(Equal(status))
+				}, 5*time.Minute, time.Second).Should(Succeed())
+			}
+			expectHealth("503")
+
+			By("activating the UDN without changing the service's endpoints")
+			activationPod := e2epod.NewAgnhostPod(f.Namespace.Name, "network-activation", nil, nil, nil)
+			activationPod.Spec.NodeName = node.Name
+			e2epod.NewPodClient(f).CreateSync(ctx, activationPod)
+			expectHealth("200")
+
+			By("waiting for dynamic removal after the last UDN pod is deleted")
+			e2epod.NewPodClient(f).DeleteSync(ctx, activationPod.Name, metav1.DeleteOptions{}, framework.PodDeleteTimeout)
+			expectHealth("503")
+
+			By("reactivating the UDN and recovering health without an endpoint update")
+			e2epod.NewPodClient(f).CreateSync(ctx, activationPod)
+			expectHealth("200")
 		})
 
 		It("replays NodePort programming when a namespace joins an active primary network", func() {
