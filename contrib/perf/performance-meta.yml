@@ -1,3 +1,33 @@
-github_ref: $GITHUB_HEAD_REF
-github_ref_name: $GITHUB_REF_NAME
-github_sha: $GITHUB_SHA
+github_ref: "$GITHUB_HEAD_REF"
+github_ref_name: "$GITHUB_REF_NAME"
+github_sha: "$GITHUB_SHA"
+github_run_id: "$GITHUB_RUN_ID"
+
+iterations: $ITERATIONS
+
+k8s_version: "$K8S_VERSION"
+platform_ipv4: "$PLATFORM_IPV4_SUPPORT"
+platform_ipv6: "$PLATFORM_IPV6_SUPPORT"
+
+gateway_mode: "$OVN_GATEWAY_MODE"
+cni_mode: "$CNI_MODE"
+unprivileged_mode: "$OVN_UNPRIVILEGED_MODE"
+second_bridge: "$OVN_SECOND_BRIDGE"
+dynamic_udn: "$DYNAMIC_UDN_ALLOCATION"
+multi_net: "$ENABLE_MULTI_NET"
+network_segmentation: "$ENABLE_NETWORK_SEGMENTATION"
+network_connect: "$ENABLE_NETWORK_CONNECT"
+pre_conf_udn_addr: "$ENABLE_PRE_CONF_UDN_ADDR"
+advertised_udn_isolation_mode: "$ADVERTISED_UDN_ISOLATION_MODE"
+route_advertisements: "$ENABLE_ROUTE_ADVERTISEMENTS"
+advertise_default_network: "$ADVERTISE_DEFAULT_NETWORK"
+multi_pod_subnet: "$MULTI_POD_SUBNET"
+hybrid_overlay: "$OVN_HYBRID_OVERLAY_ENABLE"
+multicast: "$OVN_MULTICAST_ENABLE"
+empty_lb_events: "$OVN_EMPTY_LB_EVENTS"
+disable_snat_multiple_gws: "$OVN_DISABLE_SNAT_MULTIPLE_GWS"
+disable_forwarding: "$OVN_DISABLE_FORWARDING"
+dns_name_resolver: "$OVN_ENABLE_DNSNAMERESOLVER"
+network_qos: "$OVN_NETWORK_QOS_ENABLE"
+ovn_repo: "$OVN_REPO"
+ovn_gitref: "$OVN_GITREF"
