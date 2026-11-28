@@ -152,6 +152,34 @@ var _ = Describe("Level-driven controller", func() {
 
 		Eventually(func() bool { return failureCounter.Load() > DefaultMaxAttempts+1 }).Should(BeTrue())
 	})
+	It("retries beyond the default limit and resets backoff after success", func() {
+		const key = "namespace1/pod1"
+		const attemptsBeforeSuccess = DefaultMaxAttempts + 3
+		config := getDefaultConfig()
+		rateLimiter := workqueue.NewTypedItemExponentialFailureRateLimiter[string](time.Millisecond, 5*time.Millisecond)
+		config.RateLimiter = rateLimiter
+		config.MaxAttempts = InfiniteAttempts
+		var attempts atomic.Uint64
+		var retriesAtSuccess atomic.Int64
+		config.Reconcile = func(_ context.Context, key string) error {
+			if attempts.Add(1) < attemptsBeforeSuccess {
+				return fmt.Errorf("not ready")
+			}
+			retriesAtSuccess.Store(int64(rateLimiter.NumRequeues(key)))
+			return nil
+		}
+		startController(config, nil)
+		controller.Reconcile(key)
+
+		Eventually(retriesAtSuccess.Load).Should(BeEquivalentTo(attemptsBeforeSuccess - 1))
+		Expect(attempts.Load()).To(BeEquivalentTo(attemptsBeforeSuccess))
+		Eventually(func() int { return rateLimiter.NumRequeues(key) }).Should(BeZero())
+		Consistently(attempts.Load).Should(BeEquivalentTo(attemptsBeforeSuccess))
+
+		controller.Reconcile(key)
+		Eventually(attempts.Load).Should(BeEquivalentTo(attemptsBeforeSuccess + 1))
+		Eventually(retriesAtSuccess.Load).Should(BeZero())
+	})
 	It("ignores events when ObjNeedsUpdate returns false", func() {
 		namespace := util.NewNamespace(namespace1Name)
 		pod := &corev1.Pod{

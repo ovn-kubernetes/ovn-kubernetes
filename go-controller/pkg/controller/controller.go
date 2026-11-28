@@ -43,7 +43,17 @@ func DefaultRateLimiter[T comparable]() workqueue.TypedRateLimiter[T] {
 // Reconciler is a basic level-driven controller that is fed externally of items
 // to reconcile through its Reconcile method
 type Reconciler interface {
+	// Reconcile enqueues an external change. Errors returned by the configured
+	// reconcile function are retried using RateLimiter and MaxAttempts;
+	// a successful reconciliation resets backoff.
 	Reconcile(key string)
+	// ReconcileRateLimited enqueues an external notification using this queue's
+	// configured rate limiter. It is intended for callers outside this queue's
+	// reconcile function, such as another controller.
+	// Do not use it to retry the current key from its own reconcile function:
+	// returning nil resets the key's backoff without cancelling the scheduled
+	// retry. Return an error instead and configure MaxAttempts as needed.
+	// Use ReconcileAfter for intentional polling after a successful reconcile.
 	ReconcileRateLimited(key string)
 	ReconcileAfter(key string, duration time.Duration)
 	addHandler() error
