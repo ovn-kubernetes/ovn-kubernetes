@@ -23,6 +23,7 @@ import (
 	rav1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/routeadvertisements/v1"
 	crdtypes "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/types"
 	udnv1 "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/crd/userdefinednetwork/v1"
+	ovnkubevirt "github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/kubevirt"
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/allocators"
 	"github.com/ovn-kubernetes/ovn-kubernetes/test/e2e/deploymentconfig"
@@ -62,6 +63,19 @@ import (
 	kubevirtv1 "kubevirt.io/api/core/v1"
 	kvmigrationsv1alpha1 "kubevirt.io/api/migrations/v1alpha1"
 )
+
+// Use the node's tools because the HTTP container may not ship iproute2.
+func execInMigrationPeerNetNS(pod *corev1.Pod, args ...string) (string, error) {
+	command := []string{"bash", "-c", `set -eu
+sandbox=$(crictl pods --namespace "$1" --name "^$2$" -s Ready -q)
+test -n "$sandbox"
+pid=$(crictl inspectp -o go-template --template '{{.info.pid}}' "$sandbox")
+test "$pid" -gt 1
+shift 2
+exec nsenter -t "$pid" -n "$@"
+`, "migration-peer-neighbors", pod.Namespace, pod.Name}
+	return infraprovider.Get().ExecK8NodeCommand(pod.Spec.NodeName, append(command, args...))
+}
 
 func newControllerRuntimeClient() (crclient.Client, error) {
 	config, err := clientcmd.BuildConfigFromFlags("", os.Getenv("KUBECONFIG"))
@@ -1057,6 +1071,63 @@ config:
 			checkConnectivityAndNetworkPolicies(vmName, externalContainer, serverAddresses, serverPort, step)
 		}
 
+		warmMigrationPeerNeighbors = func(vmi *kubevirtv1.VirtualMachineInstance) func(bool) {
+			GinkgoHelper()
+			by(vmi.Name, "Warm both IPv4 ARP entries with the directly reachable MACs")
+			var peer *corev1.Pod
+			for _, pod := range httpServerTestPods {
+				if pod.Spec.NodeName == vmi.Status.NodeName {
+					peer = pod
+					break
+				}
+			}
+			Expect(peer).NotTo(BeNil(), "HTTP peer on the migration source node")
+			annotation, err := util.UnmarshalPodAnnotation(peer.Annotations, "default")
+			Expect(err).NotTo(HaveOccurred())
+			peerAddr, err := util.MatchFirstIPNetFamily(false, annotation.IPs)
+			Expect(err).NotTo(HaveOccurred())
+			peerIP, peerMAC := peerAddr.IP.String(), annotation.MAC.String()
+
+			vmIPs, err := globalAddressesByFamily(utilnet.IsIPv4String, vmi)()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(vmIPs).To(HaveLen(1))
+			vmIP := vmIPs[0]
+			Expect(peerAddr.Contains(net.ParseIP(vmIP))).To(BeTrue(), "VM and peer must be on the same subnet")
+			output, err := virtClient.RunCommand(vmi, "cat /sys/class/net/eth0/address", 5*time.Second)
+			Expect(err).NotTo(HaveOccurred())
+			vmMAC, err := net.ParseMAC(strings.TrimSpace(output))
+			Expect(err).NotTo(HaveOccurred(), output)
+
+			checkNeighbors := func(routed bool) {
+				GinkgoHelper()
+				wantVMMAC, wantPeerMAC := vmMAC.String(), peerMAC
+				if routed {
+					wantVMMAC, wantPeerMAC = ovnkubevirt.ARPProxyMAC, ovnkubevirt.ARPProxyMAC
+				}
+				Eventually(func(g Gomega) {
+					output, err := virtClient.RunCommand(vmi, fmt.Sprintf("ip -4 neigh show to %s dev eth0", peerIP), 5*time.Second)
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(output).To(ContainSubstring("lladdr "+wantPeerMAC), "VM's neighbor entry for the peer")
+					output, err = execInMigrationPeerNetNS(peer, "ip", "-4", "neigh", "show", "to", vmIP, "dev", "eth0")
+					g.Expect(err).NotTo(HaveOccurred(), output)
+					g.Expect(output).To(ContainSubstring("lladdr "+wantVMMAC), "peer's neighbor entry for the VM")
+				}).WithPolling(time.Second).WithTimeout(15 * time.Second).Should(Succeed())
+			}
+
+			checkNeighbors(false)
+			// Keep the learned entries reachable through migration so normal
+			// ARP retry cannot hide a missing announcement on either side.
+			const reachableTime = "net.ipv4.neigh.eth0.base_reachable_time_ms=600000"
+			output, err = virtClient.RunCommand(vmi, fmt.Sprintf("sudo -n sysctl -w %s && sudo -n ip -4 neigh replace %s lladdr %s nud reachable dev eth0", reachableTime, peerIP, peerMAC), 5*time.Second)
+			Expect(err).NotTo(HaveOccurred(), output)
+			output, err = execInMigrationPeerNetNS(peer, "sysctl", "-w", reachableTime)
+			Expect(err).NotTo(HaveOccurred(), output)
+			output, err = execInMigrationPeerNetNS(peer, "ip", "-4", "neigh", "replace", vmIP, "lladdr", vmMAC.String(), "nud", "reachable", "dev", "eth0")
+			Expect(err).NotTo(HaveOccurred(), output)
+
+			return checkNeighbors
+		}
+
 		runLiveMigrationTest = func(td liveMigrationTestData, vm *kubevirtv1.VirtualMachine, externalContainer infraapi.ExternalContainer) {
 			GinkgoHelper()
 			defer GinkgoRecover()
@@ -1119,8 +1190,18 @@ config:
 				checkConnectivityAndNetworkPolicies(vm.Name, externalContainer, serverAddresses, serverPort, "after live migrate to check failed migration")
 			} else {
 				originalNode := vmi.Status.NodeName
+				var checkPeerNeighbors func(bool)
+				if isIPv4Supported(fr.ClientSet) {
+					checkPeerNeighbors = warmMigrationPeerNeighbors(vmi)
+				}
 				by(vm.Name, "Live migrate for the first time")
-				liveMigrateAndCheck(vm.Name, td.mode, externalContainer, serverAddresses, serverPort, "after live migrate for the first time")
+				liveMigrateVirtualMachine(vm.Name)
+				checkLiveMigrationSucceeded(vm.Name, td.mode)
+				if checkPeerNeighbors != nil {
+					by(vm.Name, "Check that the guest and source peer both learned the ARP proxy MAC")
+					checkPeerNeighbors(true)
+				}
+				checkConnectivityAndNetworkPolicies(vm.Name, externalContainer, serverAddresses, serverPort, "after live migrate for the first time")
 
 				by(vm.Name, "Live migrate for the second time to a node not owning the subnet")
 				// Remove the node selector label from original node to force
@@ -1137,7 +1218,13 @@ config:
 						e2enode.RemoveLabelOffNode(fr.ClientSet, selectedNode.Name, namespace)
 					}
 				}
-				liveMigrateAndCheck(vm.Name, td.mode, externalContainer, serverAddresses, serverPort, "after live migration to node owning the subnet")
+				liveMigrateVirtualMachine(vm.Name)
+				checkLiveMigrationSucceeded(vm.Name, td.mode)
+				if checkPeerNeighbors != nil {
+					by(vm.Name, "Check that the guest and peer relearned their direct MACs")
+					checkPeerNeighbors(false)
+				}
+				checkConnectivityAndNetworkPolicies(vm.Name, externalContainer, serverAddresses, serverPort, "after live migration to node owning the subnet")
 
 				if isIPv4Supported(fr.ClientSet) {
 					by(vm.Name, "Re-resolve the IPv4 gateway on its subnet owner before leaving again")
@@ -1301,6 +1388,8 @@ config:
 	})
 
 	Context("with default pod network", func() {
+		var stopCapture func(bool)
+
 		BeforeEach(func() {
 			ns, err := fr.CreateNamespace(context.TODO(), fr.BaseName, map[string]string{
 				"e2e-framework": fr.BaseName,
@@ -1323,6 +1412,13 @@ config:
 			prepareHTTPServerPods(map[string]string{}, checkPodHasIPAtStatus)
 		})
 
+		JustAfterEach(func() {
+			if stopCapture != nil {
+				stopCapture(!CurrentSpecReport().Failed())
+				stopCapture = nil
+			}
+		})
+
 		AfterEach(func() {
 			for _, node := range selectedNodes {
 				e2enode.RemoveLabelOffNode(fr.ClientSet, node.Name, namespace)
@@ -1337,6 +1433,8 @@ config:
 				Skip("Post copy live migration explicitly skipped")
 			}
 			var err error
+			stopCapture, err = d.MigrationCapture()
+			Expect(err).NotTo(HaveOccurred(), "start migration capture")
 
 			d.ConntrackDumpingDaemonSet()
 			d.OVSFlowsDumpingDaemonSet(deploymentconfig.Get().ExternalBridgeName())

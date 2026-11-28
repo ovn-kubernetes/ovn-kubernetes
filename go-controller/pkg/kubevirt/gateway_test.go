@@ -68,8 +68,12 @@ func TestDefaultNetworkGatewayGARP(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{kubevirtv1.AppLabel: "virt-launcher"}},
 				Spec:       corev1.PodSpec{NodeName: "target", HostNetwork: tc.hostNetwork},
 			}
+			ips := ovntest.MustParseIPNets("10.244.1.8/24", "fd00:1::8/64")
+			if len(gateways) == 1 && gateways[0].To4() == nil {
+				ips = ips[1:]
+			}
 			annotations, err := util.MarshalPodAnnotation(nil, &util.PodAnnotation{
-				IPs: ovntest.MustParseIPNets("10.244.1.8/24", "fd00:1::8/64"),
+				IPs: ips,
 				MAC: ovntest.MustParseMAC("0a:58:0a:f4:01:08"), Gateways: gateways, Role: tc.role,
 			}, types.DefaultNetworkName)
 			require.NoError(t, err)
@@ -84,38 +88,77 @@ func TestDefaultNetworkGatewayGARP(t *testing.T) {
 				pod.Annotations[kubevirtv1.AllowPodBridgeNetworkLiveMigrationAnnotation] = ""
 			}
 			// No node lookup is needed, even when returning to the subnet owner.
-			r := NewClusterDefaultNetworkGatewayAnnouncer(types.K8sMgmtIntfName)
+			r := NewDefaultNetworkNeighborAnnouncer(types.K8sMgmtIntfName)
 			calls := 0
 			sendErr := errors.New("send failed")
 			r.broadcastGARP = func(iface string, garp util.GARP) error {
 				calls++
 				require.Equal(t, types.K8sMgmtIntfName, iface)
-				require.Equal(t, "10.244.1.1", garp.IP().String())
-				require.Equal(t, tc.wantMAC, garp.MAC().String())
+				if garp.IP().String() == "10.244.1.8" {
+					require.Equal(t, "0a:58:0a:f4:01:08", garp.MAC().String())
+				} else {
+					require.Equal(t, "10.244.1.1", garp.IP().String())
+					require.Equal(t, tc.wantMAC, garp.MAC().String())
+				}
 				if tc.sendFailed && calls == 1 {
 					return sendErr
 				}
 				return nil
 			}
 			status := &LiveMigrationStatus{TargetPod: pod, State: tc.state}
-			err = r.AnnounceIPv4AfterLiveMigration(status)
+			err = r.AnnounceIPv4AfterLiveMigration(status, nil)
 			switch {
 			case tc.invalid:
 				require.Error(t, err)
 			case tc.sendFailed:
 				require.ErrorIs(t, err, sendErr)
-				require.NoError(t, r.AnnounceIPv4AfterLiveMigration(status))
-				require.Equal(t, 2, calls)
+				require.NoError(t, r.AnnounceIPv4AfterLiveMigration(status, nil))
+				require.Equal(t, 3, calls)
 			default:
 				require.NoError(t, err)
 				if tc.wantMAC == "" {
 					require.Zero(t, calls)
 				} else {
-					require.Equal(t, 1, calls)
+					require.Equal(t, 2, calls)
 				}
 			}
 		})
 	}
+}
+
+func TestMigrationTargetPeerNeighbors(t *testing.T) {
+	makePod := func(node, ip, mac string) *corev1.Pod {
+		t.Helper()
+		annotations, err := util.MarshalPodAnnotation(nil, &util.PodAnnotation{
+			IPs: ovntest.MustParseIPNets(ip),
+			MAC: ovntest.MustParseMAC(mac),
+		}, types.DefaultNetworkName)
+		require.NoError(t, err)
+		return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Annotations: annotations}, Spec: corev1.PodSpec{NodeName: node}}
+	}
+	target := makePod("target", "10.244.1.8/24", "0a:58:0a:f4:01:08")
+	annotation, err := util.UnmarshalPodAnnotation(target.Annotations, types.DefaultNetworkName)
+	require.NoError(t, err)
+	remotePeer := makePod("source", "10.244.1.9/24", "0a:58:0a:f4:01:09")
+	localPeer := makePod("target", "10.244.1.10/24", "0a:58:0a:f4:01:0a")
+	oldPeer := localPeer.DeepCopy()
+	oldPeer.Spec.NodeName = "source"
+	completedPeer := makePod("target", "10.244.1.11/24", "0a:58:0a:f4:01:0b")
+	completedPeer.Status.Phase = corev1.PodSucceeded
+	unrelatedPeer := makePod("source", "10.244.2.3/24", "0a:58:0a:f4:02:03")
+
+	proxyMAC := ovntest.MustParseMAC(ARPProxyMAC)
+	neighbors := migrationTargetPeerNeighbors(target, annotation, []*corev1.Pod{
+		target, remotePeer, localPeer, oldPeer, completedPeer, unrelatedPeer,
+	}, proxyMAC)
+	actual := make(map[string]string, len(neighbors))
+	for _, neighbor := range neighbors {
+		actual[neighbor.ip.String()] = neighbor.mac.String()
+	}
+	require.Equal(t, map[string]string{
+		"10.244.1.9":  ARPProxyMAC,
+		"10.244.1.10": "0a:58:0a:f4:01:0a",
+	}, actual)
 }
 
 func TestLocalMigratablePodRoutingAndGateway(t *testing.T) {
@@ -183,7 +226,7 @@ func TestLocalMigratablePodRoutingAndGateway(t *testing.T) {
 			if tc.home {
 				require.NoError(t, lsManager.AddOrUpdateSwitch("target", ovntest.MustParseIPNets("10.244.1.0/24"), nil, nil))
 			}
-			r := NewClusterDefaultNetworkGatewayAnnouncer(types.K8sMgmtIntfName)
+			r := NewDefaultNetworkNeighborAnnouncer(types.K8sMgmtIntfName)
 			calls := 0
 			sendErr := errors.New("send failed")
 			r.broadcastGARP = func(_ string, garp util.GARP) error {
@@ -199,7 +242,12 @@ func TestLocalMigratablePodRoutingAndGateway(t *testing.T) {
 					}
 					return len(routes) == 2
 				}, time.Second, 10*time.Millisecond)
-				require.Equal(t, ARPProxyMAC, garp.MAC().String())
+				if garp.IP().String() == "10.244.1.8" {
+					require.Equal(t, "0a:58:0a:f4:01:08", garp.MAC().String())
+				} else {
+					require.Equal(t, "10.244.1.1", garp.IP().String())
+					require.Equal(t, ARPProxyMAC, garp.MAC().String())
+				}
 				if tc.sendFailure && calls == 1 {
 					return sendErr
 				}
@@ -216,12 +264,12 @@ func TestLocalMigratablePodRoutingAndGateway(t *testing.T) {
 			} else {
 				require.NoError(t, ensureLocalZonePodAddressesToNodeRoute(wf, nbClient, lsManager, pod, types.DefaultNetworkName, clusterSubnets))
 				if tc.notReady || tc.source {
-					err = reconcileIPv4GatewayForMigratablePod(wf, pod)
+					err = reconcileIPv4NeighborsForMigrationTarget(wf, pod)
 				} else {
 					status, discoverErr := DiscoverLiveMigrationStatus(wf.PodCoreInformer().Lister(), pod)
 					require.NoError(t, discoverErr)
 					require.NotNil(t, status)
-					err = r.AnnounceIPv4AfterLiveMigration(status)
+					err = r.AnnounceIPv4AfterLiveMigration(status, nil)
 				}
 			}
 			switch {
@@ -234,14 +282,14 @@ func TestLocalMigratablePodRoutingAndGateway(t *testing.T) {
 				status, discoverErr := DiscoverLiveMigrationStatus(wf.PodCoreInformer().Lister(), pod)
 				require.NoError(t, discoverErr)
 				require.NotNil(t, status)
-				require.NoError(t, r.AnnounceIPv4AfterLiveMigration(status))
-				require.Equal(t, 2, calls)
+				require.NoError(t, r.AnnounceIPv4AfterLiveMigration(status, nil))
+				require.Equal(t, 3, calls)
 			default:
 				require.NoError(t, err)
 				if tc.notReady || tc.source || tc.ipv6Only {
 					require.Zero(t, calls)
 				} else {
-					require.Equal(t, 1, calls)
+					require.Equal(t, 2, calls)
 				}
 			}
 		})

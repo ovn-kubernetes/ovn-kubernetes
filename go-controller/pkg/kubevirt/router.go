@@ -5,6 +5,7 @@ package kubevirt
 
 import (
 	"fmt"
+	"net"
 
 	kubevirtv1 "kubevirt.io/api/core/v1"
 
@@ -62,7 +63,7 @@ func DeleteRoutingForMigratedPod(nbClient libovsdbclient.Client, pod *corev1.Pod
 }
 
 // EnsureDefaultNetworkForLocalMigratablePod reconciles default-network routing
-// for a local live-migratable pod and refreshes its IPv4 gateway neighbor entry
+// for a local live-migratable pod and refreshes its IPv4 neighbor entries
 // when the migration target is ready.
 func EnsureDefaultNetworkForLocalMigratablePod(watchFactory *factory.WatchFactory, nbClient libovsdbclient.Client,
 	lsManager *logicalswitchmanager.LogicalSwitchManager, pod *corev1.Pod, clusterSubnets []config.CIDRNetworkEntry) error {
@@ -70,7 +71,7 @@ func EnsureDefaultNetworkForLocalMigratablePod(watchFactory *factory.WatchFactor
 		return fmt.Errorf("failed ensuring local-zone migration routes for pod %s/%s: %w", pod.Namespace, pod.Name, err)
 	}
 	if config.IPv4Mode {
-		return reconcileIPv4GatewayForMigratablePod(watchFactory, pod)
+		return reconcileIPv4NeighborsForMigrationTarget(watchFactory, pod)
 	}
 	return nil
 }
@@ -158,17 +159,83 @@ func ensureLocalZonePodAddressesToNodeRoute(watchFactory *factory.WatchFactory, 
 	return nil
 }
 
-func reconcileIPv4GatewayForMigratablePod(watchFactory *factory.WatchFactory, pod *corev1.Pod) error {
+func reconcileIPv4NeighborsForMigrationTarget(watchFactory *factory.WatchFactory, pod *corev1.Pod) error {
 	status, err := DiscoverLiveMigrationStatus(watchFactory.PodCoreInformer().Lister(), pod)
 	if err != nil {
 		return fmt.Errorf("failed discovering live migration status for pod %s/%s: %w", pod.Namespace, pod.Name, err)
 	}
-	if status == nil || !status.IsTarget(pod) {
+	if status == nil || !status.IsTarget(pod) || !status.IsTargetDomainReady() || util.PodWantsHostNetwork(pod) {
 		return nil
 	}
-	r := NewClusterDefaultNetworkGatewayAnnouncer(types.K8sMgmtIntfName)
-	if err := r.AnnounceIPv4AfterLiveMigration(status); err != nil {
-		return fmt.Errorf("failed reconciling IPv4 gateway after live migration for pod %s/%s: %w", pod.Namespace, pod.Name, err)
+	peers, err := watchFactory.GetAllPods()
+	if err != nil {
+		return fmt.Errorf("failed listing pods to refresh IPv4 migration neighbors: %w", err)
+	}
+	r := NewDefaultNetworkNeighborAnnouncer(types.K8sMgmtIntfName)
+	if err := r.AnnounceIPv4AfterLiveMigration(status, peers); err != nil {
+		return fmt.Errorf("failed refreshing IPv4 neighbors at migration target %s/%s: %w", pod.Namespace, pod.Name, err)
+	}
+	return nil
+}
+
+// RefreshIPv4NeighborsAfterSourceRemoval advertises the VM's new routed path
+// after its old logical port can no longer answer ARP with the direct MAC.
+func RefreshIPv4NeighborsAfterSourceRemoval(watchFactory *factory.WatchFactory, nbClient libovsdbclient.Client, source *corev1.Pod) error {
+	status, err := DiscoverLiveMigrationStatus(watchFactory.PodCoreInformer().Lister(), source)
+	if err != nil || status == nil || !status.IsTargetDomainReady() {
+		return err
+	}
+	target := status.TargetPod
+	if target.Spec.NodeName == source.Spec.NodeName || util.PodCompleted(target) || target.DeletionTimestamp != nil {
+		return nil
+	}
+	// Source deletion and the target's readiness update can be handled
+	// independently. Ensure the route is present before advertising it.
+	if err := EnsureRemoteZonePodAddressesToNodeRoute(watchFactory, nbClient, target); err != nil {
+		return err
+	}
+	annotation, err := util.UnmarshalPodAnnotation(target.Annotations, types.DefaultNetworkName)
+	if err != nil {
+		return err
+	}
+	return announceRemoteMigratedPod(target, annotation)
+}
+
+// RefreshIPv4NeighborsOnSubnetOwner handles the remote target when there is
+// no local source pod to remove, including after a controller restart.
+func RefreshIPv4NeighborsOnSubnetOwner(watchFactory *factory.WatchFactory, lsManager *logicalswitchmanager.LogicalSwitchManager, pod *corev1.Pod) error {
+	if !isTargetPodReady(pod) || util.PodCompleted(pod) || util.PodWantsHostNetwork(pod) {
+		return nil
+	}
+	annotation, err := util.UnmarshalPodAnnotation(pod.Annotations, types.DefaultNetworkName)
+	if err != nil {
+		return err
+	}
+	node, ownsSubnet := ZoneContainsPodSubnet(lsManager, annotation.IPs)
+	if !ownsSubnet {
+		return nil
+	}
+	status, err := DiscoverLiveMigrationStatus(watchFactory.PodCoreInformer().Lister(), pod)
+	if err != nil || status == nil || !status.IsTarget(pod) || !status.IsTargetDomainReady() {
+		return err
+	}
+	if status.SourcePod != nil && status.SourcePod.Spec.NodeName == node {
+		// Source removal sends the announcement after deleting the old port.
+		return nil
+	}
+	return announceRemoteMigratedPod(pod, annotation)
+}
+
+func announceRemoteMigratedPod(pod *corev1.Pod, annotation *util.PodAnnotation) error {
+	if annotation.Role == types.NetworkRoleInfrastructure {
+		return nil
+	}
+	proxyMAC, err := net.ParseMAC(ARPProxyMAC)
+	if err != nil {
+		return err
+	}
+	if err := sendNeighborGARPs(types.K8sMgmtIntfName, ipv4NeighborsForPod(annotation, proxyMAC), util.BroadcastGARP); err != nil {
+		return fmt.Errorf("failed refreshing IPv4 neighbors for remote VM pod %s/%s: %w", pod.Namespace, pod.Name, err)
 	}
 	return nil
 }
