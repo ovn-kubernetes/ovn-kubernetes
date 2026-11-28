@@ -153,6 +153,11 @@ $ make conformance
 $ popd
 ```
 
+The Ginkgo timeout of the shard and control-plane targets is set with
+`TEST_TIMEOUT`, and that of `make conformance` with
+`CONFORMANCE_TEST_TIMEOUT`. Both are a plain number of minutes, such as
+`TEST_TIMEOUT=150`.
+
 ### Running a single E2E test
 
 To run a single E2E test instead, target the shard-test action, as follows:
