@@ -49,9 +49,12 @@ type ClusterManager struct {
 	client                      clientset.Interface
 	defaultNetClusterController *networkClusterController
 	nodeController              *nodecontroller.NodeController
-	nodeAllocationController    *nodeAllocationController
-	wf                          *factory.WatchFactory
-	udnClusterManager           *userDefinedNetworkClusterManager
+	// allocationControllers reconcile the pods and the IPAMClaims of the
+	// user-defined networks that allocate to pods
+	allocationControllers    *allocationControllers
+	nodeAllocationController *nodeAllocationController
+	wf                       *factory.WatchFactory
+	udnClusterManager        *userDefinedNetworkClusterManager
 	// Controller used for programming node allocation for egress IP
 	// The OVN DB setup is handled by egressIPZoneController that runs in ovnkube-controller
 	eIPC                          *egressIPClusterController
@@ -131,7 +134,8 @@ func NewClusterManager(
 	cm.nodeAllocationController = nodeAllocationController
 
 	if config.OVNKubernetesFeature.EnableMultiNetwork {
-		cm.udnClusterManager, err = newUserDefinedNetworkClusterManager(ovnClient, wf, cm.networkManager.Interface(), recorder, nodeController)
+		cm.allocationControllers = newAllocationControllers(wf)
+		cm.udnClusterManager, err = newUserDefinedNetworkClusterManager(ovnClient, wf, cm.networkManager.Interface(), recorder, nodeController, cm.allocationControllers)
 		if err != nil {
 			return nil, err
 		}
@@ -249,6 +253,13 @@ func (cm *ClusterManager) Start(ctx context.Context) error {
 	// Start and sync the watch factory to begin listening for events
 	if err := cm.wf.Start(); err != nil {
 		return err
+	}
+
+	// The networks register to the allocation controllers as they start
+	if cm.allocationControllers != nil {
+		if err := cm.allocationControllers.Start(); err != nil {
+			return err
+		}
 	}
 
 	// Start networkManager before other controllers
@@ -387,6 +398,9 @@ func (cm *ClusterManager) Stop() {
 		cm.noOverlayController = nil
 	}
 	cm.nodeController.Stop()
+	if cm.allocationControllers != nil {
+		cm.allocationControllers.Stop()
+	}
 }
 
 func (cm *ClusterManager) NewNetworkController(netInfo util.NetInfo) (networkmanager.NetworkController, error) {
