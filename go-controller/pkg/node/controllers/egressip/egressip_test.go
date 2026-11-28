@@ -29,6 +29,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes/fake"
+	corelisters "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 	utilnet "k8s.io/utils/net"
 	"sigs.k8s.io/knftables"
@@ -1928,5 +1929,95 @@ var _ = ginkgo.Describe("isEgressIPOnLink", func() {
 			return nil
 		})
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+	})
+})
+
+var _ = ginkgo.Describe("waitForNodeEgressIPConfig", func() {
+	const nodeIPAnnotation = `{"ipv4":"11.11.0.2/16"}`
+
+	var (
+		originalMode string
+		stopCh       chan struct{}
+	)
+
+	ginkgo.BeforeEach(func() {
+		originalMode = ovnconfig.OvnKubeNode.Mode
+		stopCh = make(chan struct{})
+	})
+
+	ginkgo.AfterEach(func() {
+		ovnconfig.OvnKubeNode.Mode = originalMode
+		select {
+		case <-stopCh:
+		default:
+			close(stopCh)
+		}
+	})
+
+	newNodeLister := func(annotations map[string]string) (corelisters.NodeLister, cache.Indexer) {
+		indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{Name: node1Name, Annotations: annotations},
+		}
+		gomega.Expect(indexer.Add(node)).Should(gomega.Succeed())
+		return corelisters.NewNodeLister(indexer), indexer
+	}
+
+	ginkgo.It("waits in DPUHost mode until node-primary-ifaddr is set", func() {
+		ovnconfig.OvnKubeNode.Mode = ovntypes.NodeModeDPUHost
+		lister, indexer := newNodeLister(nil)
+		c := &Controller{nodeName: node1Name, nodeLister: lister}
+
+		errCh := make(chan error, 1)
+		go func() {
+			errCh <- c.waitForNodeEgressIPConfig(stopCh)
+		}()
+
+		ginkgo.By("not returning while the annotation is missing")
+		gomega.Consistently(errCh, 200*time.Millisecond).ShouldNot(gomega.Receive())
+
+		ginkgo.By("returning once the annotation is published")
+		gomega.Expect(indexer.Update(&corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:        node1Name,
+				Annotations: map[string]string{util.OvnNodeIfAddr: nodeIPAnnotation},
+			},
+		})).Should(gomega.Succeed())
+
+		select {
+		case err := <-errCh:
+			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+		case <-time.After(5 * time.Second):
+			ginkgo.Fail("timed out waiting for waitForNodeEgressIPConfig to return")
+		}
+	})
+
+	ginkgo.It("does not wait outside DPUHost mode", func() {
+		ovnconfig.OvnKubeNode.Mode = ovntypes.NodeModeFull
+		lister, _ := newNodeLister(nil)
+		c := &Controller{nodeName: node1Name, nodeLister: lister}
+
+		gomega.Expect(c.waitForNodeEgressIPConfig(stopCh)).Should(gomega.Succeed())
+	})
+
+	ginkgo.It("stops waiting when the controller is stopped", func() {
+		ovnconfig.OvnKubeNode.Mode = ovntypes.NodeModeDPUHost
+		lister, _ := newNodeLister(nil)
+		c := &Controller{nodeName: node1Name, nodeLister: lister}
+
+		errCh := make(chan error, 1)
+		go func() {
+			errCh <- c.waitForNodeEgressIPConfig(stopCh)
+		}()
+
+		gomega.Consistently(errCh, 200*time.Millisecond).ShouldNot(gomega.Receive())
+		close(stopCh)
+
+		select {
+		case err := <-errCh:
+			gomega.Expect(err).Should(gomega.HaveOccurred())
+		case <-time.After(5 * time.Second):
+			ginkgo.Fail("timed out waiting for waitForNodeEgressIPConfig to react to stop")
+		}
 	})
 })
