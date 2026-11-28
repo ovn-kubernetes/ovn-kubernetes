@@ -536,6 +536,7 @@ jobs:
         # ic: ["ic-single-node-zones"]
         # num-workers : "<integer value>"
         # forwarding : ["", "disable-forwarding"]
+        # link-local-forwarding : ["", "disable-link-local-forwarding"]
         # dns-name-resolver : ["", "enable-dns-name-resolver"]
         # network-segmentation : ["", "enable-network-segmentation"]
         # traffic-flow-tests : "<tests range. i.e. 1-24>"
@@ -564,9 +565,9 @@ jobs:
           - {"target": "external-gateway", "gateway-mode": "local",  "ipfamily": "ipv6",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones"}
           - {"target": "kv-live-migration", "gateway-mode": "shared", "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "num-workers": "3", "network-segmentation": "enable-network-segmentation", "routeadvertisements": "true"}
           - {"target": "kv-live-migration", "gateway-mode": "local", "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "num-workers": "3", "network-segmentation": "enable-network-segmentation", "routeadvertisements": "true", "evpn": "enable-evpn"}
-          - {"target": "control-plane", "gateway-mode": "shared", "ipfamily": "ipv4", "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "forwarding": "disable-forwarding"}
-          - {"target": "network-segmentation", "gateway-mode": "shared", "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "forwarding": "disable-forwarding"}
-          - {"target": "network-segmentation", "gateway-mode": "local", "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones"}
+          - {"target": "control-plane", "gateway-mode": "shared", "ipfamily": "ipv4", "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "forwarding": "disable-forwarding", "link-local-forwarding": "disable-link-local-forwarding"}
+          - {"target": "network-segmentation", "gateway-mode": "shared", "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "forwarding": "disable-forwarding", "link-local-forwarding": "disable-link-local-forwarding"}
+          - {"target": "network-segmentation", "gateway-mode": "local", "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "link-local-forwarding": "disable-link-local-forwarding"}
           - {"target": "network-segmentation-dynamic", "gateway-mode": "shared", "ipfamily": "ipv4", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "cni-mode": "unprivileged"}
           - {"target": "network-segmentation", "gateway-mode": "shared", "ipfamily": "ipv6", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones"}
           - {"target": "bgp", "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "snatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "routeadvertisements": "advertise-default", "network-segmentation": "enable-network-segmentation", "dns-name-resolver": "enable-dns-name-resolver"}
@@ -610,6 +611,7 @@ jobs:
       KIND_INSTALL_PLUGINS: "${{ matrix.target == 'kv-live-migration' }}"
       KIND_NUM_WORKER: "${{ matrix.num-workers }}"
       OVN_DISABLE_FORWARDING: "${{ matrix.forwarding == 'disable-forwarding' }}"
+      OVN_DISABLE_LINK_LOCAL_FORWARDING: "${{ matrix.link-local-forwarding == 'disable-link-local-forwarding' }}"
       OVN_ENABLE_DNSNAMERESOLVER: "${{ matrix.dns-name-resolver == 'enable-dns-name-resolver' }}"
       OVN_NETWORK_QOS_ENABLE: "${{ matrix.target == 'control-plane' || matrix.target == 'kv-live-migration' }}"
       TRAFFIC_FLOW_TESTS: "${{ matrix.traffic-flow-tests }}"

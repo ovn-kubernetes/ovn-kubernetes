@@ -2768,6 +2768,80 @@ var _ = Describe("UserDefinedNetworkGateway", func() {
 		Expect(fexec.CalledMatchesExpected()).To(BeTrue(), fexec.ErrorDesc)
 	})
 
+	ovntest.OnSupportedPlatformsIt("should compute an unreachable link-local route when link-local forwarding is disabled", func() {
+		config.Gateway.Interface = "eth0"
+		config.Gateway.DisableLinkLocalForwarding = true
+		config.IPv4Mode = true
+		config.IPv6Mode = true
+		config.Kubernetes.ServiceCIDRs = ovntest.MustParseIPNets("10.96.0.0/16", "fd00:10:96::/112")
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: nodeName,
+				Annotations: map[string]string{
+					"k8s.ovn.org/node-subnets": fmt.Sprintf("{\"%s\":[\"%s\", \"%s\"]}", netName, v4NodeSubnet, v6NodeSubnet),
+				},
+			},
+		}
+		nad := ovntest.GenerateNAD(netName, "rednad", "greenamespace",
+			types.Layer3Topology, "100.128.0.0/16/24,ae70::/60/64", types.NetworkRolePrimary)
+		ovntest.AnnotateNADWithNetworkID(netID, nad)
+		netInfo, err := util.ParseNADInfo(nad)
+		Expect(err).NotTo(HaveOccurred(), "failed to parse the NAD")
+		err = testNS.Do(func(ns.NetNS) error {
+			defer GinkgoRecover()
+			ofm := getDummyOpenflowManager()
+			udnGateway, err := NewUserDefinedNetworkGateway(netInfo, node, nil, nil, vrf, nil, &gateway{openflowManager: ofm}, nil, nil, nil)
+			Expect(err).NotTo(HaveOccurred(), "failed to create the UDN gateway")
+
+			mplink, err := netlink.LinkByName(mgtPort)
+			Expect(err).NotTo(HaveOccurred(), "failed to find the management port %s", mgtPort)
+			vrfTableId := util.CalculateRouteTableID(mplink.Attrs().Index)
+			udnGateway.vrfTableId = vrfTableId
+
+			routes, err := udnGateway.computeRoutesForUDN(mplink)
+			Expect(err).NotTo(HaveOccurred(), "failed to compute the UDN routes")
+			Expect(routes).To(HaveLen(11), "expected the usual UDN routes plus the unreachable link-local route")
+
+			// the unreachable default routes are unchanged
+			Expect(*routes[8].Dst).To(Equal(*ovntest.MustParseIPNet("0.0.0.0/0")), "route 8 must be the IPv4 default")
+			Expect(routes[8].Type).To(Equal(unix.RTN_UNREACHABLE), "the IPv4 default route must stay unreachable")
+			Expect(*routes[9].Dst).To(Equal(*ovntest.MustParseIPNet("::/0")), "route 9 must be the IPv6 default")
+			Expect(routes[9].Type).To(Equal(unix.RTN_UNREACHABLE), "the IPv6 default route must stay unreachable")
+
+			// the unreachable link-local route, IPv4 only
+			Expect(*routes[10].Dst).To(Equal(*ovntest.MustParseIPNet("169.254.0.0/16")), "the last route must cover the IPv4 link-local prefix")
+			Expect(routes[10].Type).To(Equal(unix.RTN_UNREACHABLE), "the link-local route must be unreachable")
+			Expect(routes[10].Priority).To(Equal(4278198272), "the link-local route must use the unreachable route metric")
+			Expect(routes[10].Protocol).To(Equal(netlink.RouteProtocol(types.OVNKProtocol)), "the link-local route must carry the OVN-Kubernetes protocol")
+			Expect(routes[10].LinkIndex).To(Equal(0), "the link-local route must not be bound to a device")
+			Expect(routes[10].Table).To(Equal(vrfTableId), "the link-local route must live in the VRF table")
+
+			// the kernel accepts the route next to a connected route for the
+			// same prefix, which keeps its lower metric, and next to the more
+			// specific masquerade subnet route
+			_, masqSubnet, err := net.ParseCIDR(config.Gateway.V4MasqueradeSubnet)
+			Expect(err).NotTo(HaveOccurred(), "failed to parse the masquerade subnet")
+			Expect(netlink.RouteAdd(&netlink.Route{LinkIndex: mplink.Attrs().Index, Dst: masqSubnet, Scope: netlink.SCOPE_LINK, Table: vrfTableId})).To(Succeed(), "failed to add the masquerade subnet route")
+			Expect(netlink.RouteAdd(&netlink.Route{LinkIndex: mplink.Attrs().Index, Dst: ovntest.MustParseIPNet("169.254.0.0/16"), Scope: netlink.SCOPE_LINK, Table: vrfTableId})).To(Succeed(), "failed to add the connected link-local route")
+			Expect(netlink.RouteAdd(&routes[10])).To(Succeed(), "the kernel refused the unreachable link-local route")
+			kernelRoutes, err := netlink.RouteListFiltered(netlink.FAMILY_V4, &netlink.Route{Table: vrfTableId}, netlink.RT_FILTER_TABLE)
+			Expect(err).NotTo(HaveOccurred(), "failed to list the VRF routes")
+			var linkLocal []string
+			for _, route := range kernelRoutes {
+				if route.Dst != nil && route.Dst.String() == "169.254.0.0/16" {
+					linkLocal = append(linkLocal, fmt.Sprintf("type=%d metric=%d", route.Type, route.Priority))
+				}
+			}
+			Expect(linkLocal).To(ConsistOf(
+				fmt.Sprintf("type=%d metric=0", unix.RTN_UNICAST),
+				fmt.Sprintf("type=%d metric=4278198272", unix.RTN_UNREACHABLE)),
+				"the connected and the unreachable link-local routes must coexist in the VRF")
+			return nil
+		})
+		Expect(err).NotTo(HaveOccurred(), "the test network namespace callback failed")
+		Expect(fexec.CalledMatchesExpected()).To(BeTrue(), fexec.ErrorDesc)
+	})
+
 	ovntest.OnSupportedPlatformsIt("should compute routes for all cluster subnets of a multi-subnet user defined network", func() {
 		config.Gateway.Interface = "eth0"
 		config.IPv4Mode = true
@@ -4320,6 +4394,46 @@ func TestDelUDNMasqIPNeighbors(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 			nlMock.AssertExpectations(t)
+		})
+	}
+}
+
+func TestLinkLocalUnreachableRoute(t *testing.T) {
+	tests := []struct {
+		desc     string
+		subnets  string
+		expected bool
+	}{
+		{desc: "dual-stack network", subnets: "100.128.0.0/16/24,ae70::/60/64", expected: true},
+		{desc: "IPv4 network", subnets: "100.128.0.0/16/24", expected: true},
+		{desc: "IPv6 network", subnets: "ae70::/60/64", expected: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.desc, func(t *testing.T) {
+			if err := config.PrepareTestConfig(); err != nil {
+				t.Fatalf("failed to prepare test config: %v", err)
+			}
+			t.Cleanup(func() { _ = config.PrepareTestConfig() })
+			config.IPv4Mode = true
+			config.IPv6Mode = true
+			nad := ovntest.GenerateNAD("bluenet", "rednad", "greenamespace",
+				types.Layer3Topology, tc.subnets, types.NetworkRolePrimary)
+			netInfo, err := util.ParseNADInfo(nad)
+			if err != nil {
+				t.Fatalf("failed to parse NAD: %v", err)
+			}
+			udng := &UserDefinedNetworkGateway{NetInfo: netInfo, vrfTableId: 1019}
+			route := udng.linkLocalUnreachableRoute()
+			if (route != nil) != tc.expected {
+				t.Fatalf("expected route presence %v, got %+v", tc.expected, route)
+			}
+			if route == nil {
+				return
+			}
+			if route.Dst.String() != "169.254.0.0/16" || route.Table != 1019 || route.Type != unix.RTN_UNREACHABLE ||
+				route.Priority != 4278198272 || route.Protocol != netlink.RouteProtocol(types.OVNKProtocol) || route.LinkIndex != 0 {
+				t.Fatalf("unexpected route %+v", route)
+			}
 		})
 	}
 }
