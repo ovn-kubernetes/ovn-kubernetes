@@ -105,6 +105,8 @@ when the next release is planned for
 This should include:)
 
 - Any changes to the API, datapath, or other components that may be backwards incompatible.
+- Upgrades: how the feature behaves during a rolling upgrade, following the model and
+  rules in [Upgrades](../design/upgrades.md).
 - E2E tests: When introducing new functionality, prefer adding new E2E tests rather than
   modifying existing ones. Existing E2E tests should continue to validate that the current
   API remains functional. If you must modify existing E2E tests, ensure the changes do not
