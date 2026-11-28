@@ -477,6 +477,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				config.Kubernetes.HostNetworkNamespace = ""
 				config.OVNKubernetesFeature.EnableMultiNetwork = true
+				config.OVNKubernetesFeature.EnableNetworkSegmentation = true
 
 				fakeClient := util.GetOVNClientset(objs...).GetClusterManagerClientset()
 
@@ -535,6 +536,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 				nad, err := testing.BuildNAD(nadName, namespace, oneSubnetNetwork)
 				nad.ResourceVersion = "2" // apparently changing the actual config isn't enough
 				gomega.Expect(err).ToNot(gomega.HaveOccurred())
+				gomega.Expect(testing.EnsurePrimaryNADOwner(fakeClient.UserDefinedNetworkClient, nad)).To(gomega.Succeed())
 				_, err = fakeClient.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(namespace).Create(context.Background(), nad, metav1.CreateOptions{})
 				gomega.Expect(err).ToNot(gomega.HaveOccurred())
 
@@ -562,6 +564,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 				// Update NAD to add one more subnet
 				nad, err = testing.BuildNAD(nadName, namespace, twoSubnetNetwork)
 				gomega.Expect(err).ToNot(gomega.HaveOccurred())
+				testing.PrimaryNADOwner(nad)
 				_, err = fakeClient.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(namespace).Update(context.Background(), nad, metav1.UpdateOptions{})
 				gomega.Expect(err).ToNot(gomega.HaveOccurred())
 
@@ -1206,6 +1209,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 				udn1 := &udnv1.UserDefinedNetwork{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "frontend-udn",
+						UID:       "frontend-uid",
 						Namespace: "frontend-ns",
 					},
 					Spec: udnv1.UserDefinedNetworkSpec{
@@ -1221,6 +1225,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 				udn2 := &udnv1.UserDefinedNetwork{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "backend-udn",
+						UID:       "backend-uid",
 						Namespace: "backend-ns",
 					},
 					Spec: udnv1.UserDefinedNetworkSpec{

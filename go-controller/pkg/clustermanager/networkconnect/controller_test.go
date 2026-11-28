@@ -41,6 +41,14 @@ const ovnNetworkConnectSubnetAnnotation = "k8s.ovn.org/network-connect-subnet"
 // Shared test helpers for creating test objects
 // =============================================================================
 
+// createPrimaryNAD provisions the owner alongside a network fixture.
+func createPrimaryNAD(client *util.OVNClusterManagerClientset, ctx context.Context, nad *nadv1.NetworkAttachmentDefinition, opts metav1.CreateOptions) (*nadv1.NetworkAttachmentDefinition, error) {
+	if err := ovntest.EnsurePrimaryNADOwner(client.UserDefinedNetworkClient, nad); err != nil {
+		return nil, err
+	}
+	return client.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(nad.Namespace).Create(ctx, nad, opts)
+}
+
 // newTestCNC creates a test CNC object with the given name, selectors, and connect subnets.
 // If connectSubnets is nil, it defaults to 192.168.0.0/16 with /24 prefix.
 func newTestCNC(name string, selectors []apitypes.NetworkSelector, connectSubnets []networkconnectv1.ConnectSubnet) *networkconnectv1.ClusterNetworkConnect {
@@ -280,7 +288,7 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 
 				// Create NAD first
 				nad := testCUDNNAD("cudn-red", "red", cudnNetwork, testLabel, "1")
-				_, err := fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("red").Create(
+				_, err := createPrimaryNAD(fakeClientset,
 					context.Background(), nad, metav1.CreateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -324,18 +332,18 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 
 				// Create NADs
 				nad1 := testCUDNNAD("cudn-blue", "blue", network1, testLabel, "1")
-				_, err := fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("blue").Create(
+				_, err := createPrimaryNAD(fakeClientset,
 					context.Background(), nad1, metav1.CreateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				nad2 := testCUDNNAD("cudn-green", "green", network2, testLabel, "2")
-				_, err = fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("green").Create(
+				_, err = createPrimaryNAD(fakeClientset,
 					context.Background(), nad2, metav1.CreateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				// This one should NOT be selected (different label)
 				nad3 := testCUDNNAD("cudn-yellow", "yellow", util.GenerateCUDNNetworkName("yellow"), map[string]string{"env": "prod"}, "3")
-				_, err = fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("yellow").Create(
+				_, err = createPrimaryNAD(fakeClientset,
 					context.Background(), nad3, metav1.CreateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -375,7 +383,7 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 
 				// Create first NAD
 				nad1 := testCUDNNAD("cudn-create1", "create1-ns", network1, testLabel, "1")
-				_, err := fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("create1-ns").Create(
+				_, err := createPrimaryNAD(fakeClientset,
 					context.Background(), nad1, metav1.CreateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -402,7 +410,7 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 				// Create a second NAD that matches the selector
 				network2 := util.GenerateCUDNNetworkName("create2")
 				nad2 := testCUDNNAD("cudn-create2", "create2-ns", network2, testLabel, "2")
-				_, err = fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("create2-ns").Create(
+				_, err = createPrimaryNAD(fakeClientset,
 					context.Background(), nad2, metav1.CreateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -428,12 +436,12 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 
 				// Create NADs
 				nad1 := testCUDNNAD("cudn-del1", "del1-ns", network1, testLabel, "1")
-				_, err := fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("del1-ns").Create(
+				_, err := createPrimaryNAD(fakeClientset,
 					context.Background(), nad1, metav1.CreateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				nad2 := testCUDNNAD("cudn-del2", "del2-ns", network2, testLabel, "2")
-				_, err = fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("del2-ns").Create(
+				_, err = createPrimaryNAD(fakeClientset,
 					context.Background(), nad2, metav1.CreateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -505,7 +513,7 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 
 				// Create NAD with non-matching label
 				nad := testCUDNNAD("cudn-label", "label-ns", network, nonMatchingLabel, "1")
-				_, err = fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("label-ns").Create(
+				_, err = createPrimaryNAD(fakeClientset,
 					context.Background(), nad, metav1.CreateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -545,7 +553,7 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 
 				// Create NAD with matching label
 				nad := testCUDNNAD("cudn-unlabel", "unlabel-ns", network, matchingLabel, "1")
-				_, err := fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("unlabel-ns").Create(
+				_, err := createPrimaryNAD(fakeClientset,
 					context.Background(), nad, metav1.CreateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -626,7 +634,7 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 						),
 					},
 				}
-				_, err := fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("secondary-ns").Create(
+				_, err := createPrimaryNAD(fakeClientset,
 					context.Background(), secondaryNAD, metav1.CreateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -685,7 +693,7 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 
 				// Create UDN NAD
 				nad := testUDNNAD(nadName, nsName, network, "1")
-				_, err = fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(nsName).Create(
+				_, err = createPrimaryNAD(fakeClientset,
 					context.Background(), nad, metav1.CreateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -756,7 +764,7 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 
 				network1 := util.GenerateUDNNetworkName("frontend-a", "primary-udn")
 				nad1 := testUDNNAD("primary-udn", "frontend-a", network1, "1")
-				_, err = fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("frontend-a").Create(
+				_, err = createPrimaryNAD(fakeClientset,
 					context.Background(), nad1, metav1.CreateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -781,7 +789,7 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 
 				network2 := util.GenerateUDNNetworkName("frontend-b", "primary-udn")
 				nad2 := testUDNNAD("primary-udn", "frontend-b", network2, "2")
-				_, err = fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("frontend-b").Create(
+				_, err = createPrimaryNAD(fakeClientset,
 					context.Background(), nad2, metav1.CreateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -873,7 +881,7 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 
 				// Create UDN NAD
 				nad := testUDNNAD(nadName, nsName, network, "1")
-				_, err = fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(nsName).Create(
+				_, err = createPrimaryNAD(fakeClientset,
 					context.Background(), nad, metav1.CreateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -946,7 +954,7 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 
 				// Create UDN NAD
 				nad := testUDNNAD(nadName, nsName, network, "1")
-				_, err = fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(nsName).Create(
+				_, err = createPrimaryNAD(fakeClientset,
 					context.Background(), nad, metav1.CreateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -1070,7 +1078,7 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 
 				// Create NAD with specific label
 				nad := testCUDNNAD("cudn-selector", "selector-ns", cudnNetwork, map[string]string{"env": "prod"}, "1")
-				_, err := fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("selector-ns").Create(
+				_, err := createPrimaryNAD(fakeClientset,
 					context.Background(), nad, metav1.CreateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -1133,7 +1141,7 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 
 				// Create NAD with specific label
 				nad := testCUDNNAD("cudn-unmatch", "unmatch-ns", cudnNetwork, map[string]string{"env": "prod"}, "1")
-				_, err := fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("unmatch-ns").Create(
+				_, err := createPrimaryNAD(fakeClientset,
 					context.Background(), nad, metav1.CreateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -1214,13 +1222,13 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 						Config: `{"cniVersion": "1.1.0", "name": "malformed", "type": "invalid-type"}`,
 					},
 				}
-				_, err := fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("malformed-ns").Create(
+				_, err := createPrimaryNAD(fakeClientset,
 					context.Background(), malformedNAD, metav1.CreateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				// Create a healthy NAD
 				healthyNAD := testCUDNNAD("healthy-nad", "healthy-ns", healthyNetwork, testLabel, "2")
-				_, err = fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("healthy-ns").Create(
+				_, err = createPrimaryNAD(fakeClientset,
 					context.Background(), healthyNAD, metav1.CreateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -1319,7 +1327,7 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller Integration Te
 			} else {
 				nad = newTestUDNNADWithSubnetsAndTransport(udnName, namespace, network, networkID, subnets, transport)
 			}
-			_, err = fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions(namespace).Create(
+			_, err = createPrimaryNAD(fakeClientset,
 				context.Background(), nad, metav1.CreateOptions{})
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -1857,12 +1865,12 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller InitialSync Te
 				// Create NADs for CNC1 (2 CUDNs)
 				// ============================================================
 				nad1 := newTestCUDNNAD("cudn1-nad", "ns-cudn1", cudn1Network, cnc1CUDNLabel, "1")
-				_, err = fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("ns-cudn1").Create(
+				_, err = createPrimaryNAD(fakeClientset,
 					context.Background(), nad1, metav1.CreateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 				nad2 := newTestCUDNNAD("cudn2-nad", "ns-cudn2", cudn2Network, cnc1CUDNLabel, "2")
-				_, err = fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("ns-cudn2").Create(
+				_, err = createPrimaryNAD(fakeClientset,
 					context.Background(), nad2, metav1.CreateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -1879,7 +1887,7 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller InitialSync Te
 
 				pudn1Network := util.GenerateUDNNetworkName("pudn1-ns", "primary-udn")
 				nad3 := newTestUDNNAD("primary-udn", "pudn1-ns", pudn1Network, "3")
-				_, err = fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("pudn1-ns").Create(
+				_, err = createPrimaryNAD(fakeClientset,
 					context.Background(), nad3, metav1.CreateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -1898,7 +1906,7 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller InitialSync Te
 
 				pudn2Network := util.GenerateUDNNetworkName("pudn2-ns", "primary-udn")
 				nad4 := newTestUDNNAD("primary-udn", "pudn2-ns", pudn2Network, "4")
-				_, err = fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("pudn2-ns").Create(
+				_, err = createPrimaryNAD(fakeClientset,
 					context.Background(), nad4, metav1.CreateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -1911,7 +1919,7 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller InitialSync Te
 				// Create NADs for CNC2 (1 CUDN + 1 P-UDN)
 				// ============================================================
 				nad5 := newTestCUDNNAD("cudn3-nad", "ns-cudn3", cudn3Network, cnc2CUDNLabel, "5")
-				_, err = fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("ns-cudn3").Create(
+				_, err = createPrimaryNAD(fakeClientset,
 					context.Background(), nad5, metav1.CreateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -1925,7 +1933,7 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller InitialSync Te
 
 				pudn3Network := util.GenerateUDNNetworkName("pudn3-ns", "primary-udn")
 				nad6 := newTestUDNNAD("primary-udn", "pudn3-ns", pudn3Network, "6")
-				_, err = fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("pudn3-ns").Create(
+				_, err = createPrimaryNAD(fakeClientset,
 					context.Background(), nad6, metav1.CreateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
@@ -2106,7 +2114,7 @@ var _ = ginkgo.Describe("NetworkConnect ClusterManager Controller InitialSync Te
 				// Add a new CUDN to CNC1 and verify it gets a NEW subnet (not conflicting)
 				newCUDNNetwork := util.GenerateCUDNNetworkName("new-cudn")
 				newNAD := newTestCUDNNAD("new-cudn-nad", "ns-new-cudn", newCUDNNetwork, cnc1CUDNLabel, "7")
-				_, err = fakeClientset.NetworkAttchDefClient.K8sCniCncfIoV1().NetworkAttachmentDefinitions("ns-new-cudn").Create(
+				_, err = createPrimaryNAD(fakeClientset,
 					context.Background(), newNAD, metav1.CreateOptions{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
