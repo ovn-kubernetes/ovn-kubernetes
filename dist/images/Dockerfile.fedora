@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1
+
 # SPDX-FileCopyrightText: Copyright The OVN-Kubernetes Contributors
 # SPDX-License-Identifier: Apache-2.0
 
@@ -125,7 +127,9 @@ RUN dnf install --best --refresh -y make git
 COPY ${OVN_KUBERNETES_DIR} ovn-kubernetes
 WORKDIR /workspace/ovn-kubernetes/go-controller
 # Get a working version of libovsdb (for modelgen).
-RUN GO111MODULE=on go install \
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg/mod \
+    GO111MODULE=on go install \
     github.com/ovn-kubernetes/libovsdb/cmd/modelgen@$( \
     go list -mod=mod -m -f '{{ .Version }}' \
     github.com/ovn-kubernetes/libovsdb \
@@ -133,7 +137,9 @@ RUN GO111MODULE=on go install \
 # Regenerate models based on the actual OVN NB/SB schema.
 COPY --from=ovnbuilder /root/ovn/ovn-nb.ovsschema pkg/nbdb/ovn-nb.ovsschema
 COPY --from=ovnbuilder /root/ovn/ovn-sb.ovsschema pkg/sbdb/ovn-sb.ovsschema
-RUN go generate ./pkg/nbdb && go generate ./pkg/sbdb
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg/mod \
+    go generate ./pkg/nbdb && go generate ./pkg/sbdb
 
 ###########################################################
 # Stage to prepare OVN Kubernetes Sources (OVN from koji) #
@@ -152,7 +158,9 @@ ARG TARGETOS
 ARG TARGETARCH
 
 WORKDIR /workspace
-RUN cd ovn-kubernetes/dist/images && \
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg/mod \
+    cd ovn-kubernetes/dist/images && \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} make bld
 
 #################################
