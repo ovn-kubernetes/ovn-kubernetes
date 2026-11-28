@@ -629,6 +629,30 @@ var _ = Describe("Node IP Handler tests", func() {
 			}, 3).Should(BeTrue())
 		})
 
+		// The address of the other family is already configured on breth0. These
+		// specs only change the cluster IP mode, then let the periodic sync run.
+		ovntest.OnSupportedPlatformsIt("keeps an IPv6 address when the cluster is single-stack IPv4", func() {
+			config.IPv4Mode = true
+			config.IPv6Mode = false
+			runIpManagerRoutine(tc)
+			v4 := ovntest.MustParseIPNet("10.1.1.10/24")
+			v6 := ovntest.MustParseIPNet("2001:db8::10/64")
+			Consistently(func() bool {
+				return nodeHasAddress(tc.fakeClient, nodeName, v4) && nodeHasAddress(tc.fakeClient, nodeName, v6)
+			}, 3).Should(BeTrue())
+		})
+
+		ovntest.OnSupportedPlatformsIt("keeps an IPv4 address when the cluster is single-stack IPv6", func() {
+			config.IPv4Mode = false
+			config.IPv6Mode = true
+			runIpManagerRoutine(tc)
+			v4 := ovntest.MustParseIPNet("10.1.1.10/24")
+			v6 := ovntest.MustParseIPNet("2001:db8::10/64")
+			Consistently(func() bool {
+				return nodeHasAddress(tc.fakeClient, nodeName, v4) && nodeHasAddress(tc.fakeClient, nodeName, v6)
+			}, 3).Should(BeTrue())
+		})
+
 		ovntest.OnSupportedPlatformsIt("allow secondary IP", func() {
 			runIpManagerRoutine(tc)
 			primaryIPNet := ovntest.MustParseIPNet(dummyAdditionalIPv4CIDR)
