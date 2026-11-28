@@ -223,7 +223,7 @@ func (c *addressManager) runInternal(stopChan <-chan struct{}, subscribe subscri
 			}
 
 			c.handleNodePrimaryAddrChange()
-			if addrChanged || !c.doNodeHostCIDRsMatch() {
+			if c.shouldUpdateNodeAddressAnnotations(addrChanged) {
 				klog.Infof("Host CIDRs changed to %v. Updating node address annotations.", c.cidrs)
 				err := c.updateNodeAddressAnnotations()
 				if err != nil {
@@ -446,6 +446,34 @@ func (c *addressManager) doNodeHostCIDRsMatch() bool {
 	return nodeHostAddresses.Equal(c.cidrs)
 }
 
+// primaryDPUHostAddrAnnotationMissing returns true in DPUHost mode when the node lacks the
+// primary-dpu-host-addr annotation. The DPU derives node-primary-ifaddr from it, so it must be
+// restored even when the interface addresses have not changed, for example after it was removed
+// during DPU (re)provisioning.
+func (c *addressManager) primaryDPUHostAddrAnnotationMissing() bool {
+	if !config.IsModeDPUHost() {
+		return false
+	}
+
+	node, err := c.watchFactory.GetNode(c.nodeName)
+	if err != nil {
+		klog.Errorf("Unable to get node %s from informer: %v", c.nodeName, err)
+		return false
+	}
+	if _, err := util.GetNodePrimaryDPUHostAddrAnnotation(node); util.IsAnnotationNotSetError(err) {
+		klog.Infof("%s annotation is missing, restoring it", util.OVNNodePrimaryDPUHostAddr)
+		return true
+	}
+	return false
+}
+
+// shouldUpdateNodeAddressAnnotations returns true when the node address annotations must be
+// refreshed: the local address set changed, host-cidrs is out of date, or, in DPUHost mode,
+// primary-dpu-host-addr is missing.
+func (c *addressManager) shouldUpdateNodeAddressAnnotations(addrChanged bool) bool {
+	return addrChanged || !c.doNodeHostCIDRsMatch() || c.primaryDPUHostAddrAnnotationMissing()
+}
+
 // nodePrimaryAddrChanged returns false if there is an error or if the IP does
 // match, otherwise it returns true and updates the current primary IP address.
 func (c *addressManager) nodePrimaryAddrChanged() (bool, error) {
@@ -608,7 +636,7 @@ func (c *addressManager) sync() {
 
 	addrChanged := c.assignCIDRs(currAddresses)
 	c.handleNodePrimaryAddrChange()
-	if addrChanged || !c.doNodeHostCIDRsMatch() {
+	if c.shouldUpdateNodeAddressAnnotations(addrChanged) {
 		klog.Infof("Node address changed to %v. Updating annotations.", currAddresses)
 		err := c.updateNodeAddressAnnotations()
 		if err != nil {
