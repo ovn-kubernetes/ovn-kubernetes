@@ -17,6 +17,8 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	listers "k8s.io/client-go/listers/core/v1"
@@ -94,15 +96,34 @@ func Run(ctx context.Context, restCfg *rest.Config, config Config) error {
 	informerFactory := informers.NewSharedInformerFactory(kubeClient, 10*time.Minute)
 	nodeInformer := informerFactory.Core().V1().Nodes().Informer()
 	informerFactory.Start(stopCh)
+
+	// The pod webhook reads only the metadata and the phase of virt-launcher pods.
+	podInformerFactory := informers.NewSharedInformerFactoryWithOptions(kubeClient, 10*time.Minute,
+		informers.WithTweakListOptions(func(options *metav1.ListOptions) {
+			options.LabelSelector = ovnwebhook.VirtLauncherPodSelector.String()
+		}),
+		informers.WithTransform(func(obj interface{}) (interface{}, error) {
+			if pod, ok := obj.(*corev1.Pod); ok {
+				pod.ManagedFields = nil
+				pod.Spec = corev1.PodSpec{}
+				pod.Status = corev1.PodStatus{Phase: pod.Status.Phase}
+			}
+			return obj, nil
+		}),
+	)
+	podInformer := podInformerFactory.Core().V1().Pods().Informer()
+	podInformerFactory.Start(stopCh)
+
 	klog.Infof("Waiting for caches to sync")
-	if !cache.WaitForCacheSync(ctx.Done(), nodeInformer.HasSynced) {
+	if !cache.WaitForCacheSync(ctx.Done(), nodeInformer.HasSynced, podInformer.HasSynced) {
 		return fmt.Errorf("failed to sync admission informer caches")
 	}
 
 	nodeLister := listers.NewNodeLister(nodeInformer.GetIndexer())
+	podLister := listers.NewPodLister(podInformer.GetIndexer())
 	podWebhook := admission.WithValidator(
 		scheme.Scheme,
-		ovnwebhook.NewPodAdmissionWebhook(nodeLister, config.PodAdmissionConditions, config.ExtraAllowedUsers...),
+		ovnwebhook.NewPodAdmissionWebhook(nodeLister, podLister, config.PodAdmissionConditions, config.ExtraAllowedUsers...),
 	).WithRecoverPanic(true)
 	podHandler, err := admission.StandaloneWebhook(
 		podWebhook,

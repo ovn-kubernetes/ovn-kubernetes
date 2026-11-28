@@ -8,11 +8,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"net"
 	"os"
 	"slices"
+	"strings"
+
+	kubevirtv1 "kubevirt.io/api/core/v1"
 
 	corev1 "k8s.io/api/core/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/sets"
 	listers "k8s.io/client-go/listers/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
@@ -23,14 +28,16 @@ import (
 )
 
 // checkPodAnnot defines additional checks for the allowed annotations
-type checkPodAnnot func(nodeLister listers.NodeLister, v annotationChange, pod *corev1.Pod, nodeName string) error
+type checkPodAnnot func(nodeLister listers.NodeLister, podLister listers.PodLister, v annotationChange, oldPod, pod *corev1.Pod, nodeName string) error
+
+// VirtLauncherPodSelector selects the pods that the pod lister of the pod admission webhook must hold.
+var VirtLauncherPodSelector = labels.SelectorFromSet(labels.Set{kubevirtv1.AppLabel: "virt-launcher"})
 
 // interconnectPodAnnotations holds annotations allowed for ovnkube-node:<nodeName> users.
 var interconnectPodAnnotations = map[string]checkPodAnnot{
-	types.OvnPodAnnotationName: func(nodeLister listers.NodeLister, v annotationChange, pod *corev1.Pod, nodeName string) error {
-		// Ignore kubevirt pods with live migration, the IP can cross node-subnet boundaries
+	types.OvnPodAnnotationName: func(nodeLister listers.NodeLister, podLister listers.PodLister, v annotationChange, oldPod, pod *corev1.Pod, nodeName string) error {
 		if kubevirt.IsPodLiveMigratable(pod) {
-			return nil
+			return checkLiveMigratablePodIPs(nodeLister, podLister, v, oldPod, pod, nodeName)
 		}
 
 		if pod.Spec.HostNetwork {
@@ -62,6 +69,103 @@ var interconnectPodAnnotations = map[string]checkPodAnnot{
 	},
 	util.DPUConnectionDetailsAnnot: nil,
 	util.DPUConnectionStatusAnnot:  nil,
+}
+
+// checkLiveMigratablePodIPs requires every default network IP of a live-migratable pod
+// to belong to the host subnet of nodeName, to be already set on the pod, or to
+// be held by another pod of the same virtual machine in the same namespace.
+func checkLiveMigratablePodIPs(nodeLister listers.NodeLister, podLister listers.PodLister, v annotationChange, oldPod, pod *corev1.Pod, nodeName string) error {
+	if pod.Spec.HostNetwork {
+		return fmt.Errorf("the annotation is not allowed on host networked pods")
+	}
+
+	podAnnot, err := util.UnmarshalPodAnnotation(map[string]string{types.OvnPodAnnotationName: v.value}, types.DefaultNetworkName)
+	if err != nil {
+		if util.IsAnnotationNotSetError(err) {
+			return nil
+		}
+		return fmt.Errorf("could not parse the annotation: %w", err)
+	}
+	oldIPs := defaultNetworkIPs(oldPod)
+	var newIPs []*net.IPNet
+	for _, ip := range podAnnot.IPs {
+		if !oldIPs.Has(ip.String()) {
+			newIPs = append(newIPs, ip)
+		}
+	}
+	if len(newIPs) == 0 {
+		return nil
+	}
+	node, err := nodeLister.Get(nodeName)
+	if err != nil {
+		return fmt.Errorf("could not get info on node %s from client: %w", nodeName, err)
+	}
+	subnets, err := util.ParseNodeHostSubnetAnnotation(node, types.DefaultNetworkName)
+	if err != nil {
+		return fmt.Errorf("could not get the subnets of node %s: %w", nodeName, err)
+	}
+	migratedIPs := sets.New[string]()
+	for _, ip := range newIPs {
+		if !util.IsContainedInAnyCIDR(ip, subnets...) {
+			migratedIPs.Insert(ip.String())
+		}
+	}
+	// A mirror pod is created by the node it runs on, so its labels and
+	// annotations do not prove that it belongs to a virtual machine.
+	if _, isMirrorPod := pod.Annotations[corev1.MirrorPodAnnotationKey]; migratedIPs.Len() > 0 && !isMirrorPod {
+		siblingIPs, siblingErr := vmSiblingIPs(podLister, pod)
+		if siblingErr != nil {
+			return fmt.Errorf("could not get the IPs held by the other pods of the virtual machine: %w", siblingErr)
+		}
+		migratedIPs = migratedIPs.Difference(siblingIPs)
+	}
+	if migratedIPs.Len() > 0 {
+		return fmt.Errorf("%s does not belong to %s node and is not held by another pod of the same virtual machine",
+			strings.Join(sets.List(migratedIPs), ", "), nodeName)
+	}
+	return nil
+}
+
+// defaultNetworkIPs returns the default network IPs set on pod.
+func defaultNetworkIPs(pod *corev1.Pod) sets.Set[string] {
+	ips := sets.New[string]()
+	podAnnot, err := util.UnmarshalPodAnnotation(pod.Annotations, types.DefaultNetworkName)
+	if err != nil {
+		return ips
+	}
+	for _, ip := range podAnnot.IPs {
+		ips.Insert(ip.String())
+	}
+	return ips
+}
+
+// vmSiblingIPs returns the default network IPs set on the other pods of the
+// virtual machine of pod that have not completed. The IPs set on a completed
+// pod may be released. Mirror pods do not count, as their labels and
+// annotations do not prove that they belong to the virtual machine.
+func vmSiblingIPs(podLister listers.PodLister, pod *corev1.Pod) (sets.Set[string], error) {
+	ips := sets.New[string]()
+	vmDescription, err := kubevirt.NewVMDescriptionFromPod(pod)
+	if err != nil {
+		return nil, fmt.Errorf("could not get the virtual machine of pod %s/%s: %w", pod.Namespace, pod.Name, err)
+	}
+	if vmDescription == nil {
+		return ips, nil
+	}
+	vmPods, err := vmDescription.OwnedPods(podLister)
+	if err != nil {
+		return nil, fmt.Errorf("could not list the pods of virtual machine %s: %w", vmDescription.Key(), err)
+	}
+	for _, vmPod := range vmPods {
+		if vmPod.UID == pod.UID || util.PodCompleted(vmPod) {
+			continue
+		}
+		if _, isMirrorPod := vmPod.Annotations[corev1.MirrorPodAnnotationKey]; isMirrorPod {
+			continue
+		}
+		ips = ips.Union(defaultNetworkIPs(vmPod))
+	}
+	return ips, nil
 }
 
 // PodAdmissionConditionOption allows an external per-node component to reuse the
@@ -114,6 +218,7 @@ func InitPodAdmissionConditionOptions(fileName string) (podAdmissions []PodAdmis
 // users. Everyone else is only prevented from changing ovnkube-node annotations.
 type PodAdmission struct {
 	nodeLister        listers.NodeLister
+	podLister         listers.PodLister
 	annotations       map[string]checkPodAnnot
 	annotationKeys    sets.Set[string]
 	extraAllowedUsers sets.Set[string]
@@ -122,9 +227,12 @@ type PodAdmission struct {
 
 // NewPodAdmissionWebhook returns a PodAdmission protecting the ovnkube-node pod
 // annotations. extraAllowedUsers may change those annotations on any pod.
-func NewPodAdmissionWebhook(nodeLister listers.NodeLister, podAdmissions []PodAdmissionConditionOption, extraAllowedUsers ...string) *PodAdmission {
+// podLister must hold the pods selected by VirtLauncherPodSelector in all
+// namespaces, with their metadata and phase.
+func NewPodAdmissionWebhook(nodeLister listers.NodeLister, podLister listers.PodLister, podAdmissions []PodAdmissionConditionOption, extraAllowedUsers ...string) *PodAdmission {
 	return &PodAdmission{
 		nodeLister:        nodeLister,
+		podLister:         podLister,
 		annotations:       interconnectPodAnnotations,
 		annotationKeys:    sets.KeySet(interconnectPodAnnotations),
 		extraAllowedUsers: sets.New[string](extraAllowedUsers...),
@@ -165,6 +273,12 @@ func (p PodAdmission) ValidateUpdate(ctx context.Context, oldPod, newPod *corev1
 	changes := mapDiff(oldPod.Annotations, newPod.Annotations)
 	changedKeys := slices.Collect(maps.Keys(changes))
 
+	// The IPs a node may set on a live-migratable pod depend on the virtual
+	// machine the pod belongs to, so no user may move a pod to another one.
+	if _, changed := changes[kubevirtv1.DomainAnnotation]; changed {
+		return nil, fmt.Errorf("annotation %s must not change on pod %q", kubevirtv1.DomainAnnotation, newPod.Name)
+	}
+
 	// user is in additional acceptance condition list
 	if podAdmission != nil {
 		// additional acceptance condition check
@@ -194,7 +308,7 @@ func (p PodAdmission) ValidateUpdate(ctx context.Context, oldPod, newPod *corev1
 
 	for _, key := range changedKeys {
 		if check := p.annotations[key]; check != nil {
-			if err := check(p.nodeLister, changes[key], newPod, nodeName); err != nil {
+			if err := check(p.nodeLister, p.podLister, changes[key], oldPod, newPod, nodeName); err != nil {
 				return nil, fmt.Errorf("user: %q is not allowed to set %s on pod %q: %v", req.UserInfo.Username, key, newPod.Name, err)
 			}
 		}
