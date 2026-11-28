@@ -874,28 +874,20 @@ func (nInfo *userDefinedNetInfo) GetNetworkScopedLoadBalancerGroupName(lbGroupNa
 }
 
 // GetNetworkScopedRouterToSwitchPortName returns the port name from router to switch.
-// For Layer3 and pre-transit router Layer2 topologies, this is the cluster
-// router to switch port (rtos-).
-// For Layer2 topology using transit router, this is the transit router to
-// switch port (trtos-).
-// Not Applicable for Localnet topology.
+// Layer2 uses trtos- and Layer3 uses rtos-. Localnet has no router port.
 func (nInfo *userDefinedNetInfo) GetNetworkScopedRouterToSwitchPortName(nodeName string) string {
 	switchName := nInfo.GetNetworkScopedSwitchName(nodeName)
-	if nInfo.TopologyType() == types.Layer2Topology && config.Layer2UsesTransitRouter {
+	if nInfo.TopologyType() == types.Layer2Topology {
 		return types.TransitRouterToSwitchPrefix + switchName
 	}
 	return types.RouterToSwitchPrefix + switchName
 }
 
 // GetNetworkScopedSwitchToRouterPortName returns the port name from switch to router.
-// For Layer3 and pre-transit router Layer2 topologies, this is the switch port
-// to cluster router (stor-).
-// For Layer2 topology using transit router, this is the switch port to transit
-// router (stotr-).
-// Not Applicable for Localnet topology.
+// Layer2 uses stotr- and Layer3 uses stor-. Localnet has no router port.
 func (nInfo *userDefinedNetInfo) GetNetworkScopedSwitchToRouterPortName(nodeName string) string {
 	switchName := nInfo.GetNetworkScopedSwitchName(nodeName)
-	if nInfo.TopologyType() == types.Layer2Topology && config.Layer2UsesTransitRouter {
+	if nInfo.TopologyType() == types.Layer2Topology {
 		return types.SwitchToTransitRouterPrefix + switchName
 	}
 	return types.SwitchToRouterPrefix + switchName
@@ -2624,7 +2616,7 @@ func CheckSubnetOverlapWithClusterSubnets(subnets []*net.IPNet, subnetsName stri
 // GetNetworkScopedSwitchToRouterPortNameFromSwitchName returns the
 // switch-to-router port name for the given switch name.
 func GetNetworkScopedSwitchToRouterPortNameFromSwitchName(switchName string) string {
-	if strings.HasSuffix(switchName, types.OVNLayer2Switch) && config.Layer2UsesTransitRouter {
+	if strings.HasSuffix(switchName, types.OVNLayer2Switch) {
 		return types.SwitchToTransitRouterPrefix + switchName
 	}
 	return types.SwitchToRouterPrefix + switchName

@@ -476,9 +476,8 @@ var _ = ginkgo.Describe("Cluster Controller Manager", func() {
 						if err != nil {
 							return fmt.Errorf("default subnet annotation missing on node %s: %v", updatedNode.Name, err)
 						}
-						// l2-primary tunnel ID should be cleaned
-						if util.HasUDNLayer2NodeGRLRPTunnelID(updatedNode, "l2-primary") {
-							return fmt.Errorf("tunnel ID annotation for l2-primary still present on node %s", updatedNode.Name)
+						if _, ok := updatedNode.Annotations[ovntypes.UDNLayer2NodeGRLRPTunnelIDAnnotation]; ok {
+							return fmt.Errorf("legacy tunnel ID annotation still present on node %s", updatedNode.Name)
 						}
 					}
 					return nil

@@ -186,7 +186,7 @@ func (a *PodAllocator) Sync(ctx context.Context, objs []interface{}) error {
 	// Reserve tunnel IDs used by OVN platform ports so that they are not
 	// allocated to pods. Done after syncing existing pods: on upgrade, pods
 	// may already hold these IDs; those are skipped and reclaimed on delete.
-	if a.idAllocator != nil && config.Layer2UsesTransitRouter {
+	if a.idAllocator != nil {
 		for i := 1; i < transitRouterFirstPodTunnelKey; i++ {
 			if err := a.idAllocator.ReserveID(fmt.Sprintf("reserved-platform-port-%d", i), i); err != nil {
 				klog.Infof("Platform port tunnel key %d already in use: %v", i, err)

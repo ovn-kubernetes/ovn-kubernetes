@@ -627,9 +627,6 @@ func (oc *Layer2UserDefinedNetworkController) ReconcileNode(ctx context.Context,
 	if util.NodeChassisIDAnnotationChanged(oldNode, newNode) {
 		syncZoneIC = true
 	}
-	if nodecontroller.TunnelIDAnnotationChangedForNetworkWithState(oldState, newState, oc.GetNetworkName()) {
-		syncZoneIC = true
-	}
 	return oc.addUpdateRemoteNodeEvent(newNode, syncZoneIC)
 }
 

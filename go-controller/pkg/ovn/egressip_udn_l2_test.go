@@ -39,7 +39,6 @@ var _ = ginkgo.DescribeTable("Layer2 EgressIP gateway next hop uses the GR trans
 		config.IPv4Mode, config.IPv6Mode = true, true
 		config.OVNKubernetesFeature.EnableNetworkSegmentation = true
 		config.OVNKubernetesFeature.EnableMultiNetwork = true
-		config.Layer2UsesTransitRouter = true
 		netInfo, err := util.NewNetInfo(&ovncnitypes.NetConf{
 			NetConf:       cnitypes.NetConf{Name: "network1"},
 			Role:          ovntypes.NetworkRolePrimary,

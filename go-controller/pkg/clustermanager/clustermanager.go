@@ -244,7 +244,6 @@ func NewClusterManager(
 // Start the cluster manager.
 func (cm *ClusterManager) Start(ctx context.Context) error {
 	klog.Info("Starting the cluster manager")
-	config.Layer2UsesTransitRouter = true
 
 	// Start and sync the watch factory to begin listening for events
 	if err := cm.wf.Start(); err != nil {

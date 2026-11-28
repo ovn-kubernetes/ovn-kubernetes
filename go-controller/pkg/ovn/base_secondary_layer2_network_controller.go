@@ -190,7 +190,7 @@ func (oc *BaseLayer2UserDefinedNetworkController) initializeLogicalSwitch(switch
 	switch {
 	case oc.isLayer2WithInterconnectTransport():
 		tunnelKey := zoneinterconnect.BaseTransitSwitchTunnelKey + oc.GetNetworkID()
-		if config.Layer2UsesTransitRouter && oc.IsPrimaryNetwork() {
+		if oc.IsPrimaryNetwork() {
 			if len(oc.GetTunnelKeys()) != 2 {
 				return nil, fmt.Errorf("layer2 network %s with transit router enabled requires exactly 2 tunnel keys, got: %v", oc.GetNetworkName(), oc.GetTunnelKeys())
 			}

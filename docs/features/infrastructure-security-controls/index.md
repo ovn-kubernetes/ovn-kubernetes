@@ -19,7 +19,7 @@ annotations, permitting only `ovnkube-cluster-manager` to add, change, or remove
 
 - `k8s.ovn.org/node-subnets`: pod subnet allocations.
 - `k8s.ovn.org/node-id`: node IDs used to derive network resources.
-- `k8s.ovn.org/udn-layer2-node-gateway-router-lrp-tunnel-ids`: per-network router port tunnel IDs.
+- `k8s.ovn.org/udn-layer2-node-gateway-router-lrp-tunnel-ids`: legacy gateway port tunnel IDs. Old entries remain protected until cleanup; new nodes do not need them.
 
 When hybrid overlay is enabled, the policy also protects
 `k8s.ovn.org/hybrid-overlay-node-subnet`, allowing configured additional writers.

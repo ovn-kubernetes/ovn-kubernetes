@@ -102,7 +102,7 @@ func (sncm *userDefinedNetworkClusterManager) isTopologyManaged(nInfo util.NetIn
 // tunnel IDs) for networks not included in validNetworks.
 // Stale network names are discovered from per-network annotation sources:
 //   - k8s.ovn.org/node-subnets (covers L3 UDNs)
-//   - k8s.ovn.org/udn-layer2-node-gateway-router-lrp-tunnel-ids (covers L2 primary UDNs with IC)
+//   - k8s.ovn.org/udn-layer2-node-gateway-router-lrp-tunnel-ids (legacy primary L2 networks)
 func (sncm *userDefinedNetworkClusterManager) CleanupStaleNetworks(validNetworks ...util.NetInfo) error {
 	ctx := context.Background()
 	existingNetworksMap := map[string]struct{}{}
@@ -140,7 +140,7 @@ func (sncm *userDefinedNetworkClusterManager) CleanupStaleNetworks(validNetworks
 			staleNetworkControllers[netName] = oc
 		}
 
-		// tunnel IDs cover L2 primary UDNs with IC
+		// Older releases recorded gateway tunnel IDs for primary L2 networks.
 		tunnelNetworks, err := util.GetNodeUDNLayer2TunnelIDAnnotationNetworkNames(node)
 		if err != nil {
 			tunnelNetworks = nil
@@ -189,7 +189,7 @@ func (sncm *userDefinedNetworkClusterManager) newDummyNetworkController(topoType
 		sncm.nodeReconciler,
 	)
 	if nc.hasNodeAllocation() {
-		nc.nodeAllocator = node.NewNodeAllocator(ovntypes.InvalidID, nc.GetNetInfo(), nc.watchFactory.NodeCoreInformer().Lister(), nc.kube, nc.nodeClient, nil)
+		nc.nodeAllocator = node.NewNodeAllocator(ovntypes.InvalidID, nc.GetNetInfo(), nc.watchFactory.NodeCoreInformer().Lister(), nc.kube, nc.nodeClient)
 	}
 	return nc, nil
 }

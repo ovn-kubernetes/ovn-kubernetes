@@ -11,8 +11,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
-	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 )
 
 var benchSinkInt int
@@ -28,23 +26,19 @@ var benchSinkErr error
 func makeNodeWithNetworkAnnotations(networkCount int) (*corev1.Node, []string) {
 	netNames := make([]string, 0, networkCount)
 	networkIDs := make(map[string]string, networkCount)
-	tunnelIDs := make(map[string]string, networkCount)
 	for i := 0; i < networkCount; i++ {
 		netName := fmt.Sprintf("net-%d", i)
 		netNames = append(netNames, netName)
 		networkIDs[netName] = strconv.Itoa(i + 1)
-		tunnelIDs[netName] = strconv.Itoa(i + 1)
 	}
 
 	networkIDsJSON, _ := json.Marshal(networkIDs)
-	tunnelIDsJSON, _ := json.Marshal(tunnelIDs)
 
 	node := &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "node-1",
 			Annotations: map[string]string{
 				OvnNetworkIDs: string(networkIDsJSON),
-				types.UDNLayer2NodeGRLRPTunnelIDAnnotation: string(tunnelIDsJSON),
 			},
 		},
 	}
@@ -74,7 +68,6 @@ func BenchmarkParseNetworkAnnotationsPerNetwork(b *testing.B) {
 			for i := 0; i < b.N; i++ {
 				for _, netName := range netNames {
 					benchSinkInt, benchSinkErr = ParseNetworkIDAnnotation(node, netName)
-					benchSinkInt, benchSinkErr = ParseUDNLayer2NodeGRLRPTunnelIDs(node, netName)
 				}
 			}
 		})
@@ -92,13 +85,8 @@ func BenchmarkParseNetworkAnnotationsParseOnce(b *testing.B) {
 				if err != nil {
 					b.Fatal(err)
 				}
-				tunnelIDsMap, err := parseNetworkMapAnnotation(node.Annotations, types.UDNLayer2NodeGRLRPTunnelIDAnnotation)
-				if err != nil {
-					b.Fatal(err)
-				}
 				for _, netName := range netNames {
 					benchSinkInt, benchSinkErr = strconv.Atoi(networkIDsMap[netName])
-					benchSinkInt, benchSinkErr = strconv.Atoi(tunnelIDsMap[netName])
 				}
 			}
 		})

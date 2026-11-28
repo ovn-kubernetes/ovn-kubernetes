@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"strconv"
 
 	corev1 "k8s.io/api/core/v1"
 
@@ -71,28 +70,9 @@ func (c *NodeAnnotationCache) updateNodeAnnotationState(node *corev1.Node, updat
 		return nil
 	}
 	networkIDs, networkIDsErr := c.parseNetworkMapCached(node, util.OvnNetworkIDs, updateCache)
-	tunnelIDs, tunnelIDsErr := c.parseNetworkMapCached(node, types.UDNLayer2NodeGRLRPTunnelIDAnnotation, updateCache)
 	l3GatewayConfigs, l3GatewayConfigsErr := c.parseGatewayConfigMapCached(node, util.OvnNodeL3GatewayConfig, updateCache)
 	subnets, subnetsErr := c.parseSubnetMapCached(node, types.NodeSubnetsAnnotation, updateCache)
-	return newNodeAnnotationState(node.Name, networkIDs, networkIDsErr, tunnelIDs, tunnelIDsErr, l3GatewayConfigs, l3GatewayConfigsErr, subnets, subnetsErr)
-}
-
-// ParseUDNLayer2NodeGRLRPTunnelIDCached returns the per-network tunnel ID from the
-// node annotation map using this cache.
-func (c *NodeAnnotationCache) ParseUDNLayer2NodeGRLRPTunnelIDCached(node *corev1.Node, netName string) (int, error) {
-	tunnelIDs, err := c.parseNetworkMapCached(node, types.UDNLayer2NodeGRLRPTunnelIDAnnotation, true)
-	if err != nil {
-		return types.InvalidID, err
-	}
-	tunnelID, ok := tunnelIDs[netName]
-	if !ok {
-		return types.InvalidID, util.NewAnnotationNotSetError("node %q has no %q annotation for network %s", node.Name, types.UDNLayer2NodeGRLRPTunnelIDAnnotation, netName)
-	}
-	id, err := strconv.Atoi(tunnelID)
-	if err != nil {
-		return types.InvalidID, err
-	}
-	return id, nil
+	return newNodeAnnotationState(node.Name, networkIDs, networkIDsErr, l3GatewayConfigs, l3GatewayConfigsErr, subnets, subnetsErr)
 }
 
 // parseNetworkMapCached returns the parsed per-network string map for the

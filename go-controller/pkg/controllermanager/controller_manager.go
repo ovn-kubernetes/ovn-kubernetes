@@ -376,7 +376,6 @@ func (cm *ControllerManager) initDefaultNetworkController(observManager *observa
 // Start the ovnkube controller
 func (cm *ControllerManager) Start(ctx context.Context) error {
 	klog.Info("Starting the ovnkube controller")
-	config.Layer2UsesTransitRouter = true
 
 	// Configure metrics early so workqueue provider is set before any workqueues are created
 	cm.configureMetrics(cm.stopChan)

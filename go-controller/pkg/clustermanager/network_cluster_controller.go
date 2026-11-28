@@ -65,10 +65,8 @@ type networkClusterController struct {
 	retryPods  *objretry.RetryFramework
 
 	// retry framework for persistent ip allocation
-	ipamClaimHandler *factory.Handler
-	retryIPAMClaims  *objretry.RetryFramework
-	// tunnelIDAllocator of tunnelIDs within the network
-	tunnelIDAllocator   id.Allocator
+	ipamClaimHandler    *factory.Handler
+	retryIPAMClaims     *objretry.RetryFramework
 	podAllocator        *pod.PodAllocator
 	nodeAllocator       *node.NodeAllocator
 	ipamClaimReconciler *persistentips.IPAMClaimReconciler
@@ -405,42 +403,8 @@ func (ncc *networkClusterController) init(ctx context.Context) error {
 
 	networkID := ncc.GetNetworkID()
 
-	var err error
-	if util.DoesNetworkRequireTunnelIDs(ncc.GetNetInfo()) {
-		ncc.tunnelIDAllocator = id.NewIDAllocator(ncc.GetNetworkName(), types.MaxLogicalPortTunnelKey)
-		// Reserve the id 0. We don't want to assign this id to any of the pods or nodes.
-		if err = ncc.tunnelIDAllocator.ReserveID("zero", types.NoTunnelID); err != nil {
-			return err
-		}
-		if util.IsNetworkSegmentationSupportEnabled() && ncc.IsPrimaryNetwork() && !config.Layer2UsesTransitRouter {
-			// if the network is a primary L2 UDN network, then we need to reserve
-			// the IDs used by each node in this network's pod allocator
-			nodes, err := ncc.watchFactory.GetNodes()
-			if err != nil {
-				return fmt.Errorf("failed to list node objects: %w", err)
-			}
-			for _, node := range nodes {
-				tunnelID, err := util.ParseUDNLayer2NodeGRLRPTunnelIDs(node, ncc.GetNetworkName())
-				if err != nil {
-					if util.IsAnnotationNotSetError(err) {
-						klog.Warningf("tunnelID annotation does not exist for the node %s for network %s, err: %v; we need to allocate it...",
-							node.Name, ncc.GetNetworkName(), err)
-					} else {
-						return fmt.Errorf("failed to fetch tunnelID annotation from the node %s for network %s, err: %v",
-							node.Name, ncc.GetNetworkName(), err)
-					}
-				}
-				if tunnelID != types.InvalidID {
-					if err := ncc.tunnelIDAllocator.ReserveID(ncc.GetNetworkName()+"_"+node.Name, tunnelID); err != nil {
-						return fmt.Errorf("unable to reserve id for network %s, node %s: %w", ncc.GetNetworkName(), node.Name, err)
-					}
-				}
-			}
-		}
-	}
-
 	if ncc.hasNodeAllocation() {
-		ncc.nodeAllocator = node.NewNodeAllocator(networkID, ncc.GetNetInfo(), ncc.watchFactory.NodeCoreInformer().Lister(), ncc.kube, ncc.nodeClient, ncc.tunnelIDAllocator)
+		ncc.nodeAllocator = node.NewNodeAllocator(networkID, ncc.GetNetInfo(), ncc.watchFactory.NodeCoreInformer().Lister(), ncc.kube, ncc.nodeClient)
 		err := ncc.nodeAllocator.Init(ctx)
 		if err != nil {
 			return fmt.Errorf("failed to initialize host subnet ip allocator: %w", err)
@@ -486,6 +450,13 @@ func (ncc *networkClusterController) init(ctx context.Context) error {
 			podAllocOpts...,
 		)
 
+		var tunnelIDAllocator id.Allocator
+		if util.DoesNetworkRequireTunnelIDs(ncc.GetNetInfo()) {
+			tunnelIDAllocator = id.NewIDAllocator(ncc.GetNetworkName(), types.MaxLogicalPortTunnelKey)
+			if err := tunnelIDAllocator.ReserveID("zero", types.NoTunnelID); err != nil {
+				return err
+			}
+		}
 		ncc.podAllocator = pod.NewPodAllocator(
 			ncc.GetNetInfo(),
 			podAllocationAnnotator,
@@ -493,7 +464,7 @@ func (ncc *networkClusterController) init(ctx context.Context) error {
 			ipamClaimsReconciler,
 			ncc.networkManager,
 			ncc.recorder,
-			ncc.tunnelIDAllocator,
+			tunnelIDAllocator,
 			ncc.watchFactory.NodeCoreInformer().Lister(),
 		)
 		if err := ncc.podAllocator.Init(); err != nil {
@@ -703,20 +674,8 @@ func (ncc *networkClusterController) shouldReconcileNode(
 	if ncc.nodeAllocator.NeedsNodeAllocationWithState(newNode, newState) {
 		return true
 	}
-	return ncc.relevantNodeAnnotationsChanged(oldState, newState)
-}
-
-func (ncc *networkClusterController) relevantNodeAnnotationsChanged(
-	oldState, newState *sharednode.NodeAnnotationState) bool {
-	if ncc.nodeAllocator.HasNodeSubnetAllocation() &&
-		sharednode.NodeSubnetAnnotationChangedForNetworkWithState(oldState, newState, ncc.GetNetworkName()) {
-		return true
-	}
-	if ncc.nodeAllocator.HasNodeTunnelIDAllocation() &&
-		sharednode.TunnelIDAnnotationChangedForNetworkWithState(oldState, newState, ncc.GetNetworkName()) {
-		return true
-	}
-	return false
+	return ncc.nodeAllocator.HasNodeSubnetAllocation() &&
+		sharednode.NodeSubnetAnnotationChangedForNetworkWithState(oldState, newState, ncc.GetNetworkName())
 }
 
 // Start the network cluster controller. Depending on the cluster configuration
