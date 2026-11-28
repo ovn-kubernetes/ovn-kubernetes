@@ -74,13 +74,38 @@ curl --silent \
 ACTOR=$(jq -r '.user.login' pr.json)
 BRANCH=$(jq -r '.head.ref' pr.json)
 
-curl --silent \
-     --request GET \
-     --url "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs?event=pull_request&actor=${ACTOR}&branch=${BRANCH}" \
-     --header "authorization: Bearer ${GITHUB_TOKEN}" \
-     --header "content-type: application/json" |\
-  jq '.workflow_runs | group_by(.name) | map(max_by(.run_number))' \
-    > workflow_runs.json
+# GET /actions/runs is served from an index that is not strongly consistent:
+# it intermittently answers 200 with an empty workflow_runs list for a query
+# that has matches (see https://github.com/orgs/community/discussions/24626).
+# Retry a few times before concluding there is nothing to trigger, and report
+# HTTP errors instead of treating them as "no runs".
+RUNS_URL="https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs?event=pull_request&actor=${ACTOR}&branch=${BRANCH}"
+LIST_ATTEMPTS=5
+attempt=1
+while :; do
+  RESPONSE_CODE=$(curl --silent \
+      --write-out '%{http_code}' \
+      --output runs-response.json \
+      --request GET \
+      --url "${RUNS_URL}" \
+      --header "authorization: Bearer ${GITHUB_TOKEN}" \
+      --header "content-type: application/json")
+  if ! echo "${RESPONSE_CODE}" | grep -E -q '^2'; then
+    send_reaction "confused"
+    send_comment "Failed to list workflow runs for ${BRANCH} (HTTP ${RESPONSE_CODE}): $(jq -r '.message // "no error message"' runs-response.json | tr -d '"')"
+    exit 0
+  fi
+  TOTAL=$(jq -r '.total_count // 0' runs-response.json)
+  if [ "${TOTAL}" -gt 0 ] || [ "${attempt}" -ge "${LIST_ATTEMPTS}" ]; then
+    break
+  fi
+  echo "Workflow run listing for ${BRANCH} came back empty (attempt ${attempt}/${LIST_ATTEMPTS}), retrying..."
+  attempt=$((attempt + 1))
+  sleep 5
+done
+
+jq '.workflow_runs | group_by(.name) | map(max_by(.run_number))' runs-response.json \
+  > workflow_runs.json
 
 [ -f "workflow_runs.json" ] && cat workflow_runs.json
 
