@@ -83,3 +83,7 @@ DHCP-based IPAM for localnet secondary networks.
 **[Scalable ARP/NDP Broadcast Handling for UDN](okep-6691-scalable-arp-ndp-broadcast-udn.md)**
 
 Scalable ARP/NDP broadcast handling to keep UDN external connectivity working at high UDN density.
+
+**[Dynamic Resource Allocation](okep-6391-dra.md)**
+
+First-party DRA driver for requesting accelerated devices on OVN-Kubernetes networks.
