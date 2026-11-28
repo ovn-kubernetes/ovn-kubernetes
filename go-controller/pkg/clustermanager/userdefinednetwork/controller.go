@@ -130,6 +130,7 @@ func (e *evpnConfigError) Error() string {
 }
 
 type Controller struct {
+	nodeCountStatus *nodeCountStatusPublisher
 	// cudnController manage ClusterUserDefinedNetwork CRs.
 	cudnController controller.Controller
 	// udnController manage UserDefinedNetwork CRs.
@@ -229,6 +230,7 @@ func New(
 		reservedVNIs:      map[vniKey]string{},
 		eventRecorder:     eventRecorder,
 	}
+	c.nodeCountStatus = newNodeCountStatusPublisher(c.publishNodeCountStatus)
 	udnCfg := &controller.ControllerConfig[userdefinednetworkv1.UserDefinedNetwork]{
 		RateLimiter: workqueue.NewTypedItemExponentialFailureRateLimiter[string](
 			reconcileBackoffBase, reconcileBackoffMax),
@@ -276,6 +278,7 @@ func (c *Controller) Run() error {
 	klog.Infof("Starting user-defined network controllers")
 
 	controllers := []controller.Reconciler{
+		c.nodeCountStatus.reconciler,
 		c.cudnController,
 		c.udnController,
 		c.nadNotifier.Controller,
@@ -557,7 +560,9 @@ func (c *Controller) releaseVNIs(networkName string) {
 }
 
 func (c *Controller) Shutdown() {
+	c.nodeCountStatus.cancel()
 	controllers := []controller.Reconciler{
+		c.nodeCountStatus.reconciler,
 		c.cudnController,
 		c.udnController,
 		c.nadNotifier.Controller,
@@ -672,6 +677,8 @@ func (c *Controller) ReconcileNamespace(key string) error {
 // If given network is not managed by a UDN/CUDN, no condition will be reported and no error will be returned.
 // Events may be used to report additional information about the condition to avoid overloading the condition message.
 // When condition should not change, but new events should be reported, pass condition = nil.
+// ClusterManager NodesSelected reports are queued and retried asynchronously;
+// count-only changes are coalesced while material transitions bypass the delay.
 func (c *Controller) UpdateSubsystemCondition(
 	ctx context.Context,
 	networkName string,
@@ -711,6 +718,24 @@ func (c *Controller) UpdateSubsystemCondition(
 		return nil
 	}
 
+	if fieldManager == "ClusterManager" && condition.Type == "NodesSelected" {
+		var conditions []metav1.Condition
+		var generation int64
+		switch resource := obj.(type) {
+		case *userdefinednetworkv1.ClusterUserDefinedNetwork:
+			conditions, generation = resource.Status.Conditions, resource.Generation
+		case *userdefinednetworkv1.UserDefinedNetwork:
+			conditions, generation = resource.Status.Conditions, resource.Generation
+		}
+		c.nodeCountStatus.update(networkName, objRef.UID, generation, condition, meta.FindStatusCondition(conditions, condition.Type))
+		return nil
+	}
+	return c.applySubsystemCondition(ctx, networkName, objRef.UID, fieldManager, condition)
+}
+
+func (c *Controller) applySubsystemCondition(ctx context.Context, networkName string, uid types.UID, fieldManager string, condition *metav1.Condition) error {
+	udnNamespace, udnName := util.ParseNetworkName(networkName)
+	var err error
 	applyCondition := &metaapplyv1.ConditionApplyConfiguration{
 		Type:               &condition.Type,
 		Status:             &condition.Status,
@@ -719,18 +744,22 @@ func (c *Controller) UpdateSubsystemCondition(
 		Message:            &condition.Message,
 	}
 
+	if fieldManager == "ClusterManager" && condition.Type == "NodesSelected" {
+		applyCondition.ObservedGeneration = &condition.ObservedGeneration
+	}
+
 	opts := metav1.ApplyOptions{
 		FieldManager: fieldManager,
 		Force:        true,
 	}
 
 	if udnNamespace == "" {
-		applyConf := udnapplyconfkv1.ClusterUserDefinedNetwork(udnName).
+		applyConf := udnapplyconfkv1.ClusterUserDefinedNetwork(udnName).WithUID(uid).
 			WithStatus(udnapplyconfkv1.ClusterUserDefinedNetworkStatus().WithConditions(applyCondition))
 		_, err = c.udnClient.K8sV1().ClusterUserDefinedNetworks().ApplyStatus(ctx, applyConf, opts)
 	} else {
 		udnStatus := udnapplyconfkv1.UserDefinedNetworkStatus().WithConditions(applyCondition)
-		applyUDN := udnapplyconfkv1.UserDefinedNetwork(udnName, udnNamespace).WithStatus(udnStatus)
+		applyUDN := udnapplyconfkv1.UserDefinedNetwork(udnName, udnNamespace).WithUID(uid).WithStatus(udnStatus)
 		_, err = c.udnClient.K8sV1().UserDefinedNetworks(udnNamespace).ApplyStatus(ctx, applyUDN, opts)
 	}
 	if err != nil {
@@ -757,6 +786,9 @@ func (c *Controller) reconcileUDN(ctx context.Context, key string) error {
 	}
 
 	udn, err := c.udnLister.UserDefinedNetworks(namespace).Get(name)
+	if apierrors.IsNotFound(err) {
+		c.nodeCountStatus.forget(util.GenerateUDNNetworkName(namespace, name))
+	}
 	if err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("failed to get UserDefinedNetwork %q from cache: %v", key, err)
 	}
@@ -911,6 +943,9 @@ func (c *Controller) reconcileCUDN(ctx context.Context, key string) error {
 	}
 
 	cudn, err := c.cudnLister.Get(name)
+	if apierrors.IsNotFound(err) {
+		c.nodeCountStatus.forget(util.GenerateCUDNNetworkName(key))
+	}
 	if err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("failed to get ClusterUserDefinedNetwork %q from cache: %v", key, err)
 	}
