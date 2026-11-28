@@ -104,6 +104,12 @@ func allocateInt(ctx context.Context, f *framework.Framework, key string, max in
 	return allocated, err
 }
 
+// updateError marks an error as coming from the Update call, not the Get call.
+type updateError struct{ err error }
+
+func (e updateError) Error() string { return e.err.Error() }
+func (e updateError) Unwrap() error { return e.err }
+
 // DeallocateInt deallocates an integer previously allocated with AllocateInt.
 func DeallocateInt(f *framework.Framework, key string, index int) error {
 	return deallocateInt(context.Background(), f, key, index)
@@ -112,14 +118,35 @@ func DeallocateInt(f *framework.Framework, key string, index int) error {
 func deallocateInt(ctx context.Context, f *framework.Framework, key string, index int) error {
 	client := f.ClientSet.CoreV1().ConfigMaps(configMapNamespace)
 
-	return retry.RetryOnConflict(allocatorBackoff, func() error {
+	// A failed Update other than a conflict may have been applied with just its
+	// response lost, so retrying it could release an index that another test
+	// has allocated in the meantime. A Get is idempotent and always retriable.
+	retriable := func(err error) bool {
+		var updateErr updateError
+		if errors.As(err, &updateErr) {
+			return apierrors.IsConflict(err)
+		}
+		return !apierrors.IsNotFound(err)
+	}
+	err := retry.OnError(allocatorBackoff, retriable, func() error {
 		cm, err := client.Get(ctx, key, metav1.GetOptions{})
 		if err != nil {
 			return err
 		}
 
+		if _, allocated := cm.Data[strconv.Itoa(index)]; !allocated {
+			return nil
+		}
+
 		delete(cm.Data, strconv.Itoa(index))
-		_, err = client.Update(ctx, cm, metav1.UpdateOptions{})
-		return err
+		if _, err = client.Update(ctx, cm, metav1.UpdateOptions{}); err != nil {
+			return updateError{err}
+		}
+		return nil
 	})
+	if apierrors.IsNotFound(err) {
+		// nothing was ever allocated under this key
+		return nil
+	}
+	return err
 }
