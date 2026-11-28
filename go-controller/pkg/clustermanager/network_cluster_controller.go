@@ -811,7 +811,9 @@ func (ncc *networkClusterController) Cleanup(ctx context.Context) error {
 		return fmt.Errorf("default network cannot be cleaned up")
 	}
 
-	if ncc.hasNodeAllocation() {
+	// a network whose start failed is retained and cleaned up, so it may never
+	// have allocated anything
+	if ncc.hasNodeAllocation() && ncc.nodeAllocator != nil {
 		err := ncc.nodeAllocator.Cleanup(ctx)
 		if err != nil {
 			return err
