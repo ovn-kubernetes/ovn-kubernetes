@@ -21,6 +21,7 @@ import (
 	utilnet "k8s.io/utils/net"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/types"
 )
 
 var ErrorNoIP = errors.New("no IP available")
@@ -340,6 +341,9 @@ func IsContainedInAnyCIDR(ipnet *net.IPNet, ipnets ...*net.IPNet) bool {
 	}
 	return false
 }
+
+// V4LinkLocalCIDR is the IPv4 link-local prefix (RFC 3927).
+var V4LinkLocalCIDR = MustParseCIDR(types.V4LinkLocalSubnet)
 
 // ContainsCIDR returns true if ipnet1 contains ipnet2
 func ContainsCIDR(ipnet1, ipnet2 *net.IPNet) bool {

@@ -729,6 +729,11 @@ func (udng *UserDefinedNetworkGateway) addNetworkWithResolvedUplink(
 		if err = udng.vrfManager.AddVRFRoutes(vrfDeviceName, routes); err != nil {
 			return fmt.Errorf("could not add VRF %s routes for network %s, err: %v", vrfDeviceName, udng.GetNetworkName(), err)
 		}
+		if route := udng.linkLocalUnreachableRoute(); route != nil && !config.Gateway.DisableLinkLocalForwarding {
+			if err = udng.vrfManager.DeleteVRFRoutes(vrfDeviceName, []netlink.Route{*route}); err != nil {
+				return fmt.Errorf("could not delete VRF %s link-local route for network %s, err: %v", vrfDeviceName, udng.GetNetworkName(), err)
+			}
+		}
 	}
 
 	if config.IsModeDPUHost() || config.IsModeFull() {
@@ -1233,6 +1238,10 @@ func (udng *UserDefinedNetworkGateway) useNoPrefixRouteManagementPortIPs() bool 
 		udng.Transport() == types.NetworkTransportNoOverlay
 }
 
+// unreachableRouteMetric is the highest metric the kernel accepts, so that any
+// other route to the same destination wins over an unreachable route of ours.
+const unreachableRouteMetric = 4278198272
+
 // computeRoutesForUDN returns a list of routes programmed into a given UDN's VRF
 // when adding new routes please leave a sample comment on how that route looks like
 func (udng *UserDefinedNetworkGateway) computeRoutesForUDN(mpLink netlink.Link, networkLocalSubnets []*net.IPNet) ([]netlink.Route, error) {
@@ -1393,7 +1402,7 @@ func (udng *UserDefinedNetworkGateway) computeRoutesForUDN(mpLink netlink.Link, 
 		retVal = append(retVal, netlink.Route{
 			Dst:      v4AnyCIDR,
 			Table:    udng.vrfTableId,
-			Priority: 4278198272,
+			Priority: unreachableRouteMetric,
 			Type:     unix.RTN_UNREACHABLE,
 		})
 	}
@@ -1405,11 +1414,39 @@ func (udng *UserDefinedNetworkGateway) computeRoutesForUDN(mpLink netlink.Link, 
 			LinkIndex: types.LoopbackInterfaceIndex,
 			Dst:       v6AnyCIDR,
 			Table:     udng.vrfTableId,
-			Priority:  4278198272,
+			Priority:  unreachableRouteMetric,
 			Type:      unix.RTN_UNREACHABLE,
 		})
 	}
+	if route := udng.linkLocalUnreachableRoute(); route != nil && config.Gateway.DisableLinkLocalForwarding {
+		retVal = append(retVal, *route)
+	}
 	return retVal, nil
+}
+
+// linkLocalUnreachableRoute returns the route that keeps IPv4 link-local
+// destinations on the node while link-local forwarding is disabled, like so:
+//
+//	unreachable 169.254.0.0/16 proto 85 metric 4278198272
+//
+// or nil when the network has no IPv4 subnet. A default route in the VRF,
+// whichever its metric, would otherwise forward those destinations out of the
+// node; routes to the masquerade addresses are more specific and unaffected.
+// The metric keeps the route from replacing a connected 169.254.0.0/16 route
+// of an enslaved interface that holds a link-local address. The protocol
+// restricts the deletion to this route. IPv6 needs no such route: the kernel
+// resolves fe80::/10 destinations per interface, never through the VRF default.
+func (udng *UserDefinedNetworkGateway) linkLocalUnreachableRoute() *netlink.Route {
+	if hasV4Subnet, _ := udng.IPMode(); !hasV4Subnet {
+		return nil
+	}
+	return &netlink.Route{
+		Dst:      util.V4LinkLocalCIDR,
+		Table:    udng.vrfTableId,
+		Type:     unix.RTN_UNREACHABLE,
+		Priority: unreachableRouteMetric,
+		Protocol: netlink.RouteProtocol(types.OVNKProtocol),
+	}
 }
 
 func (udng *UserDefinedNetworkGateway) getDefaultRoute() ([]netlink.Route, error) {

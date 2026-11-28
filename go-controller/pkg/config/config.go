@@ -670,6 +670,9 @@ type GatewayConfig struct {
 	DisableForwarding bool `gcfg:"disable-forwarding"`
 	// AllowNoUplink (disabled by default) controls if the external gateway bridge without an uplink port is allowed in local gateway mode.
 	AllowNoUplink bool `gcfg:"allow-no-uplink"`
+	// DisableLinkLocalForwarding (disabled by default) drops traffic to IPv4 link-local destinations (169.254.0.0/16)
+	// in the OVN gateway routers and in the user defined network VRFs instead of forwarding it along the default route.
+	DisableLinkLocalForwarding bool `gcfg:"disable-link-local-forwarding"`
 	// EphemeralPortRange is the range of ports used by egress SNAT operations in OVN. Specifically for NAT where
 	// the source IP of the NAT will be a shared Node IP address. If unset, the value will be determined by sysctl lookup
 	// for the kernel's ephemeral range: net.ipv4.ip_local_port_range. Format is "<min port>-<max port>".
@@ -1834,6 +1837,13 @@ var OVNGatewayFlags = []cli.Flag{
 		Usage:       "Allow the external gateway bridge without an uplink port in local gateway mode",
 		Destination: &cliConfig.Gateway.AllowNoUplink,
 	},
+	&cli.BoolFlag{
+		Name: "disable-link-local-forwarding",
+		Usage: "Drop traffic to IPv4 link-local destinations (169.254.0.0/16) in the OVN gateway routers and in the " +
+			"user defined network VRFs instead of forwarding it along the default route. Does not cover default " +
+			"network pods in local gateway mode. See docs/getting-started/configuration.md.",
+		Destination: &cliConfig.Gateway.DisableLinkLocalForwarding,
+	},
 	&cli.StringFlag{
 		Name: "ephemeral-port-range",
 		Usage: "The port range in '<min port>-<max port>' format for OVN to use when SNAT'ing to a node IP. " +
@@ -2404,6 +2414,16 @@ func completeGatewayConfig(allSubnets *ConfigSubnets, masqueradeIPs *MasqueradeI
 	}
 	if err = AllocateV4MasqueradeIPs(v4MasqueradeIP, masqueradeIPs); err != nil {
 		return fmt.Errorf("unable to allocate V4MasqueradeIPs: %s", err)
+	}
+	if Gateway.DisableLinkLocalForwarding {
+		// The drop route must stay less specific than the masquerade subnet route.
+		_, linkLocalCIDR, _ := net.ParseCIDR(types.V4LinkLocalSubnet)
+		masqueradeOnes, _ := v4MasqueradeCIDR.Mask.Size()
+		linkLocalOnes, _ := linkLocalCIDR.Mask.Size()
+		if masqueradeOnes <= linkLocalOnes && v4MasqueradeCIDR.Contains(linkLocalCIDR.IP) {
+			return fmt.Errorf("disable-link-local-forwarding requires a gateway v4 masquerade subnet more specific than %s, got: %s",
+				types.V4LinkLocalSubnet, Gateway.V4MasqueradeSubnet)
+		}
 	}
 
 	v6MasqueradeIP, v6MasqueradeCIDR, err := net.ParseCIDR(Gateway.V6MasqueradeSubnet)
