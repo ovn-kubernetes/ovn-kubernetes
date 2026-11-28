@@ -850,22 +850,19 @@ func (c *Controller) syncServiceForNetwork(state *networkState, key string) erro
 }
 
 func (c *Controller) syncNodeInfoForNetwork(state *networkState, localNodeInfo *nodeInfo) {
-	nodeInfoByName := make(map[string]nodeInfo, 1)
-	if localNodeInfo != nil {
-		nodeInfoByName[localNodeInfo.name] = *localNodeInfo
-	}
-	c.syncNodeInfoMapForNetwork(state, nodeInfoByName)
-}
-
-func (c *Controller) syncNodeInfoMapForNetwork(state *networkState, nodeInfoByName map[string]nodeInfo) {
 	state.nodeInfoRWLock.Lock()
 	defer state.nodeInfoRWLock.Unlock()
 
-	state.nodeInfosByName = make(map[string]nodeInfo, len(nodeInfoByName))
-	for nodeName, nodeInfo := range nodeInfoByName {
-		state.nodeInfosByName[nodeName] = nodeInfo
+	state.nodeInfosByName = make(map[string]nodeInfo, 1)
+	if localNodeInfo != nil {
+		state.nodeInfosByName[localNodeInfo.name] = *localNodeInfo
 	}
+	c.syncNodeInfoLocked(state)
+}
 
+// syncNodeInfoLocked refreshes the local node and templates from the controller's
+// node map. The caller must hold state.nodeInfoRWLock for writing.
+func (c *Controller) syncNodeInfoLocked(state *networkState) {
 	state.nodeInfo = localNodeInfo(c.nodeName, state.nodeInfosByName)
 	if !state.useTemplates {
 		return
@@ -1025,36 +1022,35 @@ func (c *Controller) updateNodeForNetwork(state *networkState, node *corev1.Node
 		return
 	}
 
-	nodeInfoByName, changed := c.updatedNodeInfoMapForNetwork(state, node.Name, ni)
-	if !changed {
+	if !c.updateNodeInfoForNetwork(state, node.Name, ni) {
 		return
 	}
 	klog.Infof("Node %s switch + router changed, syncing services in network %q", node.Name, state.netInfo.GetNetworkName())
-	c.syncNodeInfoMapForNetwork(state, nodeInfoByName)
 	c.enqueueAllServicesForNetwork(state)
 }
 
 func (c *Controller) removeNodeForNetwork(state *networkState, nodeName string) {
-	nodeInfoByName, changed := c.updatedNodeInfoMapForNetwork(state, nodeName, nil)
-	if !changed {
+	if !c.updateNodeInfoForNetwork(state, nodeName, nil) {
 		return
 	}
-	c.syncNodeInfoMapForNetwork(state, nodeInfoByName)
 	c.enqueueAllServicesForNetwork(state)
 }
 
-func (c *Controller) updatedNodeInfoMapForNetwork(state *networkState, nodeName string, newNodeInfo *nodeInfo) (map[string]nodeInfo, bool) {
-	state.nodeInfoRWLock.RLock()
-	defer state.nodeInfoRWLock.RUnlock()
+func (c *Controller) updateNodeInfoForNetwork(state *networkState, nodeName string, newNodeInfo *nodeInfo) bool {
+	state.nodeInfoRWLock.Lock()
+	defer state.nodeInfoRWLock.Unlock()
 
 	existing, ok := state.nodeInfosByName[nodeName]
 	if newNodeInfo != nil && ok && reflect.DeepEqual(existing, *newNodeInfo) {
-		return nil, false
+		return false
 	}
 	if newNodeInfo == nil && !ok {
-		return nil, false
+		return false
 	}
 
+	// Build and publish under the same lock so the snapshot never escapes to a
+	// caller and concurrent updates cannot overwrite one another. Node values
+	// retain the existing shallow-copy semantics; their slices are treated as read-only.
 	nodeInfoByName := make(map[string]nodeInfo, len(state.nodeInfosByName)+1)
 	for existingNodeName, existingNodeInfo := range state.nodeInfosByName {
 		nodeInfoByName[existingNodeName] = existingNodeInfo
@@ -1064,7 +1060,9 @@ func (c *Controller) updatedNodeInfoMapForNetwork(state *networkState, nodeName 
 	} else {
 		nodeInfoByName[nodeName] = *newNodeInfo
 	}
-	return nodeInfoByName, true
+	state.nodeInfosByName = nodeInfoByName
+	c.syncNodeInfoLocked(state)
+	return true
 }
 
 func (c *Controller) skipServiceForNetwork(state *networkState, name, namespace string) bool {
