@@ -1280,6 +1280,198 @@ var _ = Describe("Node Operations", func() {
 			err := app.Run([]string{app.Name})
 			Expect(err).NotTo(HaveOccurred())
 		})
+
+		It("flushes stale conntrack entries when a UDP service is added", func() {
+			app.Action = func(*cli.Context) error {
+				nodePort := int32(31111)
+				service := *newService("service1", "namespace1", "10.129.0.2",
+					[]corev1.ServicePort{
+						{
+							NodePort:   nodePort,
+							Protocol:   corev1.ProtocolUDP,
+							Port:       int32(53),
+							TargetPort: intstr.FromInt(5353),
+						},
+					},
+					corev1.ServiceTypeNodePort,
+					nil,
+					corev1.ServiceStatus{},
+					false, false,
+				)
+
+				stopChan := make(chan struct{})
+				fakeClient := util.GetOVNClientset(&service).GetNodeClientset()
+				wf, err := factory.NewNodeWatchFactory(fakeClient, "node")
+				Expect(err).ToNot(HaveOccurred())
+				Expect(wf.Start()).To(Succeed())
+				defer func() {
+					close(stopChan)
+					wf.Shutdown()
+				}()
+
+				var conntrackDeleteFiltersCount atomic.Int32
+
+				// Registered before the watcher starts: the flush happens on the add event.
+				netlinkMock.
+					On("ConntrackDeleteFilters",
+						netlink.ConntrackTableType(netlink.ConntrackTable),
+						netlink.InetFamily(netlink.FAMILY_V4),
+						makeConntrackFilter(service.Spec.ClusterIP, int(service.Spec.Ports[0].Port), corev1.ProtocolUDP, netlink.ConntrackOrigDstIP)).
+					Return(uint(1), nil).
+					Run(func(_ mock.Arguments) {
+						conntrackDeleteFiltersCount.Add(1)
+					}).
+					Once()
+				netlinkMock.
+					On("ConntrackDeleteFilters",
+						netlink.ConntrackTableType(netlink.ConntrackTable),
+						netlink.InetFamily(netlink.FAMILY_V4),
+						makeConntrackFilter("192.168.18.15", int(nodePort), corev1.ProtocolUDP, netlink.ConntrackOrigDstIP)).
+					Return(uint(1), nil).
+					Run(func(_ mock.Arguments) {
+						conntrackDeleteFiltersCount.Add(1)
+					}).
+					Once()
+
+				fNPW.watchFactory = wf
+				Expect(startNodePortWatcher(fNPW, fakeClient)).To(Succeed())
+
+				// Verify conntrack deletion was called for both VIPs
+				Eventually(func() int32 {
+					return conntrackDeleteFiltersCount.Load()
+				}, "2s").Should(Equal(int32(2)))
+
+				return nil
+			}
+			err := app.Run([]string{app.Name})
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("does not flush conntrack entries when a TCP service is added", func() {
+			app.Action = func(*cli.Context) error {
+				service := *newService("service1", "namespace1", "10.129.0.2",
+					[]corev1.ServicePort{
+						{
+							NodePort:   int32(31111),
+							Protocol:   corev1.ProtocolTCP,
+							Port:       int32(80),
+							TargetPort: intstr.FromInt(8080),
+						},
+					},
+					corev1.ServiceTypeNodePort,
+					nil,
+					corev1.ServiceStatus{},
+					false, false,
+				)
+
+				stopChan := make(chan struct{})
+				fakeClient := util.GetOVNClientset(&service).GetNodeClientset()
+				wf, err := factory.NewNodeWatchFactory(fakeClient, "node")
+				Expect(err).ToNot(HaveOccurred())
+				Expect(wf.Start()).To(Succeed())
+				defer func() {
+					close(stopChan)
+					wf.Shutdown()
+				}()
+
+				fNPW.watchFactory = wf
+				Expect(startNodePortWatcher(fNPW, fakeClient)).To(Succeed())
+
+				// Established TCP connections must survive a service add.
+				Consistently(func() bool {
+					netlinkMock.AssertNotCalled(GinkgoT(), "ConntrackDeleteFilters")
+					return true
+				}, "1s", "100ms").Should(BeTrue())
+
+				return nil
+			}
+			err := app.Run([]string{app.Name})
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("flushes conntrack only for the UDP ports of a mixed-protocol service", func() {
+			app.Action = func(*cli.Context) error {
+				// kube-dns shape: port 53 served over both TCP and UDP.
+				udpNodePort := int32(31111)
+				tcpNodePort := int32(31112)
+				service := *newService("service1", "namespace1", "10.129.0.2",
+					[]corev1.ServicePort{
+						{
+							NodePort:   udpNodePort,
+							Protocol:   corev1.ProtocolUDP,
+							Port:       int32(53),
+							TargetPort: intstr.FromInt(5353),
+						},
+						{
+							NodePort:   tcpNodePort,
+							Protocol:   corev1.ProtocolTCP,
+							Port:       int32(53),
+							TargetPort: intstr.FromInt(5353),
+						},
+					},
+					corev1.ServiceTypeNodePort,
+					nil,
+					corev1.ServiceStatus{},
+					false, false,
+				)
+
+				stopChan := make(chan struct{})
+				fakeClient := util.GetOVNClientset(&service).GetNodeClientset()
+				wf, err := factory.NewNodeWatchFactory(fakeClient, "node")
+				Expect(err).ToNot(HaveOccurred())
+				Expect(wf.Start()).To(Succeed())
+				defer func() {
+					close(stopChan)
+					wf.Shutdown()
+				}()
+
+				var conntrackDeleteFiltersCount atomic.Int32
+
+				// Only UDP VIPs are mocked; a TCP flush would hit an unmocked call.
+				netlinkMock.
+					On("ConntrackDeleteFilters",
+						netlink.ConntrackTableType(netlink.ConntrackTable),
+						netlink.InetFamily(netlink.FAMILY_V4),
+						makeConntrackFilter(service.Spec.ClusterIP, int(service.Spec.Ports[0].Port), corev1.ProtocolUDP, netlink.ConntrackOrigDstIP)).
+					Return(uint(1), nil).
+					Run(func(_ mock.Arguments) {
+						conntrackDeleteFiltersCount.Add(1)
+					}).
+					Once()
+				netlinkMock.
+					On("ConntrackDeleteFilters",
+						netlink.ConntrackTableType(netlink.ConntrackTable),
+						netlink.InetFamily(netlink.FAMILY_V4),
+						makeConntrackFilter("192.168.18.15", int(udpNodePort), corev1.ProtocolUDP, netlink.ConntrackOrigDstIP)).
+					Return(uint(1), nil).
+					Run(func(_ mock.Arguments) {
+						conntrackDeleteFiltersCount.Add(1)
+					}).
+					Once()
+
+				fNPW.watchFactory = wf
+				Expect(startNodePortWatcher(fNPW, fakeClient)).To(Succeed())
+
+				// Both UDP VIPs flushed...
+				Eventually(func() int32 {
+					return conntrackDeleteFiltersCount.Load()
+				}, "2s").Should(Equal(int32(2)))
+
+				// ...and neither TCP VIP touched.
+				netlinkMock.AssertNotCalled(GinkgoT(), "ConntrackDeleteFilters",
+					netlink.ConntrackTableType(netlink.ConntrackTable),
+					netlink.InetFamily(netlink.FAMILY_V4),
+					makeConntrackFilter(service.Spec.ClusterIP, int(service.Spec.Ports[1].Port), corev1.ProtocolTCP, netlink.ConntrackOrigDstIP))
+				netlinkMock.AssertNotCalled(GinkgoT(), "ConntrackDeleteFilters",
+					netlink.ConntrackTableType(netlink.ConntrackTable),
+					netlink.InetFamily(netlink.FAMILY_V4),
+					makeConntrackFilter("192.168.18.15", int(tcpNodePort), corev1.ProtocolTCP, netlink.ConntrackOrigDstIP))
+
+				return nil
+			}
+			err := app.Run([]string{app.Name})
+			Expect(err).NotTo(HaveOccurred())
+		})
 	})
 
 	Context("on delete", func() {
@@ -1415,6 +1607,11 @@ var _ = Describe("Node Operations", func() {
 				}()
 
 				fNPW.watchFactory = wf
+				// The Add path flushes these VIPs before the update under test.
+				addConntrackMocks(netlinkMock, []ctFilterDesc{
+					{"192.168.18.15", int(nodePort), corev1.ProtocolUDP, netlink.ConntrackOrigDstIP},
+					{service.Spec.ClusterIP, int(service.Spec.Ports[0].Port), corev1.ProtocolUDP, netlink.ConntrackOrigDstIP},
+				})
 				Expect(startNodePortWatcher(fNPW, fakeClient)).To(Succeed())
 
 				// Update service with new targetPort
@@ -1491,6 +1688,11 @@ var _ = Describe("Node Operations", func() {
 				}()
 
 				fNPW.watchFactory = wf
+				// The Add path flushes these VIPs before the update under test.
+				addConntrackMocks(netlinkMock, []ctFilterDesc{
+					{"192.168.18.15", int(nodePort), corev1.ProtocolUDP, netlink.ConntrackOrigDstIP},
+					{service.Spec.ClusterIP, int(service.Spec.Ports[0].Port), corev1.ProtocolUDP, netlink.ConntrackOrigDstIP},
+				})
 				Expect(startNodePortWatcher(fNPW, fakeClient)).To(Succeed())
 
 				// Update service with new port
@@ -1616,6 +1818,11 @@ var _ = Describe("Node Operations", func() {
 				}()
 
 				fNPW.watchFactory = wf
+				// The Add path flushes these VIPs before the update under test.
+				addConntrackMocks(netlinkMock, []ctFilterDesc{
+					{externalIP1, int(service.Spec.Ports[0].Port), corev1.ProtocolUDP, netlink.ConntrackOrigDstIP},
+					{service.Spec.ClusterIP, int(service.Spec.Ports[0].Port), corev1.ProtocolUDP, netlink.ConntrackOrigDstIP},
+				})
 				Expect(startNodePortWatcher(fNPW, fakeClient)).To(Succeed())
 
 				// Update service with new ExternalIP
@@ -1687,6 +1894,11 @@ var _ = Describe("Node Operations", func() {
 				}()
 
 				fNPW.watchFactory = wf
+				// The Add path flushes these VIPs before the update under test.
+				addConntrackMocks(netlinkMock, []ctFilterDesc{
+					{lbIP1, int(service.Spec.Ports[0].Port), corev1.ProtocolUDP, netlink.ConntrackOrigDstIP},
+					{service.Spec.ClusterIP, int(service.Spec.Ports[0].Port), corev1.ProtocolUDP, netlink.ConntrackOrigDstIP},
+				})
 				Expect(startNodePortWatcher(fNPW, fakeClient)).To(Succeed())
 
 				// Update service with new LoadBalancer IP
@@ -1756,6 +1968,11 @@ var _ = Describe("Node Operations", func() {
 				}()
 
 				fNPW.watchFactory = wf
+				// The Add path flushes these VIPs before the update under test.
+				addConntrackMocks(netlinkMock, []ctFilterDesc{
+					{service.Spec.ClusterIP, int(service.Spec.Ports[0].Port), corev1.ProtocolUDP, netlink.ConntrackOrigDstIP},
+					{service.Spec.ClusterIP, int(service.Spec.Ports[1].Port), corev1.ProtocolUDP, netlink.ConntrackOrigDstIP},
+				})
 				Expect(startNodePortWatcher(fNPW, fakeClient)).To(Succeed())
 
 				// Update service - change only port 80's targetPort

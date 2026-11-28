@@ -915,6 +915,17 @@ func serviceUpdateNotNeeded(old, new *corev1.Service) bool {
 		reflect.DeepEqual(new.Spec.AllocateLoadBalancerNodePorts, old.Spec.AllocateLoadBalancerNodePorts)
 }
 
+// udpServicePorts returns the subset of the service's ports that use UDP.
+func udpServicePorts(service *corev1.Service) []corev1.ServicePort {
+	udpPorts := make([]corev1.ServicePort, 0, len(service.Spec.Ports))
+	for _, p := range service.Spec.Ports {
+		if p.Protocol == corev1.ProtocolUDP {
+			udpPorts = append(udpPorts, p)
+		}
+	}
+	return udpPorts
+}
+
 // AddService handles configuring shared gateway bridge flows to steer External IP, Node Port, Ingress LB traffic into OVN
 func (npw *nodePortWatcher) AddService(service *corev1.Service) error {
 	var localEndpoints util.PortToLBEndpoints
@@ -924,6 +935,18 @@ func (npw *nodePortWatcher) AddService(service *corev1.Service) error {
 	}
 
 	klog.V(5).Infof("Adding service %s in namespace %s", service.Name, service.Namespace)
+
+	// A delete + re-create with traffic in flight can leave CONFIRMED conntrack
+	// entries committed without DNAT, which ct(commit,nat) never revisits. UDP
+	// only: Add also runs for every service on startup, where flushing TCP would
+	// break established connections.
+	if udpPorts := udpServicePorts(service); len(udpPorts) > 0 {
+		if err := npw.deleteConntrackForServicePorts(service, udpPorts); err != nil {
+			klog.Warningf("Failed to flush stale conntrack for service %s/%s on Add: %v",
+				service.Namespace, service.Name, err)
+		}
+	}
+
 	netInfo, err := npw.networkManager.GetActiveNetworkForNamespace(service.Namespace)
 	if err != nil {
 		// A namespace that requires a primary UDN can briefly have no active
@@ -1203,16 +1226,21 @@ func deleteConntrackForServiceVIP(svcVIPs []string, svcPorts []corev1.ServicePor
 
 // deleteConntrackForService deletes the conntrack entries corresponding to the service VIPs of the provided service
 func (npw *nodePortWatcher) deleteConntrackForService(service *corev1.Service) error {
+	return npw.deleteConntrackForServicePorts(service, service.Spec.Ports)
+}
+
+// deleteConntrackForServicePorts deletes the conntrack entries for the service VIPs, for the given subset of its ports
+func (npw *nodePortWatcher) deleteConntrackForServicePorts(service *corev1.Service, svcPorts []corev1.ServicePort) error {
 	// remove conntrack entries for LB VIPs and External IPs
 	externalIPs := util.GetExternalAndLBIPs(service)
-	if err := deleteConntrackForServiceVIP(externalIPs, service.Spec.Ports, service.Namespace, service.Name); err != nil {
+	if err := deleteConntrackForServiceVIP(externalIPs, svcPorts, service.Namespace, service.Name); err != nil {
 		return err
 	}
 	if util.ServiceTypeHasNodePort(service) {
 		// remove conntrack entries for NodePorts
 		nodeIPs, _ := npw.nodeIPManager.ListAddresses()
 		for _, nodeIP := range nodeIPs {
-			for _, svcPort := range service.Spec.Ports {
+			for _, svcPort := range svcPorts {
 				if _, err := util.DeleteConntrackServicePort(nodeIP.String(), svcPort.NodePort, svcPort.Protocol,
 					netlink.ConntrackOrigDstIP, nil); err != nil {
 					return fmt.Errorf("failed to delete conntrack entry for service %s/%s with nodeIP %s, nodePort %d, protocol %s: %v",
@@ -1223,7 +1251,7 @@ func (npw *nodePortWatcher) deleteConntrackForService(service *corev1.Service) e
 	}
 	// remove conntrack entries for ClusterIPs
 	clusterIPs := util.GetClusterIPs(service)
-	if err := deleteConntrackForServiceVIP(clusterIPs, service.Spec.Ports, service.Namespace, service.Name); err != nil {
+	if err := deleteConntrackForServiceVIP(clusterIPs, svcPorts, service.Namespace, service.Name); err != nil {
 		return err
 	}
 	return nil
