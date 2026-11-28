@@ -6,6 +6,7 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"net"
 	"time"
 
 	nadclient "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/client/clientset/versioned/typed/k8s.cni.cncf.io/v1"
@@ -19,7 +20,9 @@ import (
 	"k8s.io/apimachinery/pkg/util/rand"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/test/e2e/framework"
+	e2ekubectl "k8s.io/kubernetes/test/e2e/framework/kubectl"
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
+	utilnet "k8s.io/utils/net"
 )
 
 var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.NetworkSegmentation, func() {
@@ -531,11 +534,524 @@ var _ = ginkgo.Describe("Network Segmentation: Network Policies", feature.Networ
 					withLabels(denyServerPodLabel),
 				),
 			))
+
+		ginkgo.It("should honor allow-from-same-namespace and allow-from-all-namespaces ingress policies on a shared layer3 primary network", ginkgo.Serial, func() {
+			namespaceYellow := getNamespaceName(f, nameSpaceYellowSuffix)
+			namespaceBlue := getNamespaceName(f, namespaceBlueSuffix)
+			namespaceRed := getNamespaceName(f, namespaceRedSuffix)
+
+			nad := networkAttachmentConfigParams{
+				topology:    "layer3",
+				cidr:        primaryLayer3MultiCIDRs(),
+				networkName: fmt.Sprintf("shared-l3-%s", rand.String(randomStringLength)),
+				role:        "primary",
+			}
+			filterSupportedNetworkConfig(f.ClientSet, &nad)
+			netConfName := fmt.Sprintf("sharednet-%s", rand.String(randomStringLength))
+			for _, namespace := range []string{namespaceYellow, namespaceBlue, namespaceRed} {
+				ginkgo.By("creating the shared attachment configuration in namespace " + namespace)
+				netConfig := newNetworkAttachmentConfig(nad)
+				netConfig.namespace = namespace
+				netConfig.name = netConfName
+				_, err := nadClient.NetworkAttachmentDefinitions(namespace).Create(
+					context.Background(), generateNAD(netConfig, f.ClientSet), metav1.CreateOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			}
+
+			nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), cs, 2)
+			framework.ExpectNoError(err)
+			if len(nodes.Items) < 2 {
+				ginkgo.Skip("requires at least 2 Nodes")
+			}
+
+			serverPodConfig := *podConfig("server-pod",
+				withCommand(func() []string { return httpServerContainerCmd(port) }),
+				withNodeSelector(map[string]string{nodeHostnameKey: nodes.Items[0].GetName()}))
+			serverPodConfig.namespace = namespaceYellow
+			sameNSClientConfig := *podConfig("same-ns-client",
+				withNodeSelector(map[string]string{nodeHostnameKey: nodes.Items[1].GetName()}))
+			sameNSClientConfig.namespace = namespaceYellow
+			blueClientConfig := *podConfig("blue-client",
+				withNodeSelector(map[string]string{nodeHostnameKey: nodes.Items[1].GetName()}))
+			blueClientConfig.namespace = namespaceBlue
+			redClientConfig := *podConfig("red-client",
+				withNodeSelector(map[string]string{nodeHostnameKey: nodes.Items[1].GetName()}))
+			redClientConfig.namespace = namespaceRed
+
+			runUDNPod(cs, namespaceYellow, serverPodConfig, nil)
+			runUDNPod(cs, namespaceYellow, sameNSClientConfig, nil)
+			runUDNPod(cs, namespaceBlue, blueClientConfig, nil)
+			runUDNPod(cs, namespaceRed, redClientConfig, nil)
+
+			serverIPNets, err := getPodAnnotationIPsForAttachment(cs, namespaceYellow, serverPodConfig.name, namespacedName(namespaceYellow, netConfName))
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			var serverIPs []string
+			for _, ipNet := range serverIPNets {
+				serverIPs = append(serverIPs, ipNet.IP.String())
+			}
+			gomega.Expect(serverIPs).NotTo(gomega.BeEmpty())
+
+			reaches := func(client podConfiguration) func() error {
+				return func() error {
+					for _, serverIP := range serverIPs {
+						if err := reachServerPodFromClient(cs, serverPodConfig, client, serverIP, port); err != nil {
+							return err
+						}
+					}
+					return nil
+				}
+			}
+
+			ginkgo.By("asserting every client can reach the server before any policy")
+			for _, client := range []podConfiguration{sameNSClientConfig, blueClientConfig, redClientConfig} {
+				gomega.Eventually(reaches(client), 2*time.Minute, 6*time.Second).Should(gomega.Succeed())
+			}
+
+			ginkgo.By("creating a default-deny ingress policy")
+			_, err = makeDenyAllIngressPolicy(f, namespaceYellow, "deny-ingress")
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			for _, client := range []podConfiguration{sameNSClientConfig, blueClientConfig} {
+				gomega.Eventually(reaches(client), 1*time.Minute, 6*time.Second).ShouldNot(gomega.Succeed())
+			}
+
+			ginkgo.By("allowing ingress from the same namespace only")
+			_, err = allowIngressFromPeersPolicy(f, namespaceYellow, "allow-from-same-namespace", sameNamespacePeer())
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Eventually(reaches(sameNSClientConfig), 1*time.Minute, 6*time.Second).Should(gomega.Succeed())
+			gomega.Eventually(reaches(blueClientConfig), 1*time.Minute, 6*time.Second).ShouldNot(gomega.Succeed())
+
+			ginkgo.By("allowing ingress from all namespaces")
+			_, err = allowIngressFromPeersPolicy(f, namespaceYellow, "allow-from-all-namespaces", allNamespacesPeer())
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			for _, client := range []podConfiguration{blueClientConfig, redClientConfig} {
+				gomega.Eventually(reaches(client), 1*time.Minute, 6*time.Second).Should(gomega.Succeed())
+			}
+
+			ginkgo.By("narrowing the all-namespaces policy to a labelled namespace")
+			gomega.Expect(f.ClientSet.NetworkingV1().NetworkPolicies(namespaceYellow).Delete(context.TODO(), "allow-from-all-namespaces", metav1.DeleteOptions{})).To(gomega.Succeed())
+			_, err = allowIngressFromPeersPolicy(f, namespaceYellow, "allow-from-labelled-namespace",
+				namespaceWithLabelPeer(map[string]string{"kubernetes.io/metadata.name": namespaceBlue}))
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Eventually(reaches(blueClientConfig), 1*time.Minute, 6*time.Second).Should(gomega.Succeed())
+			gomega.Eventually(reaches(redClientConfig), 1*time.Minute, 6*time.Second).ShouldNot(gomega.Succeed())
+		})
+
+		ginkgo.It("should honor allow-to-same-namespace and allow-to-all-namespaces egress policies on a shared layer2 primary network", ginkgo.Serial, func() {
+			namespaceYellow := getNamespaceName(f, nameSpaceYellowSuffix)
+			namespaceBlue := getNamespaceName(f, namespaceBlueSuffix)
+			namespaceRed := getNamespaceName(f, namespaceRedSuffix)
+
+			nad := networkAttachmentConfigParams{
+				topology:    "layer2",
+				cidr:        joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+				networkName: fmt.Sprintf("shared-l2-%s", rand.String(randomStringLength)),
+				role:        "primary",
+			}
+			filterSupportedNetworkConfig(f.ClientSet, &nad)
+			netConfName := fmt.Sprintf("sharednet-%s", rand.String(randomStringLength))
+			for _, namespace := range []string{namespaceYellow, namespaceBlue, namespaceRed} {
+				ginkgo.By("creating the shared attachment configuration in namespace " + namespace)
+				netConfig := newNetworkAttachmentConfig(nad)
+				netConfig.namespace = namespace
+				netConfig.name = netConfName
+				_, err := nadClient.NetworkAttachmentDefinitions(namespace).Create(
+					context.Background(), generateNAD(netConfig, f.ClientSet), metav1.CreateOptions{})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			}
+
+			nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), cs, 2)
+			framework.ExpectNoError(err)
+			if len(nodes.Items) < 2 {
+				ginkgo.Skip("requires at least 2 Nodes")
+			}
+
+			// The source pod (in yellow) initiates egress; the destinations are HTTP
+			// servers in the same and other namespaces on the shared network.
+			sourcePodConfig := *podConfig("source-pod",
+				withNodeSelector(map[string]string{nodeHostnameKey: nodes.Items[0].GetName()}))
+			sourcePodConfig.namespace = namespaceYellow
+			sameNSServerConfig := *podConfig("same-ns-server",
+				withCommand(func() []string { return httpServerContainerCmd(port) }),
+				withNodeSelector(map[string]string{nodeHostnameKey: nodes.Items[1].GetName()}))
+			sameNSServerConfig.namespace = namespaceYellow
+			blueServerConfig := *podConfig("blue-server",
+				withCommand(func() []string { return httpServerContainerCmd(port) }),
+				withNodeSelector(map[string]string{nodeHostnameKey: nodes.Items[1].GetName()}))
+			blueServerConfig.namespace = namespaceBlue
+			redServerConfig := *podConfig("red-server",
+				withCommand(func() []string { return httpServerContainerCmd(port) }),
+				withNodeSelector(map[string]string{nodeHostnameKey: nodes.Items[1].GetName()}))
+			redServerConfig.namespace = namespaceRed
+
+			runUDNPod(cs, namespaceYellow, sourcePodConfig, nil)
+			runUDNPod(cs, namespaceYellow, sameNSServerConfig, nil)
+			runUDNPod(cs, namespaceBlue, blueServerConfig, nil)
+			runUDNPod(cs, namespaceRed, redServerConfig, nil)
+
+			serverIPs := func(serverConfig podConfiguration) []string {
+				ipNets, err := getPodAnnotationIPsForAttachment(cs, serverConfig.namespace, serverConfig.name, namespacedName(serverConfig.namespace, netConfName))
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				var ips []string
+				for _, ipNet := range ipNets {
+					ips = append(ips, ipNet.IP.String())
+				}
+				gomega.Expect(ips).NotTo(gomega.BeEmpty())
+				return ips
+			}
+			reaches := func(serverConfig podConfiguration) func() error {
+				ips := serverIPs(serverConfig)
+				return func() error {
+					for _, ip := range ips {
+						if err := reachServerPodFromClient(cs, serverConfig, sourcePodConfig, ip, port); err != nil {
+							return err
+						}
+					}
+					return nil
+				}
+			}
+
+			ginkgo.By("asserting the source pod can reach every server before any policy")
+			for _, server := range []podConfiguration{sameNSServerConfig, blueServerConfig, redServerConfig} {
+				gomega.Eventually(reaches(server), 2*time.Minute, 6*time.Second).Should(gomega.Succeed())
+			}
+
+			ginkgo.By("creating a default-deny egress policy")
+			_, err = makeDenyAllEgressPolicy(f, namespaceYellow, "deny-egress")
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			for _, server := range []podConfiguration{sameNSServerConfig, blueServerConfig} {
+				gomega.Eventually(reaches(server), 1*time.Minute, 6*time.Second).ShouldNot(gomega.Succeed())
+			}
+
+			ginkgo.By("allowing egress to the same namespace only")
+			_, err = allowEgressToPeersPolicy(f, namespaceYellow, "allow-to-same-namespace", sameNamespacePeer())
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Eventually(reaches(sameNSServerConfig), 1*time.Minute, 6*time.Second).Should(gomega.Succeed())
+			gomega.Eventually(reaches(blueServerConfig), 1*time.Minute, 6*time.Second).ShouldNot(gomega.Succeed())
+
+			ginkgo.By("allowing egress to all namespaces")
+			_, err = allowEgressToPeersPolicy(f, namespaceYellow, "allow-to-all-namespaces", allNamespacesPeer())
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			for _, server := range []podConfiguration{blueServerConfig, redServerConfig} {
+				gomega.Eventually(reaches(server), 1*time.Minute, 6*time.Second).Should(gomega.Succeed())
+			}
+
+			ginkgo.By("narrowing the all-namespaces egress policy to a labelled namespace")
+			gomega.Expect(f.ClientSet.NetworkingV1().NetworkPolicies(namespaceYellow).Delete(context.TODO(), "allow-to-all-namespaces", metav1.DeleteOptions{})).To(gomega.Succeed())
+			_, err = allowEgressToPeersPolicy(f, namespaceYellow, "allow-to-labelled-namespace",
+				namespaceWithLabelPeer(map[string]string{"kubernetes.io/metadata.name": namespaceBlue}))
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Eventually(reaches(blueServerConfig), 1*time.Minute, 6*time.Second).Should(gomega.Succeed())
+			gomega.Eventually(reaches(redServerConfig), 1*time.Minute, 6*time.Second).ShouldNot(gomega.Succeed())
+		})
+
+		ginkgo.It("should honor ingress ipBlock policies with and without an except clause on a layer3 CUDN", ginkgo.Serial, func() {
+			ctx := context.Background()
+			namespaceYellow := getNamespaceName(f, nameSpaceYellowSuffix)
+			namespaceBlue := getNamespaceName(f, namespaceBlueSuffix)
+
+			nodes, err := e2enode.GetBoundedReadySchedulableNodes(ctx, cs, 2)
+			framework.ExpectNoError(err)
+			if len(nodes.Items) < 2 {
+				ginkgo.Skip("requires at least 2 Nodes")
+			}
+
+			ginkgo.By("creating a layer3 primary CUDN spanning the yellow and blue namespaces")
+			cudnName := fmt.Sprintf("cudn-ipblock-ing-%s", rand.String(randomStringLength))
+			cudnParams := networkAttachmentConfigParams{
+				name:      cudnName,
+				namespace: namespaceYellow + "," + namespaceBlue,
+				topology:  "layer3",
+				cidr:      primaryLayer3MultiCIDRs(),
+				role:      "primary",
+			}
+			cleanupCUDN, err := createManifest("", generateClusterUserDefinedNetworkManifest(&cudnParams, cs))
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			ginkgo.DeferCleanup(func() {
+				for _, ns := range []string{namespaceYellow, namespaceBlue} {
+					gomega.Expect(cs.CoreV1().Pods(ns).DeleteCollection(ctx, metav1.DeleteOptions{}, metav1.ListOptions{})).To(gomega.Succeed())
+				}
+				_, err := e2ekubectl.RunKubectl("", "delete", "clusteruserdefinednetwork", cudnName, "--wait", "--timeout=120s")
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				cleanupCUDN()
+			})
+			gomega.Eventually(clusterUserDefinedNetworkReadyFunc(ctx, f.DynamicClient, cudnName), 30*time.Second, time.Second).Should(gomega.Succeed())
+
+			serverPodConfig := *podConfig("server-pod",
+				withCommand(func() []string { return httpServerContainerCmd(port) }),
+				withNodeSelector(map[string]string{nodeHostnameKey: nodes.Items[0].GetName()}))
+			serverPodConfig.namespace = namespaceYellow
+			// clientA and clientB share a node so they fall in the same per-node
+			// host subnet, which the except clause below relies on.
+			clientAConfig := *podConfig("client-a",
+				withNodeSelector(map[string]string{nodeHostnameKey: nodes.Items[1].GetName()}))
+			clientAConfig.namespace = namespaceBlue
+			clientBConfig := *podConfig("client-b",
+				withNodeSelector(map[string]string{nodeHostnameKey: nodes.Items[1].GetName()}))
+			clientBConfig.namespace = namespaceBlue
+
+			runUDNPod(cs, namespaceYellow, serverPodConfig, nil)
+			runUDNPod(cs, namespaceBlue, clientAConfig, nil)
+			runUDNPod(cs, namespaceBlue, clientBConfig, nil)
+
+			podIPs := func(c podConfiguration) []string {
+				ipNets, err := getPodAnnotationIPsForAttachment(cs, c.namespace, c.name, namespacedName(c.namespace, cudnName))
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				var ips []string
+				for _, ipNet := range ipNets {
+					ips = append(ips, ipNet.IP.String())
+				}
+				gomega.Expect(ips).NotTo(gomega.BeEmpty())
+				return ips
+			}
+			serverIPs := podIPs(serverPodConfig)
+			clientAIPs := podIPs(clientAConfig)
+
+			reaches := func(client podConfiguration) func() error {
+				return func() error {
+					for _, serverIP := range serverIPs {
+						if err := reachServerPodFromClient(cs, serverPodConfig, client, serverIP, port); err != nil {
+							return err
+						}
+					}
+					return nil
+				}
+			}
+
+			ginkgo.By("creating a default-deny ingress policy on the server namespace")
+			_, err = makeDenyAllIngressPolicy(f, namespaceYellow, "deny-ingress")
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Eventually(reaches(clientAConfig), 1*time.Minute, 6*time.Second).ShouldNot(gomega.Succeed())
+
+			ginkgo.By("allowing ingress from clientA's exact IP via ipBlock")
+			var exactCIDRs []string
+			for _, ip := range clientAIPs {
+				exactCIDRs = append(exactCIDRs, exactCIDRForIP(ip))
+			}
+			_, err = allowIngressFromPeersPolicy(f, namespaceYellow, "ipblock-ingress", ipBlockPeers(exactCIDRs, nil))
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Eventually(reaches(clientAConfig), 1*time.Minute, 6*time.Second).Should(gomega.Succeed())
+			gomega.Eventually(reaches(clientBConfig), 1*time.Minute, 6*time.Second).ShouldNot(gomega.Succeed())
+
+			ginkgo.By("replacing the ipBlock with the host subnet and an except clause carving out clientA")
+			gomega.Expect(f.ClientSet.NetworkingV1().NetworkPolicies(namespaceYellow).Delete(ctx, "ipblock-ingress", metav1.DeleteOptions{})).To(gomega.Succeed())
+			var subnetCIDRs []string
+			for _, ip := range clientAIPs {
+				subnetCIDRs = append(subnetCIDRs, hostSubnetCIDRForIP(ip))
+			}
+			_, err = allowIngressFromPeersPolicy(f, namespaceYellow, "ipblock-ingress-except", ipBlockPeers(subnetCIDRs, exactCIDRs))
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Eventually(reaches(clientBConfig), 1*time.Minute, 6*time.Second).Should(gomega.Succeed())
+			gomega.Eventually(reaches(clientAConfig), 1*time.Minute, 6*time.Second).ShouldNot(gomega.Succeed())
+		})
+
+		ginkgo.It("should honor egress ipBlock policies with and without an except clause on a layer3 CUDN", ginkgo.Serial, func() {
+			ctx := context.Background()
+			namespaceYellow := getNamespaceName(f, nameSpaceYellowSuffix)
+			namespaceBlue := getNamespaceName(f, namespaceBlueSuffix)
+
+			nodes, err := e2enode.GetBoundedReadySchedulableNodes(ctx, cs, 2)
+			framework.ExpectNoError(err)
+			if len(nodes.Items) < 2 {
+				ginkgo.Skip("requires at least 2 Nodes")
+			}
+
+			ginkgo.By("creating a layer3 primary CUDN spanning the yellow and blue namespaces")
+			cudnName := fmt.Sprintf("cudn-ipblock-eg-%s", rand.String(randomStringLength))
+			cudnParams := networkAttachmentConfigParams{
+				name:      cudnName,
+				namespace: namespaceYellow + "," + namespaceBlue,
+				topology:  "layer3",
+				cidr:      primaryLayer3MultiCIDRs(),
+				role:      "primary",
+			}
+			cleanupCUDN, err := createManifest("", generateClusterUserDefinedNetworkManifest(&cudnParams, cs))
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			ginkgo.DeferCleanup(func() {
+				for _, ns := range []string{namespaceYellow, namespaceBlue} {
+					gomega.Expect(cs.CoreV1().Pods(ns).DeleteCollection(ctx, metav1.DeleteOptions{}, metav1.ListOptions{})).To(gomega.Succeed())
+				}
+				_, err := e2ekubectl.RunKubectl("", "delete", "clusteruserdefinednetwork", cudnName, "--wait", "--timeout=120s")
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				cleanupCUDN()
+			})
+			gomega.Eventually(clusterUserDefinedNetworkReadyFunc(ctx, f.DynamicClient, cudnName), 30*time.Second, time.Second).Should(gomega.Succeed())
+
+			// The source pod (in yellow) initiates egress; destA and destB are HTTP
+			// servers sharing a node (hence the same host subnet) in blue.
+			sourcePodConfig := *podConfig("source-pod",
+				withNodeSelector(map[string]string{nodeHostnameKey: nodes.Items[0].GetName()}))
+			sourcePodConfig.namespace = namespaceYellow
+			destAConfig := *podConfig("dest-a",
+				withCommand(func() []string { return httpServerContainerCmd(port) }),
+				withNodeSelector(map[string]string{nodeHostnameKey: nodes.Items[1].GetName()}))
+			destAConfig.namespace = namespaceBlue
+			destBConfig := *podConfig("dest-b",
+				withCommand(func() []string { return httpServerContainerCmd(port) }),
+				withNodeSelector(map[string]string{nodeHostnameKey: nodes.Items[1].GetName()}))
+			destBConfig.namespace = namespaceBlue
+
+			runUDNPod(cs, namespaceYellow, sourcePodConfig, nil)
+			runUDNPod(cs, namespaceBlue, destAConfig, nil)
+			runUDNPod(cs, namespaceBlue, destBConfig, nil)
+
+			podIPs := func(c podConfiguration) []string {
+				ipNets, err := getPodAnnotationIPsForAttachment(cs, c.namespace, c.name, namespacedName(c.namespace, cudnName))
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				var ips []string
+				for _, ipNet := range ipNets {
+					ips = append(ips, ipNet.IP.String())
+				}
+				gomega.Expect(ips).NotTo(gomega.BeEmpty())
+				return ips
+			}
+			destAIPs := podIPs(destAConfig)
+			destBIPs := podIPs(destBConfig)
+
+			reaches := func(destConfig podConfiguration, destIPs []string) func() error {
+				return func() error {
+					for _, ip := range destIPs {
+						if err := reachServerPodFromClient(cs, destConfig, sourcePodConfig, ip, port); err != nil {
+							return err
+						}
+					}
+					return nil
+				}
+			}
+
+			ginkgo.By("creating a default-deny egress policy on the source namespace")
+			_, err = makeDenyAllEgressPolicy(f, namespaceYellow, "deny-egress")
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Eventually(reaches(destAConfig, destAIPs), 1*time.Minute, 6*time.Second).ShouldNot(gomega.Succeed())
+
+			ginkgo.By("allowing egress to destA's exact IP via ipBlock")
+			var exactCIDRs []string
+			for _, ip := range destAIPs {
+				exactCIDRs = append(exactCIDRs, exactCIDRForIP(ip))
+			}
+			_, err = allowEgressToPeersPolicy(f, namespaceYellow, "ipblock-egress", ipBlockPeers(exactCIDRs, nil))
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Eventually(reaches(destAConfig, destAIPs), 1*time.Minute, 6*time.Second).Should(gomega.Succeed())
+			gomega.Eventually(reaches(destBConfig, destBIPs), 1*time.Minute, 6*time.Second).ShouldNot(gomega.Succeed())
+
+			ginkgo.By("replacing the ipBlock with the host subnet and an except clause carving out destA")
+			gomega.Expect(f.ClientSet.NetworkingV1().NetworkPolicies(namespaceYellow).Delete(ctx, "ipblock-egress", metav1.DeleteOptions{})).To(gomega.Succeed())
+			var subnetCIDRs []string
+			for _, ip := range destAIPs {
+				subnetCIDRs = append(subnetCIDRs, hostSubnetCIDRForIP(ip))
+			}
+			_, err = allowEgressToPeersPolicy(f, namespaceYellow, "ipblock-egress-except", ipBlockPeers(subnetCIDRs, exactCIDRs))
+			gomega.Expect(err).NotTo(gomega.HaveOccurred())
+			gomega.Eventually(reaches(destBConfig, destBIPs), 1*time.Minute, 6*time.Second).Should(gomega.Succeed())
+			gomega.Eventually(reaches(destAConfig, destAIPs), 1*time.Minute, 6*time.Second).ShouldNot(gomega.Succeed())
+		})
 	})
 })
 
 func getNamespaceName(f *framework.Framework, nsSuffix string) string {
 	return fmt.Sprintf("%s-%s", f.Namespace.Name, nsSuffix)
+}
+
+func makeDenyAllIngressPolicy(f *framework.Framework, ns, name string) (*knet.NetworkPolicy, error) {
+	policy := &knet.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Spec: knet.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{},
+			PolicyTypes: []knet.PolicyType{knet.PolicyTypeIngress},
+			Ingress:     []knet.NetworkPolicyIngressRule{},
+		},
+	}
+	return f.ClientSet.NetworkingV1().NetworkPolicies(ns).Create(context.TODO(), policy, metav1.CreateOptions{})
+}
+
+func makeDenyAllEgressPolicy(f *framework.Framework, ns, name string) (*knet.NetworkPolicy, error) {
+	policy := &knet.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Spec: knet.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{},
+			PolicyTypes: []knet.PolicyType{knet.PolicyTypeEgress},
+			Egress:      []knet.NetworkPolicyEgressRule{},
+		},
+	}
+	return f.ClientSet.NetworkingV1().NetworkPolicies(ns).Create(context.TODO(), policy, metav1.CreateOptions{})
+}
+
+func allowIngressFromPeersPolicy(f *framework.Framework, ns, name string, peers []knet.NetworkPolicyPeer) (*knet.NetworkPolicy, error) {
+	policy := &knet.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Spec: knet.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{},
+			PolicyTypes: []knet.PolicyType{knet.PolicyTypeIngress},
+			Ingress:     []knet.NetworkPolicyIngressRule{{From: peers}},
+		},
+	}
+	return f.ClientSet.NetworkingV1().NetworkPolicies(ns).Create(context.TODO(), policy, metav1.CreateOptions{})
+}
+
+func allowEgressToPeersPolicy(f *framework.Framework, ns, name string, peers []knet.NetworkPolicyPeer) (*knet.NetworkPolicy, error) {
+	policy := &knet.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Spec: knet.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{},
+			PolicyTypes: []knet.PolicyType{knet.PolicyTypeEgress},
+			Egress:      []knet.NetworkPolicyEgressRule{{To: peers}},
+		},
+	}
+	return f.ClientSet.NetworkingV1().NetworkPolicies(ns).Create(context.TODO(), policy, metav1.CreateOptions{})
+}
+
+// sameNamespacePeer selects all pods in the policy's own namespace.
+func sameNamespacePeer() []knet.NetworkPolicyPeer {
+	return []knet.NetworkPolicyPeer{{PodSelector: &metav1.LabelSelector{}}}
+}
+
+// allNamespacesPeer selects all pods in all namespaces.
+func allNamespacesPeer() []knet.NetworkPolicyPeer {
+	return []knet.NetworkPolicyPeer{{NamespaceSelector: &metav1.LabelSelector{}}}
+}
+
+// namespaceWithLabelPeer selects pods in namespaces matching the given labels.
+func namespaceWithLabelPeer(nsLabels map[string]string) []knet.NetworkPolicyPeer {
+	return []knet.NetworkPolicyPeer{{NamespaceSelector: &metav1.LabelSelector{MatchLabels: nsLabels}}}
+}
+
+// ipBlockPeers builds one ipBlock peer per CIDR, all sharing the same except list
+// entries that fall within each CIDR's family.
+func ipBlockPeers(cidrs []string, except []string) []knet.NetworkPolicyPeer {
+	peers := make([]knet.NetworkPolicyPeer, 0, len(cidrs))
+	for _, cidr := range cidrs {
+		block := &knet.IPBlock{CIDR: cidr}
+		for _, ex := range except {
+			if cidrsSameFamily(cidr, ex) {
+				block.Except = append(block.Except, ex)
+			}
+		}
+		peers = append(peers, knet.NetworkPolicyPeer{IPBlock: block})
+	}
+	return peers
+}
+
+func cidrsSameFamily(a, b string) bool {
+	return utilnet.IsIPv6CIDRString(a) == utilnet.IsIPv6CIDRString(b)
+}
+
+// exactCIDRForIP returns a host CIDR (/32 or /128) for the given IP.
+func exactCIDRForIP(ip string) string {
+	if utilnet.IsIPv6String(ip) {
+		return ip + "/128"
+	}
+	return ip + "/32"
+}
+
+// hostSubnetCIDRForIP masks the IP to the per-node UDN host subnet prefix
+// (/24 for IPv4, /64 for IPv6), matching the Layer3 UDN hostSubnet size.
+func hostSubnetCIDRForIP(ip string) string {
+	bits := 24
+	if utilnet.IsIPv6String(ip) {
+		bits = 64
+	}
+	_, ipnet, err := net.ParseCIDR(fmt.Sprintf("%s/%d", ip, bits))
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	return ipnet.String()
 }
 
 func allowTrafficToPodFromNamespacePolicy(f *framework.Framework, namespace, fromNamespace1, fromNamespace2, policyName string, podLabel map[string]string) (*knet.NetworkPolicy, error) {
