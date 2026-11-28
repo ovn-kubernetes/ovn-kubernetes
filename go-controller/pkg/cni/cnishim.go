@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -348,6 +349,9 @@ func (p *Plugin) CmdDel(args *skel.CmdArgs) error {
 		// live-migration IP-preservation guard in deletePodConntrack cannot run
 		// here; pass a nil lister to keep the previous conntrack-flush behavior.
 		err = podRequestInterfaceOps.UnconfigureInterface(pr, response.PodIFInfo, nil, nil)
+	}
+	if response.CleanupError != "" {
+		err = errors.Join(err, errors.New(response.CleanupError))
 	}
 	return err
 }

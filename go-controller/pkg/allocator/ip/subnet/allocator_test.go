@@ -82,6 +82,61 @@ var _ = ginkgo.Describe("Subnet IP allocator operations", func() {
 			}
 		})
 
+		ginkgo.DescribeTable("preserves allocations when updating with identical subnet config",
+			func(subnets, first, next []string) {
+				err := allocator.AddOrUpdateSubnet(SubnetConfig{
+					Name:    subnetName,
+					Subnets: ovntest.MustParseIPNets(subnets...),
+				})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				ips, err := allocator.AllocateNextIPs(subnetName, "test-owner")
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(ips).To(gomega.Equal(ovntest.MustParseIPNets(first...)))
+
+				err = allocator.AddOrUpdateSubnet(SubnetConfig{
+					Name:    subnetName,
+					Subnets: ovntest.MustParseIPNets(subnets...),
+				})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				ips, err = allocator.AllocateNextIPs(subnetName, "test-owner")
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(ips).To(gomega.Equal(ovntest.MustParseIPNets(next...)))
+			},
+			ginkgo.Entry("IPv4", []string{"10.1.1.0/24"}, []string{"10.1.1.1/24"}, []string{"10.1.1.2/24"}),
+			ginkgo.Entry("IPv6", []string{"2000::/64"}, []string{"2000::1/64"}, []string{"2000::2/64"}),
+			ginkgo.Entry("dual-stack", []string{"10.1.1.0/24", "2000::/64"}, []string{"10.1.1.1/24", "2000::1/64"}, []string{"10.1.1.2/24", "2000::2/64"}),
+		)
+
+		ginkgo.DescribeTable("rebuilds allocations when exclude config changes",
+			func(subnets, first, excluded, next []string) {
+				err := allocator.AddOrUpdateSubnet(SubnetConfig{
+					Name:    subnetName,
+					Subnets: ovntest.MustParseIPNets(subnets...),
+				})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				ips, err := allocator.AllocateNextIPs(subnetName, "test-owner")
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(ips).To(gomega.Equal(ovntest.MustParseIPNets(first...)))
+
+				err = allocator.AddOrUpdateSubnet(SubnetConfig{
+					Name:           subnetName,
+					Subnets:        ovntest.MustParseIPNets(subnets...),
+					ExcludeSubnets: ovntest.MustParseIPNets(excluded...),
+				})
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+				ips, err = allocator.AllocateNextIPs(subnetName, "test-owner")
+				gomega.Expect(err).NotTo(gomega.HaveOccurred())
+				gomega.Expect(ips).To(gomega.Equal(ovntest.MustParseIPNets(next...)))
+			},
+			ginkgo.Entry("IPv4", []string{"10.1.1.0/24"}, []string{"10.1.1.1/24"}, []string{"10.1.1.0/29"}, []string{"10.1.1.8/24"}),
+			ginkgo.Entry("IPv6", []string{"2000::/64"}, []string{"2000::1/64"}, []string{"2000::/125"}, []string{"2000::8/64"}),
+			ginkgo.Entry("dual-stack", []string{"10.1.1.0/24", "2000::/64"}, []string{"10.1.1.1/24", "2000::1/64"}, []string{"10.1.1.0/29", "2000::/125"}, []string{"10.1.1.8/24", "2000::8/64"}),
+		)
+
 		ginkgo.It("excludes subnets correctly", func() {
 			subnets := []string{
 				"10.1.1.0/24",
@@ -465,7 +520,10 @@ func TestIPOwnershipOnSubnetInitialization(t *testing.T) {
 		"vm-a": append(append([]*net.IPNet{}, ips...), ips...), // Migration pods share a reservation.
 		"vm-b": otherIPs,
 	}
-	for range 2 {
+	for _, nextIPs := range [][]*net.IPNet{
+		ovntest.MustParseIPNets("10.0.0.5/24", "fd00::5/64"),
+		ovntest.MustParseIPNets("10.0.0.6/24", "fd00::6/64"),
+	} {
 		g.Expect(allocator.AddOrUpdateSubnet(ownershipSubnetConfig(initial))).To(gomega.Succeed())
 		g.Expect(allocator.OwnsIPs("node", "vm-a", ips)).To(gomega.BeTrue())
 		g.Expect(allocator.OwnsIPs("node", "vm-b", otherIPs)).To(gomega.BeTrue())
@@ -474,7 +532,7 @@ func TestIPOwnershipOnSubnetInitialization(t *testing.T) {
 		g.Expect(allocator.ReleaseIPs("node", "other", ips)).To(gomega.Succeed())
 		allocated, err := allocator.AllocateNextIPs("node", "pod")
 		g.Expect(err).NotTo(gomega.HaveOccurred())
-		g.Expect(allocated).To(gomega.Equal(ovntest.MustParseIPNets("10.0.0.5/24", "fd00::5/64")))
+		g.Expect(allocated).To(gomega.Equal(nextIPs), "an unchanged initialization must preserve later allocations")
 	}
 	g.Expect(allocator.ReleaseIPs("node", "vm-a", ips)).To(gomega.Succeed())
 	g.Expect(allocator.AllocateIPs("node", "other", ips)).To(gomega.Succeed())
