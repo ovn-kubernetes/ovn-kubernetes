@@ -393,7 +393,7 @@ sequenceDiagram
   KubeVirt->>apiserver: createPOD(ipamClaims=...)
   apiserver-->>KubeVirt: OK
 
-  apiserver->>OVN-Kubernetes: reconcilePod(podKey=...)
+  apiserver->>OVN-Kubernetes: Pod creation event
   OVN-Kubernetes->>OVN-Kubernetes: ips = AllocateNextIPs(nad.subnet)
   OVN-Kubernetes->>apiserver: IPAMClaim.UpdateStatus(status.ips = ips)
   apiserver-->>OVN-Kubernetes: OK
@@ -418,7 +418,7 @@ sequenceDiagram
   KubeVirt->>apiserver: createPod(name=podName, ipam-claims=...)
   apiserver-->>KubeVirt: OK
 
-  apiserver->>OVN-Kubernetes: reconcilePod(podKey=...)
+  apiserver->>OVN-Kubernetes: Pod creation event
   OVN-Kubernetes->>OVN-Kubernetes: ipamClaim := readIPAMClaim(claimName)
   OVN-Kubernetes->>OVN-Kubernetes: allocatePodIPs(ipamClaim.Status.IPs)
 ```
