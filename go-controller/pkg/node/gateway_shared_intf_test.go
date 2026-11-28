@@ -445,7 +445,7 @@ var _ = Describe("DeleteEndpointSlice", func() {
 	DescribeTable("preserves Service steering across endpoint changes", func(mode config.GatewayMode, serviceType corev1.ServiceType, nodePort bool, etpLocal, itpLocal, udn bool) {
 		config.Gateway.Mode = mode
 		config.IPv6Mode = true
-		Expect(nft.(*knftables.Fake).ParseDump(nftablesRulesBase + nftablesRulesGatewayServices)).To(Succeed())
+		Expect(nft.(*knftables.Fake).ParseDump(nftablesRulesBase + nftablesRulesGatewayServices())).To(Succeed())
 		npw.ofm.flowChan = make(chan struct{}, 20)
 		networkName := types.DefaultNetworkName
 		if udn {
@@ -571,7 +571,7 @@ var _ = Describe("DeleteEndpointSlice", func() {
 	DescribeTable("replaces local host-network forwarding without removing Service steering", func(mode config.GatewayMode, withNodePort bool) {
 		config.Gateway.Mode = mode
 		config.IPv6Mode = true
-		Expect(nft.(*knftables.Fake).ParseDump(nftablesRulesBase + nftablesRulesGatewayServices)).To(Succeed())
+		Expect(nft.(*knftables.Fake).ParseDump(nftablesRulesBase + nftablesRulesGatewayServices())).To(Succeed())
 		npw.nodeIPManager.cidrs.Insert("192.168.18.15/32", "fd00::15/128")
 		svc := newService(testService, testNamespace, "10.96.0.2",
 			[]corev1.ServicePort{{Name: "iperf", Protocol: corev1.ProtocolTCP, Port: 5201, NodePort: 32001}},
@@ -626,7 +626,7 @@ var _ = Describe("DeleteEndpointSlice", func() {
 		config.Gateway.Mode = mode
 		config.IPv6Mode = true
 		fakeNFT := nft.(*knftables.Fake)
-		Expect(fakeNFT.ParseDump(nftablesRulesBase + nftablesRulesGatewayServices)).To(Succeed())
+		Expect(fakeNFT.ParseDump(nftablesRulesBase + nftablesRulesGatewayServices())).To(Succeed())
 		npw.nodeIPManager.cidrs.Insert("192.168.18.15/32", "fd00::15/128")
 		npw.ofm.flowChan = make(chan struct{}, 20)
 		svc := newService(testService, testNamespace, "10.96.0.2",
@@ -744,7 +744,7 @@ var _ = Describe("DeleteEndpointSlice", func() {
 		config.Gateway.Mode = mode
 		config.IPv6Mode = true
 		fakeNFT := nft.(*knftables.Fake)
-		Expect(fakeNFT.ParseDump(nftablesRulesBase + nftablesRulesGatewayServices)).To(Succeed())
+		Expect(fakeNFT.ParseDump(nftablesRulesBase + nftablesRulesGatewayServices())).To(Succeed())
 		npw.nodeIPManager.cidrs.Insert("192.168.18.15/32", "fd00::15/128")
 		svc := newService(testService, testNamespace, "10.96.0.2",
 			[]corev1.ServicePort{{Name: "http", Protocol: corev1.ProtocolTCP, Port: 80, TargetPort: intstr.FromInt(8080), NodePort: 32001}},
@@ -775,7 +775,7 @@ var _ = Describe("DeleteEndpointSlice", func() {
 	DescribeTable("falls back for a missing Service port while another keeps host-network backends", func(mode config.GatewayMode, withNodePorts, deleteSlices bool) {
 		config.Gateway.Mode = mode
 		config.IPv6Mode = true
-		Expect(nft.(*knftables.Fake).ParseDump(nftablesRulesBase + nftablesRulesGatewayServices)).To(Succeed())
+		Expect(nft.(*knftables.Fake).ParseDump(nftablesRulesBase + nftablesRulesGatewayServices())).To(Succeed())
 		npw.nodeIPManager.cidrs.Insert("192.168.18.15/32", "fd00::15/128")
 		svc := newService(testService, testNamespace, "10.96.0.2",
 			[]corev1.ServicePort{

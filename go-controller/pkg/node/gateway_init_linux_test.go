@@ -101,8 +101,9 @@ add chain inet ovn-kubernetes ovn-kube-pod-subnet-masq
 add rule inet ovn-kubernetes ovn-kube-pod-subnet-masq ip saddr 10.1.1.0/24 masquerade
 `
 
-// The additional rules expected if initGatewayNFTables() is called
-const nftablesRulesGatewayServices = `
+// The additional rules expected if initGatewayNFTables() is called, apart from
+// the Service MSS clamp, which depends on the configuration.
+const nftablesRulesGatewayServicesStatic = `
 add chain inet ovn-kubernetes services { comment "DNAT for ordinary NodePort/ExternalIP/LB traffic" ; }
 add chain inet ovn-kubernetes services-etp { comment "Special DNAT for NodePort/ExternalIP/LB traffic with ExternalTrafficPolicy: Local" ; }
 add chain inet ovn-kubernetes services-etp-no-nodeport { comment "Special DNAT for ExternalIP/LB traffic with ExternalTrafficPolicy: Local and no NodePorts" ; }
@@ -140,6 +141,17 @@ add rule inet ovn-kubernetes services-prerouting jump services-etp
 add rule inet ovn-kubernetes services-prerouting jump services-etp-no-nodeport
 add rule inet ovn-kubernetes services-prerouting jump services
 `
+
+// nftablesRulesGatewayServices returns the rules expected if initGatewayNFTables() is called.
+func nftablesRulesGatewayServices() string {
+	rules := nftablesRulesGatewayServicesStatic +
+		"add chain inet ovn-kubernetes services-mss-clamp { type filter hook prerouting priority -150 ; " +
+		"comment \"Clamp the MSS of Service connections DNATed on the host to the Service route MTU\" ; }\n"
+	for _, rule := range getServiceMSSClampNFTRules() {
+		rules += "add rule inet ovn-kubernetes services-mss-clamp " + rule.Rule + "\n"
+	}
+	return rules
+}
 
 func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 	eth0Name, eth0MAC, eth0GWIP, eth0CIDR string, gatewayVLANID uint, l netlink.Link, hwOffload, setNodeIP bool) {
@@ -528,7 +540,7 @@ func shareGatewayInterfaceTest(app *cli.App, testNS ns.NetNS,
 				"'k8s.ovn.org/gateway-mtu-support' with value == \"false\"")
 		}
 
-		expectedNFT := nftablesRulesBase + nftablesRulesGatewayServices
+		expectedNFT := nftablesRulesBase + nftablesRulesGatewayServices()
 		err = nodenft.MatchNFTRules(expectedNFT, nft.Dump())
 		Expect(err).NotTo(HaveOccurred())
 
@@ -1331,7 +1343,7 @@ OFPT_GET_CONFIG_REPLY (xid=0x4): frags=normal miss_send_len=0`
 		expectForwardingSysctls(Default, "breth0")
 		Eventually(fexec.CalledMatchesExpected, 5).Should(BeTrue(), fexec.ErrorDesc)
 
-		expectedNFT := nftablesRulesBase + nftablesRulesLocalGateway + nftablesRulesGatewayServices
+		expectedNFT := nftablesRulesBase + nftablesRulesLocalGateway + nftablesRulesGatewayServices()
 		if util.IsNetworkSegmentationSupportEnabled() {
 			expectedNFT += nftablesRulesUDN
 		}

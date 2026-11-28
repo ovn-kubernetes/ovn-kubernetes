@@ -166,6 +166,88 @@ var _ = ginkgo.Describe("Services", feature.Service, func() {
 		framework.ExpectNoError(err)
 	})
 
+	ginkgo.DescribeTable("Ensures a node can send large requests to its own NodePort served by a host-network pod",
+		func(sameNode bool) {
+			// The node takes the path MTU to its own IP from lo, and the endpoint, on another node or the same one,
+			// announces the MSS of its route back to the client, which follows the node NIC MTU and can exceed the
+			// service route MTU.
+			const requestSize = 32 * 1024
+			namespace := f.Namespace.Name
+			nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), cs, 2)
+			framework.ExpectNoError(err, "failed to list ready schedulable nodes")
+			if len(nodes.Items) < 2 {
+				e2eskipper.Skipf("Test requires at least 2 ready schedulable nodes, found %d", len(nodes.Items))
+			}
+			clientNode, serverNode := &nodes.Items[0], &nodes.Items[1]
+			if sameNode {
+				serverNode = clientNode
+			}
+
+			ginkgo.By("Creating a NodePort service")
+			jig := e2eservice.NewTestJig(cs, namespace, serviceName)
+			targetPort := infraprovider.Get().GetK8HostPort(f, providerCtx)
+			service, err := jig.CreateTCPService(context.TODO(), func(s *v1.Service) {
+				s.Spec.Type = v1.ServiceTypeNodePort
+				s.Spec.IPFamilyPolicy = ptr.To(v1.IPFamilyPolicyPreferDualStack)
+				s.Spec.Ports = []v1.ServicePort{{
+					Name:       "http",
+					Protocol:   v1.ProtocolTCP,
+					Port:       80,
+					TargetPort: intstr.FromInt32(int32(targetPort)),
+				}}
+			})
+			framework.ExpectNoError(err, "failed to create the NodePort service")
+			nodePort := strconv.Itoa(int(service.Spec.Ports[0].NodePort))
+
+			ginkgo.By("Creating a host-network backend pod on node " + serverNode.Name)
+			serverPod := e2epod.NewAgnhostPod(namespace, "backend", nil, nil, []v1.ContainerPort{{ContainerPort: int32(targetPort)}},
+				"netexec", fmt.Sprintf("--http-port=%d", targetPort))
+			serverPod.Labels = jig.Labels
+			serverPod.Spec.HostNetwork = true
+			e2epod.SetNodeSelection(&serverPod.Spec, e2epod.NodeSelection{Name: serverNode.Name})
+			e2epod.NewPodClient(f).CreateSync(context.TODO(), serverPod)
+
+			// An oversized segment leaves the service route MTU cached on the route to the node IP for ten minutes,
+			// and the cache lets later requests pass without an MSS clamp, including a retry of this test. Flushing
+			// the route cache does not remove it, so treat it as a failure before and after the request.
+			routeToNodeIP := func(nodeIP string) string {
+				route, err := infraprovider.Get().ExecK8NodeCommand(clientNode.Name, []string{"ip", "route", "get", nodeIP})
+				framework.ExpectNoError(err, "failed to get the route to %s on node %s", nodeIP, clientNode.Name)
+				return route
+			}
+
+			// Probe only the service's IP families; the node can also have an InternalIP of another family.
+			var clientNodeIPs []string
+			for _, family := range service.Spec.IPFamilies {
+				clientNodeIPs = append(clientNodeIPs, e2enode.GetAddressesByTypeAndFamily(clientNode, v1.NodeInternalIP, family)...)
+			}
+			gomega.Expect(clientNodeIPs).NotTo(gomega.BeEmpty(), "node %s has no InternalIP in the service IP families %v",
+				clientNode.Name, service.Spec.IPFamilies)
+			for _, nodeIP := range clientNodeIPs {
+				url := fmt.Sprintf("http://%s/echo", net.JoinHostPort(nodeIP, nodePort))
+				ginkgo.By("Waiting for " + url + " to answer a short request from node " + clientNode.Name)
+				gomega.Eventually(func() (string, error) {
+					return infraprovider.Get().ExecK8NodeCommand(clientNode.Name, []string{"curl", "-g", "-sS", "--max-time", "5", url + "?msg=ok"})
+				}, 60*time.Second, framework.Poll).Should(gomega.Equal("ok"), "%s did not answer a short request from node %s", url, clientNode.Name)
+
+				gomega.Expect(routeToNodeIP(nodeIP)).NotTo(gomega.ContainSubstring(" mtu "),
+					"an earlier connection from node %s sent segments larger than the service route MTU", clientNode.Name)
+
+				ginkgo.By(fmt.Sprintf("Sending a %d-byte request to %s", requestSize, url))
+				out, err := infraprovider.Get().ExecK8NodeCommand(clientNode.Name, []string{"sh", "-c", fmt.Sprintf(
+					"{ printf msg=; head -c %d /dev/zero | tr '\\0' x; } | curl -g -sS --max-time 20 --data-binary @- %s | wc -c",
+					requestSize, url)})
+				framework.ExpectNoError(err, "failed to send the large request from node %s", clientNode.Name)
+				gomega.Expect(strings.TrimSpace(out)).To(gomega.Equal(strconv.Itoa(requestSize)),
+					"the large request from node %s to %s did not complete", clientNode.Name, url)
+				gomega.Expect(routeToNodeIP(nodeIP)).NotTo(gomega.ContainSubstring(" mtu "),
+					"node %s sent segments larger than the service route MTU", clientNode.Name)
+			}
+		},
+		ginkgo.Entry("on another node", false),
+		ginkgo.Entry("on the same node", true),
+	)
+
 	ginkgo.It("Creates a service with session-affinity, and ensures it works after backend deletion", func() {
 		namespace := f.Namespace.Name
 		servicePort := 80

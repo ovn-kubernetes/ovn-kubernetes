@@ -7,6 +7,8 @@
 package node
 
 import (
+	"net"
+
 	"sigs.k8s.io/knftables"
 
 	"github.com/ovn-kubernetes/ovn-kubernetes/go-controller/pkg/config"
@@ -267,5 +269,61 @@ var _ = Describe("Gateway NFTables", func() {
 				}))
 			})
 		})
+	})
+})
+
+var _ = Describe("getServiceMSSClampNFTRules", func() {
+	var originalServiceCIDRs []*net.IPNet
+	var originalMTU, originalRoutableMTU int
+
+	BeforeEach(func() {
+		originalServiceCIDRs = config.Kubernetes.ServiceCIDRs
+		originalMTU = config.Default.MTU
+		originalRoutableMTU = config.Default.RoutableMTU
+	})
+
+	AfterEach(func() {
+		config.Kubernetes.ServiceCIDRs = originalServiceCIDRs
+		config.Default.MTU = originalMTU
+		config.Default.RoutableMTU = originalRoutableMTU
+	})
+
+	clampRule := func(rule string) *knftables.Rule {
+		return &knftables.Rule{Chain: nftablesServiceMSSClampChain, Rule: rule}
+	}
+
+	It("clamps IPv4 SYN-ACKs to the MTU minus 40", func() {
+		config.Kubernetes.ServiceCIDRs = ovntest.MustParseIPNets("10.96.0.0/16")
+		config.Default.MTU = 1500
+		config.Default.RoutableMTU = 0
+
+		Expect(getServiceMSSClampNFTRules()).To(Equal([]*knftables.Rule{
+			clampRule("ct direction reply ct status dnat ct reply ip saddr { 10.96.0.0/16 } " +
+				"tcp flags & (syn | rst) == syn tcp option maxseg size > 1460 tcp option maxseg size set 1460"),
+		}), "the IPv4 rule should clamp to 1460 for a 1500-byte MTU")
+	})
+
+	It("clamps IPv6 SYN-ACKs to the MTU minus 60", func() {
+		config.Kubernetes.ServiceCIDRs = ovntest.MustParseIPNets("fd00:10:96::/112")
+		config.Default.MTU = 1500
+		config.Default.RoutableMTU = 0
+
+		Expect(getServiceMSSClampNFTRules()).To(Equal([]*knftables.Rule{
+			clampRule("ct direction reply ct status dnat ct reply ip6 saddr { fd00:10:96::/112 } " +
+				"tcp flags & (syn | rst) == syn tcp option maxseg size > 1440 tcp option maxseg size set 1440"),
+		}), "the IPv6 rule should clamp to 1440 for a 1500-byte MTU")
+	})
+
+	It("uses the routable MTU and every Service CIDR of each family", func() {
+		config.Kubernetes.ServiceCIDRs = ovntest.MustParseIPNets("10.96.0.0/16", "fd00:10:96::/112", "10.97.0.0/16")
+		config.Default.MTU = 9000
+		config.Default.RoutableMTU = 1400
+
+		Expect(getServiceMSSClampNFTRules()).To(Equal([]*knftables.Rule{
+			clampRule("ct direction reply ct status dnat ct reply ip saddr { 10.96.0.0/16, 10.97.0.0/16 } " +
+				"tcp flags & (syn | rst) == syn tcp option maxseg size > 1360 tcp option maxseg size set 1360"),
+			clampRule("ct direction reply ct status dnat ct reply ip6 saddr { fd00:10:96::/112 } " +
+				"tcp flags & (syn | rst) == syn tcp option maxseg size > 1340 tcp option maxseg size set 1340"),
+		}), "the rules should clamp to the routable MTU and list every Service CIDR of each family")
 	})
 })
