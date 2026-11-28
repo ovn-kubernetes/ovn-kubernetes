@@ -395,6 +395,257 @@ ips=$(ip -o addr show dev $iface| grep global |awk '{print $4}' | cut -d/ -f1 | 
 			),
 		)
 
+		// This test validates service traffic policies on a primary UDN and
+		// isolation between two different primary UDNs. The backend pod runs on
+		// one node ("endpoint node"); clients run on the endpoint node and on a
+		// different node.
+		//   - InternalTrafficPolicy=Local: the ClusterIP is reachable only from a
+		//     client co-located with the endpoint.
+		//   - ExternalTrafficPolicy=Local: the NodePort is reachable only on the
+		//     node that hosts the endpoint.
+		//   - A client on a different primary UDN cannot reach the service.
+		DescribeTable(
+			"should honor InternalTrafficPolicy=Local, ExternalTrafficPolicy=Local and isolate services across networks",
+			func(netConfigParams networkAttachmentConfigParams) {
+				namespace := f.Namespace.Name
+				jig := e2eservice.NewTestJig(cs, namespace, "udn-svc-tp")
+
+				By("Selecting 3 schedulable nodes")
+				nodes, err := e2enode.GetBoundedReadySchedulableNodes(context.TODO(), cs, 3)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(len(nodes.Items)).To(BeNumerically(">", 2))
+				endpointNode := &nodes.Items[0]
+				otherNode := &nodes.Items[1]
+				thirdNode := &nodes.Items[2]
+
+				By("Creating the UDN attachment configuration")
+				netConfig := newNetworkAttachmentConfig(netConfigParams)
+				netConfig.namespace = namespace
+				_, err = nadClient.NetworkAttachmentDefinitions(namespace).Create(
+					context.Background(),
+					generateNAD(netConfig, cs),
+					metav1.CreateOptions{},
+				)
+				Expect(err).NotTo(HaveOccurred())
+
+				By("Creating a NodePort UDN service with InternalTrafficPolicy=Cluster and ExternalTrafficPolicy=Cluster")
+				policy := v1.IPFamilyPolicyPreferDualStack
+				udnService, err := jig.CreateUDPService(context.TODO(), func(s *v1.Service) {
+					s.Spec.Ports = []v1.ServicePort{
+						{
+							Name:       "udp",
+							Protocol:   v1.ProtocolUDP,
+							Port:       servicePort,
+							TargetPort: intstr.FromInt(serviceTargetPort),
+						},
+					}
+					s.Spec.Type = v1.ServiceTypeNodePort
+					s.Spec.ExternalTrafficPolicy = v1.ServiceExternalTrafficPolicyCluster
+					s.Spec.IPFamilyPolicy = &policy
+				})
+				framework.ExpectNoError(err)
+
+				By("Creating a UDN backend pod on the endpoint node")
+				udnServerPod := e2epod.NewAgnhostPod(
+					namespace, "backend-pod", nil, nil,
+					[]v1.ContainerPort{
+						{ContainerPort: (serviceTargetPort), Protocol: "UDP"}},
+					"-c",
+					fmt.Sprintf(`
+set -xe
+iface=ovn-udn1
+ips=$(ip -o addr show dev $iface| grep global |awk '{print $4}' | cut -d/ -f1 | paste -sd, -)
+./agnhost netexec --udp-port=%d --udp-listen-addresses=$ips
+`, serviceTargetPort))
+				udnServerPod.Spec.Containers[0].Command = []string{"/bin/bash"}
+				udnServerPod.Labels = jig.Labels
+				udnServerPod.Spec.NodeName = endpointNode.Name
+				udnServerPod = e2epod.NewPodClient(f).CreateSync(context.TODO(), udnServerPod)
+
+				By("Creating a UDN client pod on the endpoint node")
+				clientSameNode := e2epod.NewAgnhostPod(namespace, "udn-client-same-node", nil, nil, nil)
+				clientSameNode.Spec.NodeName = endpointNode.Name
+				clientSameNode = e2epod.NewPodClient(f).CreateSync(context.TODO(), clientSameNode)
+
+				By("Creating a UDN client pod on a different node")
+				clientOtherNode := e2epod.NewAgnhostPod(namespace, "udn-client-other-node", nil, nil, nil)
+				clientOtherNode.Spec.NodeName = otherNode.Name
+				clientOtherNode = e2epod.NewPodClient(f).CreateSync(context.TODO(), clientOtherNode)
+
+				By("Verifying the ClusterIP is reachable from both clients with InternalTrafficPolicy=Cluster")
+				checkConnectionToClusterIPs(f, clientSameNode, udnService, udnServerPod.Name)
+				checkConnectionToClusterIPs(f, clientOtherNode, udnService, udnServerPod.Name)
+
+				By("Creating a second namespace on a different primary UDN")
+				udnNamespace2, err := f.CreateNamespace(context.TODO(), f.BaseName+"-udn2", map[string]string{
+					"e2e-framework":           f.BaseName,
+					RequiredUDNNamespaceLabel: "",
+				})
+				Expect(err).NotTo(HaveOccurred())
+				f.AddNamespacesToDelete(udnNamespace2)
+
+				netConfig2Params := netConfigParams
+				netConfig2Params.namespace = udnNamespace2.Name
+				netConfig2Params.networkName = "" // generate a distinct network name so this is a different UDN
+				netConfig2 := newNetworkAttachmentConfig(netConfig2Params)
+				_, err = nadClient.NetworkAttachmentDefinitions(udnNamespace2.Name).Create(
+					context.Background(),
+					generateNAD(netConfig2, cs),
+					metav1.CreateOptions{},
+				)
+				Expect(err).NotTo(HaveOccurred())
+
+				By("Verifying a client on a different primary UDN cannot reach the service")
+				otherNetClient, err := createPod(f, "other-udn-client", otherNode.Name, udnNamespace2.Name, []string{"sleep", "2000000"}, nil)
+				Expect(err).NotTo(HaveOccurred())
+				checkNoConnectionToClusterIPs(f, otherNetClient, udnService)
+
+				By("Switching the service to InternalTrafficPolicy=Local")
+				itpLocal := v1.ServiceInternalTrafficPolicyLocal
+				udnService, err = jig.UpdateService(context.TODO(), func(s *v1.Service) {
+					s.Spec.InternalTrafficPolicy = &itpLocal
+				})
+				framework.ExpectNoError(err)
+
+				By("Verifying the ClusterIP is reachable only from the client co-located with the endpoint")
+				checkConnectionToClusterIPs(f, clientSameNode, udnService, udnServerPod.Name)
+				checkNoConnectionToClusterIPs(f, clientOtherNode, udnService)
+
+				By("Verifying the NodePort is reachable on endpoint and non-endpoint nodes with ExternalTrafficPolicy=Cluster")
+				checkConnectionToNodePort(f, clientOtherNode, udnService, endpointNode, "endpoint node", udnServerPod.Name)
+				checkConnectionToNodePort(f, clientOtherNode, udnService, otherNode, "non-endpoint node", udnServerPod.Name)
+
+				By("Switching the service to ExternalTrafficPolicy=Local")
+				udnService, err = jig.UpdateService(context.TODO(), func(s *v1.Service) {
+					s.Spec.ExternalTrafficPolicy = v1.ServiceExternalTrafficPolicyLocal
+				})
+				framework.ExpectNoError(err)
+
+				By("Verifying the NodePort is reachable only on the node that hosts the endpoint")
+				checkConnectionToNodePort(f, clientOtherNode, udnService, endpointNode, "endpoint node", udnServerPod.Name)
+				checkNoConnectionToNodePort(f, clientOtherNode, udnService, otherNode, "non-endpoint node")
+				checkNoConnectionToNodePort(f, clientOtherNode, udnService, thirdNode, "non-endpoint node")
+			},
+			Entry(
+				"L3 primary UDN",
+				networkAttachmentConfigParams{
+					name:     nadName,
+					topology: "layer3",
+					cidr:     primaryLayer3MultiCIDRs(),
+					role:     "primary",
+				},
+			),
+			Entry(
+				"L2 primary UDN",
+				networkAttachmentConfigParams{
+					name:     nadName,
+					topology: "layer2",
+					cidr:     joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+					role:     "primary",
+				},
+			),
+		)
+
+		// This test validates that a ClusterIP service is reachable from a pod in
+		// a different namespace that is attached to the same primary UDN (two NADs
+		// in two namespaces sharing the same network name).
+		DescribeTable(
+			"should be reachable through its cluster IP from a pod in a different namespace attached to the same network",
+			func(netConfigParams networkAttachmentConfigParams) {
+				serverNamespace := f.Namespace.Name
+				jig := e2eservice.NewTestJig(cs, serverNamespace, "udn-shared-nad-svc")
+
+				By("Creating a second namespace that shares the same primary UDN")
+				clientNamespace, err := f.CreateNamespace(context.TODO(), f.BaseName+"-client", map[string]string{
+					"e2e-framework":           f.BaseName,
+					RequiredUDNNamespaceLabel: "",
+				})
+				Expect(err).NotTo(HaveOccurred())
+				f.AddNamespacesToDelete(clientNamespace)
+
+				sharedNetworkName := "shared-" + netConfigParams.topology
+
+				By("Creating the shared NAD in the server namespace")
+				serverNetConfig := newNetworkAttachmentConfig(netConfigParams)
+				serverNetConfig.namespace = serverNamespace
+				serverNetConfig.networkName = sharedNetworkName
+				_, err = nadClient.NetworkAttachmentDefinitions(serverNamespace).Create(
+					context.Background(),
+					generateNAD(serverNetConfig, cs),
+					metav1.CreateOptions{},
+				)
+				Expect(err).NotTo(HaveOccurred())
+
+				By("Creating the shared NAD in the client namespace")
+				clientNetConfig := newNetworkAttachmentConfig(netConfigParams)
+				clientNetConfig.namespace = clientNamespace.Name
+				clientNetConfig.networkName = sharedNetworkName
+				_, err = nadClient.NetworkAttachmentDefinitions(clientNamespace.Name).Create(
+					context.Background(),
+					generateNAD(clientNetConfig, cs),
+					metav1.CreateOptions{},
+				)
+				Expect(err).NotTo(HaveOccurred())
+
+				By("Creating a ClusterIP UDN service in the server namespace")
+				policy := v1.IPFamilyPolicyPreferDualStack
+				udnService, err := jig.CreateUDPService(context.TODO(), func(s *v1.Service) {
+					s.Spec.Ports = []v1.ServicePort{
+						{
+							Name:       "udp",
+							Protocol:   v1.ProtocolUDP,
+							Port:       servicePort,
+							TargetPort: intstr.FromInt(serviceTargetPort),
+						},
+					}
+					s.Spec.Type = v1.ServiceTypeClusterIP
+					s.Spec.IPFamilyPolicy = &policy
+				})
+				framework.ExpectNoError(err)
+
+				By("Creating a UDN backend pod in the server namespace")
+				udnServerPod := e2epod.NewAgnhostPod(
+					serverNamespace, "backend-pod", nil, nil,
+					[]v1.ContainerPort{
+						{ContainerPort: (serviceTargetPort), Protocol: "UDP"}},
+					"-c",
+					fmt.Sprintf(`
+set -xe
+iface=ovn-udn1
+ips=$(ip -o addr show dev $iface| grep global |awk '{print $4}' | cut -d/ -f1 | paste -sd, -)
+./agnhost netexec --udp-port=%d --udp-listen-addresses=$ips
+`, serviceTargetPort))
+				udnServerPod.Spec.Containers[0].Command = []string{"/bin/bash"}
+				udnServerPod.Labels = jig.Labels
+				udnServerPod = e2epod.NewPodClient(f).CreateSync(context.TODO(), udnServerPod)
+
+				By("Creating a client pod in the other namespace attached to the same network")
+				clientPod, err := createPod(f, "client-pod", "", clientNamespace.Name, []string{"sleep", "2000000"}, nil)
+				Expect(err).NotTo(HaveOccurred())
+
+				By("Verifying the client in the other namespace can reach the ClusterIP service")
+				checkConnectionToClusterIPs(f, clientPod, udnService, udnServerPod.Name)
+			},
+			Entry(
+				"L3 primary UDN",
+				networkAttachmentConfigParams{
+					name:     nadName,
+					topology: "layer3",
+					cidr:     primaryLayer3MultiCIDRs(),
+					role:     "primary",
+				},
+			),
+			Entry(
+				"L2 primary UDN",
+				networkAttachmentConfigParams{
+					name:     nadName,
+					topology: "layer2",
+					cidr:     joinStrings(userDefinedNetworkIPv4Subnet, userDefinedNetworkIPv6Subnet),
+					role:     "primary",
+				},
+			),
+		)
+
 	})
 
 })
