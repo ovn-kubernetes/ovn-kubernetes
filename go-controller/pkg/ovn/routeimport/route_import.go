@@ -403,7 +403,7 @@ func (c *controller) syncNetwork(_ context.Context, network string) (err error) 
 	router := info.GetNetworkScopedGWRouterName(c.node)
 	// we set the outport incase our IPv6 next hops are link local addresses
 	outport := types.GWRouterToExtSwitchPrefix + router
-	actual, uuids, err := c.getOVNRoutes(router)
+	actual, existing, err := c.getOVNRoutes(router)
 	if err != nil {
 		return fmt.Errorf("failed to get routes from OVN: %w", err)
 	}
@@ -411,11 +411,31 @@ func (c *controller) syncNetwork(_ context.Context, network string) (err error) 
 
 	deletes := actual.Difference(expected)
 	adds := expected.Difference(actual)
-	if len(deletes)+len(adds) == 0 {
+	lrsrs := make([]*nbdb.LogicalRouterStaticRoute, 0, len(deletes))
+	for r, rows := range existing {
+		if deletes.Has(r) {
+			lrsrs = append(lrsrs, rows...)
+			continue
+		}
+		// Prefix/nexthop sets hide duplicate rows. Keep distinct route
+		// attributes, but remove exact duplicates even when the sets match.
+		for i := 1; i < len(rows); i++ {
+			row := rows[i]
+			candidate := *row
+			for _, previous := range rows[:i] {
+				candidate.UUID = previous.UUID
+				if candidate.Equals(previous) {
+					lrsrs = append(lrsrs, row)
+					break
+				}
+			}
+		}
+	}
+	if len(lrsrs)+len(adds) == 0 {
 		c.log.V(5).Info("Found no updates for router", "router", router)
 		return nil
 	}
-	c.log.V(5).Info("Found updates for router", "router", router, "adds", stringer{adds}, "deletes", stringer{deletes})
+	c.log.V(5).Info("Found updates for router", "router", router, "adds", stringer{adds}, "deletes", stringer{deletes}, "deletedRows", len(lrsrs))
 
 	var errs []error
 	var ops []ovsdb.Operation
@@ -436,10 +456,6 @@ func (c *controller) syncNetwork(_ context.Context, network string) (err error) 
 		return fmt.Errorf("failed to add routes on router %s: %w", router, err)
 	}
 
-	lrsrs := make([]*nbdb.LogicalRouterStaticRoute, 0, len(deletes))
-	for delete := range deletes {
-		lrsrs = append(lrsrs, &nbdb.LogicalRouterStaticRoute{UUID: uuids[delete]})
-	}
 	if len(lrsrs) > 0 {
 		ops, err = nbdbops.DeleteLogicalRouterStaticRoutesOps(c.nbClient, ops, router, lrsrs...)
 		if err != nil {
@@ -456,7 +472,7 @@ func (c *controller) syncNetwork(_ context.Context, network string) (err error) 
 
 	err = errors.Join(errs...)
 	if err == nil {
-		metrics.RecordRouteImportOps(network, len(adds), len(deletes))
+		metrics.RecordRouteImportOps(network, len(adds), len(lrsrs))
 		// the transaction applied, so OVN now holds what the kernel holds;
 		// the two gauges only diverge while a sync is pending or failing
 		metrics.RecordRouteImportRoutes(network, expected.Len(), expected.Len())
@@ -538,7 +554,7 @@ func (c *controller) getRouteLinkIndexFilter(network util.NetInfo) (int, error) 
 	return link.Attrs().Index, nil
 }
 
-func (c *controller) getOVNRoutes(router string) (sets.Set[route], map[route]string, error) {
+func (c *controller) getOVNRoutes(router string) (sets.Set[route], map[route][]*nbdb.LogicalRouterStaticRoute, error) {
 	start := time.Now()
 	lr := &nbdb.LogicalRouter{
 		Name: router,
@@ -550,15 +566,15 @@ func (c *controller) getOVNRoutes(router string) (sets.Set[route], map[route]str
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to get routes from router %s: %w", router, err)
 	}
-	uuids := make(map[route]string, len(lrsrs))
+	existing := make(map[route][]*nbdb.LogicalRouterStaticRoute, len(lrsrs))
 	routes := make(sets.Set[route], len(lrsrs))
 	for _, lrsr := range lrsrs {
 		r := route{dst: lrsr.IPPrefix, gw: lrsr.Nexthop}
 		routes.Insert(r)
-		uuids[r] = lrsr.UUID
+		existing[r] = append(existing[r], lrsr)
 	}
 	c.log.V(5).Info("Listed OVN routes", "router", router, "routes", stringer{routes}, "took", time.Since(start))
-	return routes, uuids, nil
+	return routes, existing, nil
 }
 
 func (c *controller) getNetwork(network string) util.NetInfo {
