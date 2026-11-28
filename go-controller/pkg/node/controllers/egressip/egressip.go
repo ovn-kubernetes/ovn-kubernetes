@@ -645,6 +645,7 @@ func generateRoutesForLink(link netlink.Link, isV6 bool) ([]netlink.Route, error
 	linkRoutes = ensureAtLeastOneDefaultRoute(linkRoutes, link.Attrs().Index, isV6)
 	overwriteRoutesTableID(linkRoutes, util.CalculateRouteTableID(link.Attrs().Index))
 	clearSrcFromRoutes(linkRoutes)
+	markRoutesAsOVNKManaged(linkRoutes)
 	return linkRoutes, nil
 }
 
@@ -1356,6 +1357,15 @@ func overwriteRoutesTableID(routes []netlink.Route, tableID int) {
 func clearSrcFromRoutes(routes []netlink.Route) {
 	for i := range routes {
 		routes[i].Src = nil
+	}
+}
+
+// markRoutesAsOVNKManaged sets the route protocol to the OVN-Kubernetes value. The routes are copies of the link's
+// routes, which would otherwise keep a boot or static protocol and be treated as static host configuration by
+// external tooling such as nmstate.
+func markRoutesAsOVNKManaged(routes []netlink.Route) {
+	for i := range routes {
+		routes[i].Protocol = netlink.RouteProtocol(types.OVNKProtocol)
 	}
 }
 
