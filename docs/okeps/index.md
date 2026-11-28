@@ -83,3 +83,7 @@ DHCP-based IPAM for localnet secondary networks.
 **[Scalable ARP/NDP Broadcast Handling for UDN](okep-6691-scalable-arp-ndp-broadcast-udn.md)**
 
 Scalable ARP/NDP broadcast handling to keep UDN external connectivity working at high UDN density.
+
+**[Increase the MaxNetworks Limit](okep-6943-increase-max-networks-limit.md)**
+
+Make the NAD tunnel-keys annotation authoritative so `MaxNetworks` can grow from 4096 to 99999 and networks that don't use tunnel keys stop consuming them.
