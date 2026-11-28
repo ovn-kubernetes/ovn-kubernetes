@@ -113,3 +113,13 @@ We prefer level-driven controllers built with `pkg/controller/controller.go`. Wh
 - The network manager is the source of truth for NADs; register a lightweight, non-blocking handler via `RegisterNADReconciler` that will queue keys to the Reconciler.
 - RegisterNADReconciler  **before** starting controller workers to avoid missing events during startup.
 - For a concrete example, see `go-controller/pkg/ovn/controller/egressfirewall/egressfirewall.go`.
+
+### Handlers on the same resource
+
+Handlers registered through the watch factory (`go-controller/pkg/factory`)
+on the same resource, for example the pod handler and the EgressIP pod
+handler, receive each event in unspecified order. A handler must not assume
+that another one already processed the object. If it needs what another
+handler sets up, it returns an error until it is there, and the handler that
+sets it up requests a retry once it is: see `requestEgressIPPodRetry` and
+`requestEgressNodeRetry` in `go-controller/pkg/ovn`.
